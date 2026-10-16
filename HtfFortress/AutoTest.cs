@@ -276,9 +276,25 @@ namespace HtfFortress
                 for (int k = -1; k <= 1; k++) WallAt(center + dir * 15f + side * (k * BuildSystem.Cell) + Vector3.up * 1.2f, dir);
             }
             var plugin = FortressPlugin.Instance;
+            // Gallery: one of each, frozen in a row on the plaza, photographed from the front.
+            Vector3 row = center + new Vector3(0f, FortressIsland.CoreLocal.y + 0.3f, 4.5f);
+            var kinds = new[] { (EnemyKind.Runner, false), (EnemyKind.Charger, false), (EnemyKind.Spitter, false), (EnemyKind.Bomber, false), (EnemyKind.Tank, false), (EnemyKind.Runner, true) };
+            var shown = new List<Creature>();
+            for (int i = 0; i < kinds.Length; i++)
+                shown.Add(plugin.DebugShowcase(kinds[i].Item1, kinds[i].Item2, row + new Vector3((i - 2.5f) * 1.6f, 0f, 0f), 180f));
+            yield return new WaitForSecondsRealtime(2.5f);
+            yield return Look(row + new Vector3(0f, 0f, 5.5f), 180f, "gallery", 1.5f);
+            foreach (var c in shown) if (c) c.ServerChangeHp(1000000);
+            var boss = plugin.DebugShowcase(EnemyKind.Boss, false, center + new Vector3(0f, 1.8f, 12f), 180f);
+            yield return new WaitForSecondsRealtime(2.5f);
+            yield return Look(center + new Vector3(0f, 0f, 3f), 0f, "gallery_boss", 1.5f);
+            if (boss) boss.ServerChangeHp(1000000);
+            yield return new WaitForSecondsRealtime(1f);
+
             var seen = new HashSet<string>();
             foreach (int w in new[] { 3, 5, 6, 8, 10 })
             {
+                Siege.Instance.DamageCore(-100000); // keep the core alive so every wave gets a look
                 plugin.DebugJumpToWave(w);
                 yield return new WaitForSecondsRealtime(5f);
                 Note($"wave {w}: {FortressPlugin.Alive.Count} enemies, boss hp {Siege.Instance.View.BossHp}/{Siege.Instance.View.BossMax}");

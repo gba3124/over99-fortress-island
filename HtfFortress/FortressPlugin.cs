@@ -99,6 +99,18 @@ namespace HtfFortress
         public bool InBuildTime => _running && _nextWaveAt > 0f;
         public void SkipBuildTime() { if (InBuildTime) _nextWaveAt = Time.time; }
         public void DebugJumpToWave(int wave) { _wave = wave - 1; _nextWaveAt = Time.time; }
+        // Test gallery: a frozen, tagged enemy at `pos` facing `yaw` (not part of any wave).
+        public Creature DebugShowcase(EnemyKind kind, bool elite, Vector3 pos, float yaw)
+        {
+            var prefab = _walkerPrefabs.FirstOrDefault() ?? BuildPool().FirstOrDefault(p => p.GetComponent<Creature>() is RunningFish);
+            if (!prefab) return null;
+            Item item = Instantiate(prefab, pos, Quaternion.Euler(0f, yaw, 0f));
+            item.Rig.isKinematic = true;
+            Server.Instance.Spawn(item.gameObject);
+            Enemies.Instance.ServerTag(item.Creature, kind, elite);
+            return item.Creature;
+        }
+
         public void DebugKillAll() { foreach (var c in _alive.Where(c => c && c._hp.Value > 0).ToList()) c.ServerChangeHp(1000000); }
 
         private IEnumerator ShotAfter(string tag, float delay)

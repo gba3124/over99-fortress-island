@@ -192,7 +192,7 @@ namespace HtfFortress
             else { DamageCore(dmg); AutoTest.Count("walker_hit_core"); }
         }
 
-        public void DamageCore(int dmg) => _server.CoreHp = Mathf.Max(0, _server.CoreHp - dmg);
+        public void DamageCore(int dmg) => _server.CoreHp = Mathf.Clamp(_server.CoreHp - dmg, 0, _server.CoreMax);
 
         // Bomber: blows up on whatever stopped it, hurting every piece (and the core) around.
         private void Explode(RunningFish fish, int dmg)
@@ -220,7 +220,7 @@ namespace HtfFortress
                 _nextMove[fish] = Time.time + Random.Range(12f, 18f);
                 if (move > 0f) pos = FortressIsland.Instance.SpitterSpot();
             }
-            pos.y = water - 0.35f + Mathf.Sin(Time.time * 2f + fish.ObjectId) * 0.12f;
+            pos.y = water + 0.05f + Mathf.Sin(Time.time * 2f + fish.ObjectId) * 0.12f; // head and cannon above the surface
             rig.MovePosition(pos);
 
             Vector3 target = _server.CorePos + Vector3.up * 1.5f;
