@@ -99,6 +99,7 @@ namespace HtfFortress
                 case "enemies": yield return EnemiesScenario(); break;
                 case "build": yield return BuildScenario(); break;
                 case "balance": yield return BalanceScenario(); break;
+                case "boss": yield return BossScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -421,6 +422,38 @@ namespace HtfFortress
                 yield return new WaitForSecondsRealtime(1f);
             }
             Note($"balance result: reached wave {plugin.Wave}, running {plugin.Running}, core {Siege.Instance.CoreHp}");
+        }
+
+        // Wave 10 against the "average player" build: does the behemoth reach the walls, and does it die in time?
+        private IEnumerator BossScenario()
+        {
+            var island = FortressIsland.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            PlayerManager.ToggleGodMode();
+            Vector3 center = island.Center;
+            Player.LocalPlayer.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => FortressPlugin.Instance.Running, 15f, "round start");
+            if (!FortressPlugin.Instance.Running) yield break;
+            Siege.Instance.ServerAddCoins(1200); // about what a team has saved up by wave 10
+            SpendLikeAPlayer(center);
+            var plugin = FortressPlugin.Instance;
+            plugin.DebugJumpToWave(10);
+            float start = Time.realtimeSinceStartup;
+            int shots = 0;
+            while (Time.realtimeSinceStartup - start < 260f && plugin.Running)
+            {
+                var boss = Enemies.Instance.ServerAll.FirstOrDefault(kv => kv.Value.Kind == EnemyKind.Boss).Key;
+                if (Time.realtimeSinceStartup - start > 6f && !boss) { Note($"boss dead after {Time.realtimeSinceStartup - start:0}s, core {Siege.Instance.CoreHp}"); break; }
+                if (boss && shots < 4 && (int)(Time.realtimeSinceStartup - start) % 20 == 0)
+                {
+                    shots++;
+                    Note($"boss at {boss.transform.position} hp {boss._hp.Value}, dist to core {(boss.transform.position - Siege.Instance.CorePos).Flat().magnitude:0.0}");
+                    Vector3 at = boss.transform.position, eye = at + (center - at).Flat().normalized * 10f;
+                    yield return Look(eye, YawTo(eye, at), "boss_" + shots, 0.8f);
+                }
+                yield return new WaitForSecondsRealtime(1f);
+            }
+            Note($"boss test end: wave {plugin.Wave}, building {plugin.InBuildTime}, core {Siege.Instance.CoreHp}");
         }
 
         private static string BuildPoolProbe()
