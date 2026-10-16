@@ -1,64 +1,183 @@
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using BepInEx.Configuration;
 using FishNet;
-using FishNet.Broadcast;
-using FishNet.Managing;
-using FishNet.Serializing;
 using UnityEngine;
 
 namespace HtfFortress
 {
-    // Turrets pick the closest wave creature in range on the host and damage it with the game's own ServerChangeHp.
-    // Visuals go through Fx (tracer for the gun, a lobbed ball + blast for the cannon) so every client sees them.
+    // Turrets and traps, all decided on the host; damage goes through the game's own Creature.ServerChangeHp and
+    // visuals through Fx so every client sees them.
+    //   Gun: single target, fast.        Cannon: lobbed ball, splash.     Harpoon: pierces a line, slows.
+    //   Mortar: long range, delayed splash (no close targets).            Tesla: chains between enemies, x2 on swimmers.
+    //   Spikes: hurt walkers standing on them.
     public class Turrets : MonoBehaviour
     {
         public static ConfigEntry<float> DamageMultiplier;
 
         private readonly Dictionary<int, float> _nextFire = new Dictionary<int, float>();
+        private float _nextSpikeTick;
 
         private void Update()
         {
-            if (InstanceFinder.IsServerStarted && Siege.Instance.ServerActive) ServerFire();
-        }
-
-        // ---------- host ----------
-
-        private void ServerFire()
-        {
+            if (!InstanceFinder.IsServerStarted || !Siege.Instance.ServerActive) return;
             var alive = FortressPlugin.Alive;
             if (alive.Count == 0) return;
-            foreach (var p in BuildSystem.Instance.ServerPieces)
+            foreach (var p in BuildSystem.Instance.ServerPieces.ToList())
+                if (Catalog.IsTurret(p.Type)) Fire(p, alive);
+            if (Time.time >= _nextSpikeTick) { _nextSpikeTick = Time.time + 0.5f; Spikes(alive); }
+        }
+
+        private static bool Alive(Creature c) => c && c._hp.Value > 0;
+
+        private int Dmg(int baseDmg, Creature c, Catalog.TurretStats s)
+        {
+            float d = baseDmg * DamageMultiplier.Value;
+            if (Enemies.Instance.TryGet(c, out var tag) && (tag.Kind == EnemyKind.Tank || tag.Kind == EnemyKind.Boss)) d *= s.BossMult;
+            if (s.WaterMult != 1f && c.transform.position.y < WaterManager.GetWaterHeight(c.transform.position) + 0.3f) d *= s.WaterMult;
+            return Mathf.Max(1, Mathf.RoundToInt(d));
+        }
+
+        private void Fire(PieceState p, List<Creature> alive)
+        {
+            _nextFire.TryGetValue(p.Id, out float next);
+            if (Time.time < next) return;
+            var s = Catalog.Turret(p.Type, p.Level, p.Branch);
+            Vector3 muzzle = p.Pos + Vector3.up * 1.1f;
+
+            Creature target = null;
+            float best = s.Range * s.Range, min = s.MinRange * s.MinRange;
+            foreach (var c in alive)
             {
-                if (!Catalog.IsTurret(p.Type)) continue;
-                _nextFire.TryGetValue(p.Id, out float next);
-                if (Time.time < next) continue;
+                if (!Alive(c)) continue;
+                float d = (c.transform.position - muzzle).sqrMagnitude;
+                if (d < best && d >= min) { best = d; target = c; }
+            }
+            if (!target) return;
+            _nextFire[p.Id] = Time.time + s.Interval;
+            Vector3 hit = target.transform.position;
+            AutoTest.Count("shots_" + p.Type);
 
-                var stats = Catalog.Turret(p.Type, p.Level);
-                Vector3 muzzle = p.Pos + Vector3.up * 1.1f;
-                Creature target = null;
-                float best = stats.Range * stats.Range;
-                foreach (var c in alive)
+            switch (p.Type)
+            {
+                case PieceType.Gun:
+                    target.ServerChangeHp(Dmg(s.Damage, target, s));
+                    Fx.Send(FxKind.Tracer, muzzle, hit, p.Id);
+                    break;
+
+                case PieceType.Cannon:
+                    for (int i = 0; i < s.Shots; i++)
+                    {
+                        Vector3 at = i == 0 ? hit : hit + Random.insideUnitSphere.Flat() * 3f;
+                        Splash(alive, at, s.Splash, s.Damage, s);
+                        Fx.Send(FxKind.Cannonball, muzzle, at, i == 0 ? p.Id : 0);
+                    }
+                    break;
+
+                case PieceType.Harpoon:
                 {
-                    if (!c || c._hp.Value <= 0) continue;
-                    float d = (c.transform.position - muzzle).sqrMagnitude;
-                    if (d < best) { best = d; target = c; }
+                    Vector3 dir = (hit - muzzle).Flat().normalized;
+                    for (int i = 0; i < s.Shots; i++)
+                    {
+                        Vector3 d = Quaternion.Euler(0f, (i - (s.Shots - 1) * 0.5f) * 12f, 0f) * dir;
+                        Vector3 end = muzzle + d * s.Range;
+                        foreach (var c in alive.Where(Alive).ToList())
+                            if (DistToSegment(c.transform.position, muzzle, end) < 1f)
+                            {
+                                c.ServerChangeHp(Dmg(s.Damage, c, s));
+                                Siege.Instance.Slow(c, s.Slow, s.SlowTime);
+                            }
+                        Fx.Send(FxKind.Harpoon, muzzle, end, i == 0 ? p.Id : 0);
+                    }
+                    break;
                 }
-                if (!target) continue;
 
-                _nextFire[p.Id] = Time.time + stats.Interval;
-                int dmg = Mathf.Max(1, Mathf.RoundToInt(stats.Damage * DamageMultiplier.Value));
-                Vector3 hit = target.transform.position;
-                if (stats.Splash > 0f)
+                case PieceType.Mortar:
+                    for (int i = 0; i < s.Shots; i++)
+                    {
+                        Vector3 at = i == 0 ? hit : hit + Random.insideUnitSphere.Flat() * 2.5f;
+                        Fx.Send(FxKind.Mortar, muzzle, at, i == 0 ? p.Id : 0);
+                        StartCoroutine(MortarLands(at, s));
+                    }
+                    break;
+
+                case PieceType.Tesla:
                 {
-                    float r2 = stats.Splash * stats.Splash;
-                    foreach (var c in alive)
-                        if (c && c._hp.Value > 0 && (c.transform.position - hit).sqrMagnitude <= r2) c.ServerChangeHp(dmg);
+                    var hitSet = new HashSet<Creature>();
+                    Creature cur = target; Vector3 from = muzzle + Vector3.up * 0.3f;
+                    for (int n = 0; n < s.Chain && cur; n++)
+                    {
+                        hitSet.Add(cur);
+                        cur.ServerChangeHp(Dmg(s.Damage, cur, s));
+                        Vector3 to = cur.transform.position + Vector3.up * 0.4f;
+                        Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0);
+                        from = to;
+                        Creature nextC = null; float nb = 6f * 6f;
+                        foreach (var c in alive)
+                        {
+                            if (!Alive(c) || hitSet.Contains(c)) continue;
+                            float d = (c.transform.position - from).sqrMagnitude;
+                            if (d < nb) { nb = d; nextC = c; }
+                        }
+                        cur = nextC;
+                    }
+                    break;
                 }
-                else target.ServerChangeHp(dmg);
-
-                AutoTest.Count("shots_" + p.Type);
-                Fx.Send(p.Type == PieceType.Cannon ? FxKind.Cannonball : FxKind.Tracer, muzzle, hit, p.Id);
             }
         }
+
+        private void Splash(List<Creature> alive, Vector3 at, float radius, int dmg, Catalog.TurretStats s)
+        {
+            float r2 = radius * radius;
+            foreach (var c in alive.Where(Alive).ToList())
+                if ((c.transform.position - at).sqrMagnitude <= r2) c.ServerChangeHp(Dmg(dmg, c, s));
+        }
+
+        private IEnumerator MortarLands(Vector3 at, Catalog.TurretStats s)
+        {
+            yield return new WaitForSeconds(Fx.MortarFlight);
+            if (!Siege.Instance.ServerActive) yield break;
+            Splash(FortressPlugin.Alive, at, s.Splash, s.Damage, s);
+            if (s.Burn <= 0f) yield break;
+            // Fire branch: the impact keeps burning for 4 s.
+            for (float t = 0f; t < 4f && Siege.Instance.ServerActive; t += 0.5f)
+            {
+                Fx.Send(FxKind.Burn, at, at);
+                Splash(FortressPlugin.Alive, at, s.Splash * 0.8f, Mathf.RoundToInt(s.Burn * 0.5f), s);
+                yield return new WaitForSeconds(0.5f);
+            }
+        }
+
+        private void Spikes(List<Creature> alive)
+        {
+            foreach (var p in BuildSystem.Instance.ServerPieces)
+            {
+                if (p.Type != PieceType.Spikes) continue;
+                foreach (var c in alive)
+                {
+                    if (!Alive(c)) continue;
+                    Vector3 d = c.transform.position - p.Pos;
+                    if (Mathf.Abs(d.x) < 1.6f && Mathf.Abs(d.z) < 1.6f && d.y > -0.5f && d.y < 2f)
+                    {
+                        c.ServerChangeHp(Mathf.RoundToInt(Catalog.SpikeDamage(p.Level) * DamageMultiplier.Value));
+                        Siege.Instance.Slow(c, 0.3f, 0.6f);
+                        AutoTest.Count("spike_hits");
+                    }
+                }
+            }
+        }
+
+        private static float DistToSegment(Vector3 p, Vector3 a, Vector3 b)
+        {
+            Vector3 ab = (b - a).Flat(), ap = (p - a).Flat();
+            float t = Mathf.Clamp01(Vector3.Dot(ap, ab) / Mathf.Max(0.0001f, ab.sqrMagnitude));
+            return (ap - ab * t).magnitude;
+        }
+    }
+
+    internal static class VecExt
+    {
+        public static Vector3 Flat(this Vector3 v) => new Vector3(v.x, 0f, v.z);
     }
 }

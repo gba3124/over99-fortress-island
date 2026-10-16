@@ -171,12 +171,23 @@ namespace HtfFortress
                 return true;
             }
 
-            Vector3 v = dir * RunSpeed(fish) * stats.Speed;
+            Vector3 v = dir * RunSpeed(fish) * stats.Speed * SlowFactor(fish);
             v.y = rig.linearVelocity.y;
             rig.linearVelocity = v;
             rig.angularVelocity = Vector3.zero;
             return true;
         }
+
+        // Harpoons / spikes slow walkers for a while (strongest slow wins).
+        private readonly Dictionary<Creature, (float factor, float until)> _slow = new Dictionary<Creature, (float, float)>();
+        public void Slow(Creature c, float fraction, float seconds)
+        {
+            if (fraction <= 0f) return;
+            float f = 1f - fraction;
+            if (_slow.TryGetValue(c, out var cur) && cur.until > Time.time && cur.factor < f) f = cur.factor;
+            _slow[c] = (f, Time.time + seconds);
+        }
+        private float SlowFactor(Creature c) => _slow.TryGetValue(c, out var s) && s.until > Time.time ? s.factor : 1f;
 
         private static void Halt(Rigidbody rig) => rig.linearVelocity = new Vector3(0f, rig.linearVelocity.y, 0f);
 

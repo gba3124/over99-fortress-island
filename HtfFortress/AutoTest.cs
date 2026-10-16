@@ -97,6 +97,7 @@ namespace HtfFortress
                 case "probe": break;
                 case "siege": yield return SiegeScenario(); break;
                 case "enemies": yield return EnemiesScenario(); break;
+                case "build": yield return BuildScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -314,6 +315,63 @@ namespace HtfFortress
                 yield return new WaitForSecondsRealtime(2f);
             }
             Note("core " + Siege.Instance.CoreHp);
+        }
+
+        // Every turret and trap, upgraded with branches, against mid waves.
+        private IEnumerator BuildScenario()
+        {
+            var island = FortressIsland.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            PlayerManager.ToggleGodMode();
+            Vector3 center = island.Center;
+            Player.LocalPlayer.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => FortressPlugin.Instance.Running, 15f, "round start");
+            if (!FortressPlugin.Instance.Running) yield break;
+            Siege.Instance.ServerAddCoins(20000);
+            var turrets = new[] { PieceType.Gun, PieceType.Cannon, PieceType.Harpoon, PieceType.Mortar, PieceType.Tesla };
+            int placed = 0;
+            for (int gi = 0; gi < FortressIsland.GapAngles.Length; gi++)
+            {
+                float g = FortressIsland.GapAngles[gi];
+                Vector3 dir = new Vector3(Mathf.Cos(g * Mathf.Deg2Rad), 0f, Mathf.Sin(g * Mathf.Deg2Rad));
+                Vector3 side = Vector3.Cross(Vector3.up, dir);
+                for (int k = -1; k <= 1; k++) placed += WallAt(center + dir * 15f + side * (k * BuildSystem.Cell) + Vector3.up * 1.2f, dir) ? 1 : 0;
+                placed += TurretAt(PieceType.Spikes, center + dir * 19f) ? 1 : 0;
+                placed += TurretAt(turrets[gi], center + dir * 10f + side * 2f) ? 1 : 0;
+                placed += TurretAt(turrets[(gi + 3) % turrets.Length], center + dir * 10f - side * 2.5f) ? 1 : 0;
+            }
+            Note($"placed {placed}");
+            // Upgrade every turret to Lv3, alternating branches; damage + repair one wall.
+            int up = 0, b = 1;
+            foreach (var p in BuildSystem.Instance.ServerPieces.Where(p => Catalog.IsTurret(p.Type)).Select(p => p.Id).ToList())
+            {
+                BuildSystem.Instance.ServerUpgrade(p, 0); BuildSystem.Instance.ServerUpgrade(p, b); b = 3 - b; up++;
+            }
+            var wall = BuildSystem.Instance.ServerPieces.FirstOrDefault(p => p.Type == PieceType.Wall);
+            BuildSystem.Instance.ServerDamageArea(wall.Pos, 0.5f, 60);
+            BuildSystem.Instance.ServerUpgrade(wall.Id, 0, repair: true);
+            Note($"upgraded {up}; branches: " + string.Join(", ", BuildSystem.Instance.ServerPieces.Where(p => Catalog.IsTurret(p.Type)).Select(p => p.Type + "L" + p.Level + "b" + p.Branch)));
+            yield return new WaitForSecondsRealtime(2f);
+            foreach (var p in BuildSystem.Instance.ServerPieces.Where(p => Catalog.IsTurret(p.Type)).GroupBy(p => p.Type).Select(gq => gq.First()).ToList())
+            {
+                Vector3 eye = p.Pos + (center - p.Pos).Flat().normalized * 3.2f;
+                yield return Look(eye, YawTo(eye, p.Pos), "turret_" + p.Type, 1f);
+            }
+            var plugin = FortressPlugin.Instance;
+            foreach (int w in new[] { 4, 6, 8 })
+            {
+                Siege.Instance.DamageCore(-100000);
+                plugin.DebugJumpToWave(w);
+                for (int i = 0; i < 4; i++)
+                {
+                    float g = FortressIsland.GapAngles[i % 3] * Mathf.Deg2Rad;
+                    Vector3 eye = center + new Vector3(Mathf.Cos(g), 0f, Mathf.Sin(g)) * 6f;
+                    yield return Look(eye, YawTo(eye, center + new Vector3(Mathf.Cos(g), 0f, Mathf.Sin(g)) * 25f), "build_w" + w, 3f);
+                }
+                Note($"wave {w}: alive {FortressPlugin.Alive.Count}, core {Siege.Instance.CoreHp}");
+                plugin.DebugKillAll();
+                yield return new WaitForSecondsRealtime(1.5f);
+            }
         }
 
         private void Finish()

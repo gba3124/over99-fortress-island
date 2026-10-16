@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace HtfFortress
 {
-    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce }
+    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce, Harpoon, Mortar, Zap, Burn }
 
     // Host -> everyone: a visual effect (and for Announce, a banner: Key = string key, Arg = number).
     public struct FxEvent : IBroadcast { public FxKind Kind; public Vector3 From; public Vector3 To; public int PieceId; public string Key; public int Arg; }
@@ -17,7 +17,7 @@ namespace HtfFortress
     {
         private static Fx _instance;
         private NetworkManager _registeredOn;
-        private Material _tracer, _ball, _blast, _spit;
+        private Material _tracer, _ball, _blast, _spit, _bolt, _zap, _fire;
 
         static Fx()
         {
@@ -61,6 +61,9 @@ namespace HtfFortress
                 _ball = Models.Make(new Color(0.15f, 0.15f, 0.15f));
                 _blast = Models.Make(new Color(1f, 0.55f, 0.1f), new Color(1f, 0.5f, 0.1f));
                 _spit = Models.Make(new Color(0.35f, 0.85f, 0.4f), new Color(0.2f, 0.6f, 0.25f));
+                _bolt = Models.Make(new Color(0.75f, 0.78f, 0.82f));
+                _zap = Models.Make(new Color(0.55f, 0.85f, 1f), new Color(0.4f, 0.8f, 1f));
+                _fire = Models.Make(new Color(1f, 0.45f, 0.1f), new Color(1f, 0.4f, 0.05f));
             }
             if (e.PieceId != 0) AimTurret(e.PieceId, e.To);
             switch (e.Kind)
@@ -69,10 +72,15 @@ namespace HtfFortress
                 case FxKind.Cannonball: StartCoroutine(Arc(e.From, e.To, _ball, 0.35f, 0.35f, 1.5f, true)); break;
                 case FxKind.Spit: StartCoroutine(Arc(e.From, e.To, _spit, 0.3f, SpitFlight, 2.5f, false)); break;
                 case FxKind.Blast: StartCoroutine(Blast(e.To, 3.5f)); break;
+                case FxKind.Harpoon: StartCoroutine(Bolt(e.From, e.To)); break;
+                case FxKind.Mortar: StartCoroutine(Arc(e.From, e.To, _ball, 0.45f, MortarFlight, 9f, true)); break;
+                case FxKind.Zap: StartCoroutine(Zap(e.From, e.To)); break;
+                case FxKind.Burn: StartCoroutine(Blast(e.To + Random.insideUnitSphere * 1.5f, 1.4f, _fire)); break;
             }
         }
 
         public const float SpitFlight = 0.8f;
+        public const float MortarFlight = 1.3f;
 
         private static void AimTurret(int pieceId, Vector3 target)
         {
@@ -99,6 +107,35 @@ namespace HtfFortress
             go.transform.localScale = new Vector3(0.05f, 0.05f, d.magnitude);
             yield return new WaitForSeconds(0.05f);
             Destroy(go);
+        }
+
+        // Harpoon: a thin bolt flying the whole line.
+        private IEnumerator Bolt(Vector3 from, Vector3 to)
+        {
+            var go = Shape(PrimitiveType.Cube, _bolt);
+            go.transform.localScale = new Vector3(0.08f, 0.08f, 1.4f);
+            go.transform.rotation = Quaternion.LookRotation(to - from);
+            const float flight = 0.3f;
+            for (float t = 0f; t < flight; t += Time.deltaTime) { go.transform.position = Vector3.Lerp(from, to, t / flight); yield return null; }
+            Destroy(go);
+        }
+
+        // Tesla: a jagged bright line that flickers out.
+        private IEnumerator Zap(Vector3 from, Vector3 to)
+        {
+            var parts = new GameObject[3];
+            Vector3 prev = from;
+            for (int i = 0; i < 3; i++)
+            {
+                Vector3 next = i == 2 ? to : Vector3.Lerp(from, to, (i + 1) / 3f) + Random.insideUnitSphere * 0.5f;
+                var go = Shape(PrimitiveType.Cube, _zap);
+                Vector3 d = next - prev;
+                go.transform.SetPositionAndRotation(prev + d * 0.5f, Quaternion.LookRotation(d));
+                go.transform.localScale = new Vector3(0.07f, 0.07f, d.magnitude);
+                parts[i] = go; prev = next;
+            }
+            yield return new WaitForSeconds(0.09f);
+            foreach (var go in parts) Destroy(go);
         }
 
         private IEnumerator Arc(Vector3 from, Vector3 to, Material mat, float size, float flight, float height, bool blastAtEnd)

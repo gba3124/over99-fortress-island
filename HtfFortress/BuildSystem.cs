@@ -17,8 +17,8 @@ namespace HtfFortress
     // Wire messages. The mod is built without FishNet codegen, so serializers are registered by hand below.
     public struct PiecePlaceRequest : IBroadcast { public PieceType Type; public Vector3 Pos; public float RotY; }
     public struct PieceRemoveRequest : IBroadcast { public int Id; }
-    public struct PieceUpgradeRequest : IBroadcast { public int Id; }
-    public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; public int Hp; public int MaxHp; public int Level; }
+    public struct PieceUpgradeRequest : IBroadcast { public int Id; public int Branch; public bool Repair; }
+    public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; public int Hp; public int MaxHp; public int Level; public int Branch; }
 
     // Fortnite-style building on a fixed world grid.
     // G toggles build mode, T cycles pieces, hold LMB to keep placing, Y flips, U upgrades and H removes the piece you look at.
@@ -75,17 +75,17 @@ namespace HtfFortress
             GenericReader<PiecePlaceRequest>.SetRead(r => new PiecePlaceRequest { Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle() });
             GenericWriter<PieceRemoveRequest>.SetWrite((w, v) => w.WriteInt32(v.Id));
             GenericReader<PieceRemoveRequest>.SetRead(r => new PieceRemoveRequest { Id = r.ReadInt32() });
-            GenericWriter<PieceUpgradeRequest>.SetWrite((w, v) => w.WriteInt32(v.Id));
-            GenericReader<PieceUpgradeRequest>.SetRead(r => new PieceUpgradeRequest { Id = r.ReadInt32() });
+            GenericWriter<PieceUpgradeRequest>.SetWrite((w, v) => { w.WriteInt32(v.Id); w.WriteInt32(v.Branch); w.WriteBoolean(v.Repair); });
+            GenericReader<PieceUpgradeRequest>.SetRead(r => new PieceUpgradeRequest { Id = r.ReadInt32(), Branch = r.ReadInt32(), Repair = r.ReadBoolean() });
             GenericWriter<PieceState>.SetWrite((w, v) =>
             {
                 w.WriteInt32(v.Id); w.WriteByte((byte)v.Type); w.WriteVector3(v.Pos); w.WriteSingle(v.RotY); w.WriteBoolean(v.Removed);
-                w.WriteInt32(v.Hp); w.WriteInt32(v.MaxHp); w.WriteInt32(v.Level);
+                w.WriteInt32(v.Hp); w.WriteInt32(v.MaxHp); w.WriteInt32(v.Level); w.WriteInt32(v.Branch);
             });
             GenericReader<PieceState>.SetRead(r => new PieceState
             {
                 Id = r.ReadInt32(), Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle(), Removed = r.ReadBoolean(),
-                Hp = r.ReadInt32(), MaxHp = r.ReadInt32(), Level = r.ReadInt32()
+                Hp = r.ReadInt32(), MaxHp = r.ReadInt32(), Level = r.ReadInt32(), Branch = r.ReadInt32()
             });
         }
 
@@ -106,7 +106,8 @@ namespace HtfFortress
             }
 
             if (kb.escapeKey.wasPressedThisFrame) { SetBuilding(false); return; }
-            if (kb.tKey.wasPressedThisFrame) _type = (PieceType)(((int)_type + 1) % Catalog.TypeCount);
+            bool shift = kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed;
+            if (kb.tKey.wasPressedThisFrame) _type = (PieceType)(((int)_type + (shift ? Catalog.TypeCount - 1 : 1)) % Catalog.TypeCount);
             if (kb.yKey.wasPressedThisFrame) _flip = !_flip;
 
             UpdateGhost();
@@ -120,7 +121,8 @@ namespace HtfFortress
             }
             if (mouse != null && mouse.leftButton.wasReleasedThisFrame) _lastSentPos = Vector3.positiveInfinity;
             if (lookedId != 0 && kb.hKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceRemoveRequest { Id = lookedId });
-            if (lookedId != 0 && kb.uKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = lookedId });
+            if (lookedId != 0 && kb.uKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = lookedId, Branch = shift ? 2 : 1 });
+            if (lookedId != 0 && kb.jKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = lookedId, Repair = true });
         }
 
         private void SetBuilding(bool on)
@@ -178,6 +180,12 @@ namespace HtfFortress
                 case PieceType.Ramp: // rises toward where you look
                     pos = cellCenter + Vector3.up * Cell * 0.5f;
                     rot = Quaternion.Euler(-45f, yaw, 0f);
+                    break;
+                case PieceType.Spikes: // a mat on the ground (or a floor) in the middle of the cell
+                    pos = new Vector3(cellCenter.x, baseY, cellCenter.z);
+                    if (Physics.Raycast(pos + Vector3.up * (Cell + 1f), Vector3.down, out var mat, Cell * 2f, mask, QueryTriggerInteraction.Ignore))
+                        pos.y = mat.point.y + 0.07f;
+                    rot = Quaternion.identity;
                     break;
                 default: // turret stands in the middle of the cell, on whatever surface is there (ground or a floor)
                     pos = new Vector3(cellCenter.x, baseY, cellCenter.z);
@@ -238,7 +246,7 @@ namespace HtfFortress
                 head.layer = layer;
                 head.transform.SetParent(go.transform, false);
                 head.transform.localPosition = new Vector3(0f, 0.85f, 0f);
-                Models.Attach(t == PieceType.Cannon ? "CannonHead" : "GunHead", head.transform, new Vector3(0.6f, 0.5f, 1.4f));
+                Models.Attach(Catalog.HeadModel(t), head.transform, new Vector3(0.6f, 0.5f, 1.4f));
             }
             else Models.Attach(t.ToString(), go.transform, size);
             return go;
@@ -253,8 +261,14 @@ namespace HtfFortress
             if (!Physics.Raycast(cam.position, cam.forward, out var rh, Reach, 1 << PieceLayer, QueryTriggerInteraction.Ignore)) return;
             var root = rh.collider.attachedRigidbody ? rh.collider.attachedRigidbody.gameObject : rh.collider.gameObject;
             if (!_pieceIds.TryGetValue(root, out id) || !_states.TryGetValue(id, out var s)) { id = 0; return; }
-            string up = s.Level < Catalog.MaxLevel ? L10n.T("upgradeHint", Catalog.UpgradeCost(s.Type, s.Level)) : L10n.T("maxLevel");
-            _lookInfo = L10n.T("lookInfo", PieceName(s.Type, s.Level), s.Level, s.Hp, s.MaxHp, up);
+            string up;
+            if (s.Level >= Catalog.MaxLevel) up = L10n.T("maxLevel");
+            else if (s.Level == Catalog.MaxLevel - 1 && Catalog.HasBranches(s.Type))
+                up = L10n.T("branchHint", L10n.T(Catalog.BranchKey(s.Type, 1)), L10n.T(Catalog.BranchKey(s.Type, 2)), Catalog.UpgradeCost(s.Type, s.Level));
+            else up = L10n.T("upgradeHint", Catalog.UpgradeCost(s.Type, s.Level));
+            string repair = s.Hp < s.MaxHp ? "   " + L10n.T("repairHint", Catalog.RepairCost(s.Hp, s.MaxHp)) : "";
+            string branch = s.Branch > 0 ? " · " + L10n.T(Catalog.BranchKey(s.Type, s.Branch)) : "";
+            _lookInfo = L10n.T("lookInfo", PieceName(s.Type, s.Level) + branch, s.Level, s.Hp, s.MaxHp, up + repair);
         }
 
         public static string PieceName(PieceType t, int level)
@@ -263,9 +277,30 @@ namespace HtfFortress
             return L10n.T(t.ToString());
         }
 
+        private TextMeshProUGUI _bar;
+
         private void LateUpdate()
         {
+            if (_bar) _bar.gameObject.SetActive(_building);
             if (!_building) { if (_hud) _hud.gameObject.SetActive(false); return; }
+            if (!_bar)
+            {
+                _bar = Hud.CreateText("BuildBar", new Vector2(0f, 0.5f), new Vector2(30f, 0f), 24f, TextAlignmentOptions.Left);
+                if (_bar) { _bar.rectTransform.pivot = new Vector2(0f, 0.5f); _bar.rectTransform.sizeDelta = new Vector2(420f, 420f); }
+            }
+            if (_bar)
+            {
+                var sb = new System.Text.StringBuilder();
+                for (int i = 0; i < Catalog.TypeCount; i++)
+                {
+                    var t = (PieceType)i;
+                    bool sel = t == _type, afford = Siege.Instance.ViewCoins >= Catalog.BuildCost(t);
+                    string line = (sel ? "▶ " : "   ") + PieceName(t, 1) + "  " + Catalog.BuildCost(t);
+                    sb.AppendLine(sel ? "<color=#ffd75a><b>" + line + "</b></color>" : afford ? line : "<color=#9a9a9a>" + line + "</color>");
+                }
+                sb.Append("<size=80%>" + L10n.T("barHint") + "</size>");
+                _bar.text = sb.ToString();
+            }
             if (!_hud) _hud = Hud.CreateText("BuildHint", new Vector2(0.5f, 0f), new Vector2(0f, 80f), 26f, TextAlignmentOptions.Bottom);
             if (!_hud) return;
             _hud.gameObject.SetActive(true);
@@ -310,13 +345,26 @@ namespace HtfFortress
             return true;
         }
 
+        public void ServerUpgrade(int id, int branch, bool repair = false) => OnUpgradeRequest(null, new PieceUpgradeRequest { Id = id, Branch = branch, Repair = repair }, Channel.Reliable);
+
         private void OnUpgradeRequest(NetworkConnection conn, PieceUpgradeRequest req, Channel ch)
         {
-            if (!_serverPieces.TryGetValue(req.Id, out var s) || s.Level >= Catalog.MaxLevel) return;
+            if (!_serverPieces.TryGetValue(req.Id, out var s)) return;
+            if (req.Repair)
+            {
+                if (s.Hp >= s.MaxHp || !Siege.Instance.ServerTrySpend(Catalog.RepairCost(s.Hp, s.MaxHp))) return;
+                s.Hp = s.MaxHp;
+                _serverPieces[s.Id] = s;
+                InstanceFinder.ServerManager.Broadcast(s);
+                AutoTest.Count("repairs");
+                return;
+            }
+            if (s.Level >= Catalog.MaxLevel) return;
             int cost = Catalog.UpgradeCost(s.Type, s.Level);
             if (!Siege.Instance.ServerTrySpend(cost)) return;
             if (Siege.Instance.ServerActive) _spent[s.Id] += cost;
             s.Level++;
+            if (s.Level == Catalog.MaxLevel && Catalog.HasBranches(s.Type)) s.Branch = req.Branch == 2 ? 2 : 1;
             int newMax = Catalog.MaxHp(s.Type, s.Level);
             s.Hp += newMax - s.MaxHp; // upgrading also repairs by the difference
             s.MaxHp = newMax;
@@ -370,8 +418,13 @@ namespace HtfFortress
         }
 
         // Pieces a walker has to break through (it walks over floors and ramps).
-        public static bool IsWall(Collider col) => col && (col.gameObject.name.StartsWith("FortressPiece_Wall")
-            || col.gameObject.name.StartsWith("FortressPiece_Cannon") || col.gameObject.name.StartsWith("FortressPiece_Gun"));
+        public static bool IsWall(Collider col)
+        {
+            if (!col) return false;
+            var parts = col.gameObject.name.Split('_');
+            return parts.Length >= 2 && parts[0] == "FortressPiece" && System.Enum.TryParse(parts[1], out PieceType t)
+                   && (t == PieceType.Wall || Catalog.IsTurret(t));
+        }
 
         private void OnClientLoaded(NetworkConnection conn, bool asServer)
         {
