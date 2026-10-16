@@ -14,32 +14,35 @@ using UnityEngine.InputSystem;
 
 namespace HtfFortress
 {
-    public enum PieceType : byte { Wall, Floor, Ramp }
-
     // Wire messages. The mod is built without FishNet codegen, so serializers are registered by hand below.
     public struct PiecePlaceRequest : IBroadcast { public PieceType Type; public Vector3 Pos; public float RotY; }
     public struct PieceRemoveRequest : IBroadcast { public int Id; }
-    public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; public int Hp; public int MaxHp; }
+    public struct PieceUpgradeRequest : IBroadcast { public int Id; }
+    public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; public int Hp; public int MaxHp; public int Level; }
 
     // Fortnite-style building on a fixed world grid.
-    // B toggles build mode, Q cycles wall/floor/ramp, hold LMB to keep placing, R flips direction, X removes the piece you look at.
-    // The host owns the piece list; clients send requests and mirror what the host broadcasts.
+    // B toggles build mode, Q cycles pieces, hold LMB to keep placing, R flips, U upgrades and X removes the piece you look at.
+    // The host owns the piece list and the coins; clients send requests and mirror what the host broadcasts.
     public class BuildSystem : MonoBehaviour
     {
         public const float Cell = 3f;
-        private const float Thick = 0.3f;
         private const float Reach = 12f;
 
         public static ManualLogSource Log;
         public static ConfigEntry<Key> BuildKey;
+        public static BuildSystem Instance;
 
         // host side
         private readonly Dictionary<int, PieceState> _serverPieces = new Dictionary<int, PieceState>();
+        private readonly Dictionary<int, int> _spent = new Dictionary<int, int>();
         private int _nextId = 1;
+        public IEnumerable<PieceState> ServerPieces => _serverPieces.Values;
 
         // every client (host included)
         private readonly Dictionary<int, GameObject> _pieces = new Dictionary<int, GameObject>();
+        private readonly Dictionary<int, PieceState> _states = new Dictionary<int, PieceState>();
         private readonly Dictionary<GameObject, int> _pieceIds = new Dictionary<GameObject, int>();
+        public GameObject PieceObject(int id) => _pieces.TryGetValue(id, out var go) ? go : null;
 
         private NetworkManager _registeredOn;
         private bool _building;
@@ -49,10 +52,8 @@ namespace HtfFortress
         private PieceType _ghostType = (PieceType)255;
         private bool _ghostValid;
         private Vector3 _lastSentPos = Vector3.positiveInfinity;
-
-        public static BuildSystem Instance;
-
-        private void Awake() => Instance = this;
+        private TextMeshProUGUI _hud;
+        private string _lookInfo = "";
 
         public static int PieceLayer
         {
@@ -70,9 +71,21 @@ namespace HtfFortress
             GenericReader<PiecePlaceRequest>.SetRead(r => new PiecePlaceRequest { Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle() });
             GenericWriter<PieceRemoveRequest>.SetWrite((w, v) => w.WriteInt32(v.Id));
             GenericReader<PieceRemoveRequest>.SetRead(r => new PieceRemoveRequest { Id = r.ReadInt32() });
-            GenericWriter<PieceState>.SetWrite((w, v) => { w.WriteInt32(v.Id); w.WriteByte((byte)v.Type); w.WriteVector3(v.Pos); w.WriteSingle(v.RotY); w.WriteBoolean(v.Removed); w.WriteInt32(v.Hp); w.WriteInt32(v.MaxHp); });
-            GenericReader<PieceState>.SetRead(r => new PieceState { Id = r.ReadInt32(), Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle(), Removed = r.ReadBoolean(), Hp = r.ReadInt32(), MaxHp = r.ReadInt32() });
+            GenericWriter<PieceUpgradeRequest>.SetWrite((w, v) => w.WriteInt32(v.Id));
+            GenericReader<PieceUpgradeRequest>.SetRead(r => new PieceUpgradeRequest { Id = r.ReadInt32() });
+            GenericWriter<PieceState>.SetWrite((w, v) =>
+            {
+                w.WriteInt32(v.Id); w.WriteByte((byte)v.Type); w.WriteVector3(v.Pos); w.WriteSingle(v.RotY); w.WriteBoolean(v.Removed);
+                w.WriteInt32(v.Hp); w.WriteInt32(v.MaxHp); w.WriteInt32(v.Level);
+            });
+            GenericReader<PieceState>.SetRead(r => new PieceState
+            {
+                Id = r.ReadInt32(), Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle(), Removed = r.ReadBoolean(),
+                Hp = r.ReadInt32(), MaxHp = r.ReadInt32(), Level = r.ReadInt32()
+            });
         }
+
+        private void Awake() => Instance = this;
 
         private void Update()
         {
@@ -89,10 +102,11 @@ namespace HtfFortress
             }
 
             if (kb.escapeKey.wasPressedThisFrame) { SetBuilding(false); return; }
-            if (kb.qKey.wasPressedThisFrame) _type = (PieceType)(((int)_type + 1) % 3);
+            if (kb.qKey.wasPressedThisFrame) _type = (PieceType)(((int)_type + 1) % Catalog.TypeCount);
             if (kb.rKey.wasPressedThisFrame) _flip = !_flip;
 
             UpdateGhost();
+            UpdateLookInfo(out int lookedId);
 
             var mouse = Mouse.current;
             if (mouse != null && mouse.leftButton.isPressed && _ghostValid && _ghost.transform.position != _lastSentPos)
@@ -101,8 +115,8 @@ namespace HtfFortress
                 InstanceFinder.ClientManager.Broadcast(new PiecePlaceRequest { Type = _type, Pos = _lastSentPos, RotY = _ghost.transform.eulerAngles.y });
             }
             if (mouse != null && mouse.leftButton.wasReleasedThisFrame) _lastSentPos = Vector3.positiveInfinity;
-            if (kb.xKey.wasPressedThisFrame && LookedAtPiece(out int id))
-                InstanceFinder.ClientManager.Broadcast(new PieceRemoveRequest { Id = id });
+            if (lookedId != 0 && kb.xKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceRemoveRequest { Id = lookedId });
+            if (lookedId != 0 && kb.uKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = lookedId });
         }
 
         private void SetBuilding(bool on)
@@ -113,7 +127,8 @@ namespace HtfFortress
 
         // ---------- placement ----------
 
-        // Snap the aim point to the grid the way Fortnite does: walls on cell edges, floors on cell tops, ramps across a cell.
+        // Snap the aim point to the grid the way Fortnite does: walls on cell edges, floors on cell tops,
+        // ramps across a cell, turrets standing in the middle of a cell.
         private bool ComputePlacement(out Vector3 pos, out Quaternion rot)
         {
             Transform cam = GameInfo.CurCamera.transform;
@@ -138,19 +153,16 @@ namespace HtfFortress
                     // Edge between the player's cell and the aimed cell; the far edge when aiming into your own cell.
                     Vector3 me = Player.LocalPlayer.Transform.position;
                     int px = Mathf.FloorToInt(me.x / Cell), pz = Mathf.FloorToInt(me.z / Cell);
-                    float edge;
                     if (alongX)
                     {
                         int side = cx != px ? (cx > px ? 0 : 1) : (fwd.x >= 0 ? 1 : 0);
-                        edge = (cx + side) * Cell;
-                        pos = new Vector3(edge, baseY + Cell * 0.5f, cellCenter.z);
+                        pos = new Vector3((cx + side) * Cell, baseY + Cell * 0.5f, cellCenter.z);
                         rot = Quaternion.Euler(0f, 90f, 0f);
                     }
                     else
                     {
                         int side = cz != pz ? (cz > pz ? 0 : 1) : (fwd.z >= 0 ? 1 : 0);
-                        edge = (cz + side) * Cell;
-                        pos = new Vector3(cellCenter.x, baseY + Cell * 0.5f, edge);
+                        pos = new Vector3(cellCenter.x, baseY + Cell * 0.5f, (cz + side) * Cell);
                         rot = Quaternion.identity;
                     }
                     break;
@@ -159,13 +171,21 @@ namespace HtfFortress
                     pos = cellCenter;
                     rot = Quaternion.identity;
                     break;
-                default: // Ramp rises toward where you look
+                case PieceType.Ramp: // rises toward where you look
                     pos = cellCenter + Vector3.up * Cell * 0.5f;
                     rot = Quaternion.Euler(-45f, yaw, 0f);
+                    break;
+                default: // turret stands in the middle of the cell, on whatever surface is there (ground or a floor)
+                    pos = new Vector3(cellCenter.x, baseY, cellCenter.z);
+                    if (Physics.Raycast(pos + Vector3.up * (Cell + 1f), Vector3.down, out var ground, Cell * 2f, mask, QueryTriggerInteraction.Ignore))
+                        pos.y = ground.point.y;
+                    rot = Quaternion.Euler(0f, yaw, 0f);
                     break;
             }
             return hit;
         }
+
+        private static bool Clashes(PieceType a, PieceType b) => a == b || (Catalog.IsTurret(a) && Catalog.IsTurret(b));
 
         private void UpdateGhost()
         {
@@ -181,46 +201,64 @@ namespace HtfFortress
 
             bool hit = ComputePlacement(out var pos, out var rot);
             bool aboveWater = pos.y + Cell > WaterManager.GetWaterHeight(pos);
-            bool free = !_pieces.Values.Any(p => p && (p.transform.position - pos).sqrMagnitude < 0.01f && SameType(p, _type));
-            _ghostValid = hit && aboveWater && free;
+            bool free = !_states.Values.Any(s => Clashes(s.Type, _type) && (s.Pos - pos).sqrMagnitude < 0.01f);
+            bool affordable = !Siege.Instance.ViewActive || Siege.Instance.ViewCoins >= Catalog.BuildCost(_type);
+            _ghostValid = hit && aboveWater && free && affordable;
 
             _ghost.SetActive(true);
             _ghost.transform.SetPositionAndRotation(pos, rot);
             Models.Paint(_ghost, _ghostValid ? new Color(0.3f, 0.6f, 1f) : new Color(0.9f, 0.2f, 0.2f));
         }
 
-        private static bool SameType(GameObject go, PieceType t) => go.name.StartsWith("FortressPiece_" + t);
-
-        // Root holds the box collider (cheap, matches the grid); the Blender model is a child.
+        // Root holds the box collider (cheap, matches the grid); the Blender model is a child. Turrets get a "Head" to aim.
         private static GameObject CreatePieceObject(PieceType t, int layer)
         {
-            Vector3 size = t == PieceType.Wall ? new Vector3(Cell, Cell, Thick)
-                         : t == PieceType.Floor ? new Vector3(Cell, Thick, Cell)
-                         : new Vector3(Cell, Thick, Cell * 1.4142f);
+            Vector3 size = Catalog.Size(t);
             var go = new GameObject("FortressPiece");
             go.layer = layer;
-            go.AddComponent<BoxCollider>().size = size;
-            Models.Attach(t.ToString(), go.transform, size);
+            var col = go.AddComponent<BoxCollider>();
+            col.size = size;
+            if (Catalog.IsTurret(t))
+            {
+                col.center = new Vector3(0f, size.y * 0.5f, 0f);
+                Models.Attach("TurretBase", go.transform, new Vector3(1.4f, 0.8f, 1.4f), new Vector3(0f, 0.4f, 0f));
+                var head = new GameObject("Head");
+                head.layer = layer;
+                head.transform.SetParent(go.transform, false);
+                head.transform.localPosition = new Vector3(0f, 0.85f, 0f);
+                Models.Attach(t == PieceType.Cannon ? "CannonHead" : "GunHead", head.transform, new Vector3(0.6f, 0.5f, 1.4f));
+            }
+            else Models.Attach(t.ToString(), go.transform, size);
             return go;
         }
 
-        private bool LookedAtPiece(out int id)
+        // Shows what you're looking at and returns its id (0 = nothing).
+        private void UpdateLookInfo(out int id)
         {
             id = 0;
+            _lookInfo = "";
             Transform cam = GameInfo.CurCamera.transform;
-            return Physics.Raycast(cam.position, cam.forward, out var rh, Reach, 1 << PieceLayer, QueryTriggerInteraction.Ignore)
-                   && _pieceIds.TryGetValue(rh.collider.gameObject, out id);
+            if (!Physics.Raycast(cam.position, cam.forward, out var rh, Reach, 1 << PieceLayer, QueryTriggerInteraction.Ignore)) return;
+            var root = rh.collider.attachedRigidbody ? rh.collider.attachedRigidbody.gameObject : rh.collider.gameObject;
+            if (!_pieceIds.TryGetValue(root, out id) || !_states.TryGetValue(id, out var s)) { id = 0; return; }
+            string up = s.Level < Catalog.MaxLevel ? L10n.T("upgradeHint", Catalog.UpgradeCost(s.Type, s.Level)) : L10n.T("maxLevel");
+            _lookInfo = L10n.T("lookInfo", PieceName(s.Type, s.Level), s.Level, s.Hp, s.MaxHp, up);
         }
 
-        private TextMeshProUGUI _hud;
+        public static string PieceName(PieceType t, int level)
+        {
+            if (t == PieceType.Wall) return L10n.T(level >= 3 ? "WallMetal" : level == 2 ? "WallStone" : "Wall");
+            return L10n.T(t.ToString());
+        }
 
         private void LateUpdate()
         {
             if (!_building) { if (_hud) _hud.gameObject.SetActive(false); return; }
-            if (!_hud) _hud = Hud.CreateText("BuildHint", new Vector2(0.5f, 0f), new Vector2(0f, 90f), 28f, TextAlignmentOptions.Bottom);
+            if (!_hud) _hud = Hud.CreateText("BuildHint", new Vector2(0.5f, 0f), new Vector2(0f, 80f), 26f, TextAlignmentOptions.Bottom);
             if (!_hud) return;
             _hud.gameObject.SetActive(true);
-            _hud.text = L10n.T("buildHud", L10n.T(_type.ToString()));
+            string cost = Siege.Instance.ViewActive ? L10n.T("cost", Catalog.BuildCost(_type)) : L10n.T("free");
+            _hud.text = (_lookInfo.Length > 0 ? _lookInfo + "\n" : "") + L10n.T("buildHud", PieceName(_type, 1) + cost);
         }
 
         // ---------- networking ----------
@@ -232,20 +270,52 @@ namespace HtfFortress
             _registeredOn = nm;
             nm.ServerManager.RegisterBroadcast<PiecePlaceRequest>(OnPlaceRequest);
             nm.ServerManager.RegisterBroadcast<PieceRemoveRequest>(OnRemoveRequest);
+            nm.ServerManager.RegisterBroadcast<PieceUpgradeRequest>(OnUpgradeRequest);
             nm.ClientManager.RegisterBroadcast<PieceState>(OnPieceState);
             nm.SceneManager.OnClientLoadedStartScenes += OnClientLoaded;
-            nm.ServerManager.OnServerConnectionState += a => { if (a.ConnectionState == LocalConnectionState.Stopped) _serverPieces.Clear(); };
+            nm.ServerManager.OnServerConnectionState += a => { if (a.ConnectionState == LocalConnectionState.Stopped) { _serverPieces.Clear(); _spent.Clear(); } };
             nm.ClientManager.OnClientConnectionState += a => { if (a.ConnectionState == LocalConnectionState.Stopped) ClearLocalPieces(); };
             Log.LogInfo("Build system registered on NetworkManager.");
         }
 
         private void OnPlaceRequest(NetworkConnection conn, PiecePlaceRequest req, Channel ch)
         {
-            // ponytail: host only rejects duplicates; add cost / build-phase / reach checks with the economy step.
-            if (_serverPieces.Values.Any(p => p.Type == req.Type && (p.Pos - req.Pos).sqrMagnitude < 0.01f)) return;
-            int maxHp = req.Type == PieceType.Wall ? 150 : 100;
-            var state = new PieceState { Id = _nextId++, Type = req.Type, Pos = req.Pos, RotY = req.RotY, Hp = maxHp, MaxHp = maxHp };
+            if (_serverPieces.Values.Any(p => Clashes(p.Type, req.Type) && (p.Pos - req.Pos).sqrMagnitude < 0.01f)) return;
+            int cost = Catalog.BuildCost(req.Type);
+            if (!Siege.Instance.ServerTrySpend(cost)) return; // free outside fortress mode
+            int maxHp = Catalog.MaxHp(req.Type, 1);
+            var state = new PieceState { Id = _nextId++, Type = req.Type, Pos = req.Pos, RotY = req.RotY, Hp = maxHp, MaxHp = maxHp, Level = 1 };
             _serverPieces[state.Id] = state;
+            _spent[state.Id] = Siege.Instance.ServerActive ? cost : 0;
+            InstanceFinder.ServerManager.Broadcast(state);
+        }
+
+        private void OnUpgradeRequest(NetworkConnection conn, PieceUpgradeRequest req, Channel ch)
+        {
+            if (!_serverPieces.TryGetValue(req.Id, out var s) || s.Level >= Catalog.MaxLevel) return;
+            int cost = Catalog.UpgradeCost(s.Type, s.Level);
+            if (!Siege.Instance.ServerTrySpend(cost)) return;
+            if (Siege.Instance.ServerActive) _spent[s.Id] += cost;
+            s.Level++;
+            int newMax = Catalog.MaxHp(s.Type, s.Level);
+            s.Hp += newMax - s.MaxHp; // upgrading also repairs by the difference
+            s.MaxHp = newMax;
+            _serverPieces[s.Id] = s;
+            InstanceFinder.ServerManager.Broadcast(s);
+        }
+
+        private void OnRemoveRequest(NetworkConnection conn, PieceRemoveRequest req, Channel ch)
+        {
+            if (!_serverPieces.TryGetValue(req.Id, out var state)) return;
+            if (_spent.TryGetValue(req.Id, out int spent)) Siege.Instance.ServerAddCoins(spent / 2);
+            Remove(state);
+        }
+
+        private void Remove(PieceState state)
+        {
+            _serverPieces.Remove(state.Id);
+            _spent.Remove(state.Id);
+            state.Removed = true;
             InstanceFinder.ServerManager.Broadcast(state);
         }
 
@@ -254,21 +324,15 @@ namespace HtfFortress
         {
             if (!col || !_pieceIds.TryGetValue(col.gameObject, out int id) || !_serverPieces.TryGetValue(id, out var state)) return false;
             state.Hp -= dmg;
-            if (state.Hp <= 0) { _serverPieces.Remove(id); state.Removed = true; }
-            else _serverPieces[id] = state;
+            if (state.Hp <= 0) { Remove(state); return true; }
+            _serverPieces[id] = state;
             InstanceFinder.ServerManager.Broadcast(state);
             return true;
         }
 
-        public static bool IsWall(Collider col) => col && col.gameObject.name.StartsWith("FortressPiece_Wall");
-
-        private void OnRemoveRequest(NetworkConnection conn, PieceRemoveRequest req, Channel ch)
-        {
-            if (!_serverPieces.TryGetValue(req.Id, out var state)) return;
-            _serverPieces.Remove(req.Id);
-            state.Removed = true;
-            InstanceFinder.ServerManager.Broadcast(state);
-        }
+        // Pieces a walker has to break through (it walks over floors and ramps).
+        public static bool IsWall(Collider col) => col && (col.gameObject.name.StartsWith("FortressPiece_Wall")
+            || col.gameObject.name.StartsWith("FortressPiece_Cannon") || col.gameObject.name.StartsWith("FortressPiece_Gun"));
 
         private void OnClientLoaded(NetworkConnection conn, bool asServer)
         {
@@ -283,8 +347,10 @@ namespace HtfFortress
             {
                 if (go) { _pieceIds.Remove(go); Destroy(go); }
                 _pieces.Remove(s.Id);
+                _states.Remove(s.Id);
                 return;
             }
+            _states.TryGetValue(s.Id, out var prev);
             if (!go)
             {
                 go = CreatePieceObject(s.Type, PieceLayer); // ground layer, so players and creatures can stand and walk on it
@@ -293,16 +359,18 @@ namespace HtfFortress
                 go.transform.rotation = s.Type == PieceType.Ramp ? Quaternion.Euler(-45f, s.RotY, 0f) : Quaternion.Euler(0f, s.RotY, 0f);
                 _pieces[s.Id] = go;
                 _pieceIds[go] = s.Id;
+                prev.Level = 0;
             }
-            // Darken toward red as the piece takes damage.
-            float t = s.MaxHp > 0 ? Mathf.Clamp01((float)s.Hp / s.MaxHp) : 1f;
-            Models.Tint(go, t);
+            if (prev.Level != s.Level) Models.SetLevelLook(go, s.Type, s.Level);
+            _states[s.Id] = s;
+            Models.Tint(go, s.MaxHp > 0 ? Mathf.Clamp01((float)s.Hp / s.MaxHp) : 1f);
         }
 
         private void ClearLocalPieces()
         {
             foreach (var p in _pieces.Values) if (p) Destroy(p);
             _pieces.Clear();
+            _states.Clear();
             _pieceIds.Clear();
         }
     }

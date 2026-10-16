@@ -13,7 +13,7 @@ namespace HtfFortress
 {
     // Fortress mode: host presses a key, a core appears where they stand, and waves of the game's own creatures attack.
     // Walkers (RunningFish) charge the core and break walls; the rest spawn near the host. Each wave is bigger and tougher.
-    [BepInPlugin("owen.htf.fortress", "HTF Fortress", "0.2.0")]
+    [BepInPlugin("owen.htf.fortress", "HTF Fortress", "0.3.0")]
     public class FortressPlugin : BaseUnityPlugin
     {
         private ConfigEntry<Key> _toggleKey;
@@ -26,8 +26,14 @@ namespace HtfFortress
         private ConfigEntry<int> _bestWave;
         private ConfigEntry<float> _walkerShare;
         private ConfigEntry<float> _walkerRadius;
+        private ConfigEntry<Key> _readyKey;
+        private ConfigEntry<float> _firstBuildSeconds;
+        private ConfigEntry<int> _killReward;
+        private ConfigEntry<int> _waveBonus;
 
-        private readonly List<Creature> _alive = new List<Creature>();
+        // Wave creatures still alive; turrets pick targets from here.
+        public static readonly List<Creature> Alive = new List<Creature>();
+        private List<Creature> _alive => Alive;
         private List<Item> _poolPrefabs = new List<Item>();
         private List<Item> _walkerPrefabs = new List<Item>();
         private bool _running;
@@ -45,18 +51,25 @@ namespace HtfFortress
             _countPerWave = Config.Bind("Waves", "CountPerWave", 2, new ConfigDescription("Extra creatures added each wave.", new AcceptableValueRange<int>(0, 20)));
             _hpPerWave = Config.Bind("Waves", "HpPerWave", 0.25f, new ConfigDescription("Extra HP multiplier per wave (0.25 = +25% each wave).", new AcceptableValueRange<float>(0f, 2f)));
             _radius = Config.Bind("Waves", "SpawnRadius", 6f, new ConfigDescription("Distance from the host where creatures appear.", new AcceptableValueRange<float>(3f, 80f)));
-            _breakSeconds = Config.Bind("Waves", "BreakSeconds", 10f, new ConfigDescription("Pause between waves.", new AcceptableValueRange<float>(0f, 60f)));
+            _breakSeconds = Config.Bind("Waves", "BreakSeconds", 20f, new ConfigDescription("Build time between waves.", new AcceptableValueRange<float>(0f, 60f)));
             _bestWave = Config.Bind("Stats", "BestWave", 0, "Most waves cleared in one run (saved automatically).");
             _walkerShare = Config.Bind("Siege", "WalkerShare", 0.5f, new ConfigDescription("Share of each wave that are walkers charging the core.", new AcceptableValueRange<float>(0f, 1f)));
             _walkerRadius = Config.Bind("Siege", "WalkerSpawnRadius", 25f, new ConfigDescription("How far from the core walkers appear (on land).", new AcceptableValueRange<float>(8f, 80f)));
             Siege.CoreMaxHp = Config.Bind("Siege", "CoreMaxHp", 500, new ConfigDescription("Core health.", new AcceptableValueRange<int>(50, 10000)));
             Siege.WalkerDamage = Config.Bind("Siege", "WalkerDamage", 10, new ConfigDescription("Damage a walker deals per hit to walls and the core.", new AcceptableValueRange<int>(1, 500)));
+            _readyKey = Config.Bind("Waves", "ReadyKey", Key.N, "Host presses this during build time to start the next wave right away.");
+            _firstBuildSeconds = Config.Bind("Waves", "FirstBuildSeconds", 30f, new ConfigDescription("Build time before wave 1.", new AcceptableValueRange<float>(0f, 120f)));
+            Siege.StartCoins = Config.Bind("Economy", "StartCoins", 100, new ConfigDescription("Team coins at the start of a run.", new AcceptableValueRange<int>(0, 10000)));
+            _killReward = Config.Bind("Economy", "KillReward", 3, new ConfigDescription("Coins per kill (plus the wave number).", new AcceptableValueRange<int>(0, 100)));
+            _waveBonus = Config.Bind("Economy", "WaveBonus", 20, new ConfigDescription("Coins for clearing a wave (plus 5 x wave).", new AcceptableValueRange<int>(0, 500)));
+            Turrets.DamageMultiplier = Config.Bind("Economy", "TurretDamage", 1f, new ConfigDescription("Turret damage multiplier.", new AcceptableValueRange<float>(0.1f, 10f)));
             L10n.Setting = Config.Bind("General", "Language", LanguageSetting.Auto, "Language for Fortress messages. Auto follows the game.");
             BuildSystem.BuildKey = Config.Bind("Build", "BuildKey", Key.B, "Toggle build mode (place walls).");
             BuildSystem.Log = Logger;
             Models.Dir = Path.Combine(Path.GetDirectoryName(Info.Location), "Models");
             gameObject.AddComponent<BuildSystem>();
             gameObject.AddComponent<Siege>();
+            gameObject.AddComponent<Turrets>();
             new Harmony("owen.htf.fortress").PatchAll();
             Logger.LogInfo("HTF Fortress loaded. Host: press " + _toggleKey.Value + " in game to start waves.");
         }
@@ -93,13 +106,25 @@ namespace HtfFortress
             if (Siege.Instance.CoreDestroyed) { Stop(L10n.T("coreDown")); return; }
 
             // Creature.Hp is only filled in OnStartClient; the synced _hp is valid from spawn.
+            int before = _alive.Count;
             _alive.RemoveAll(c => !c || c._hp.Value <= 0);
-            Siege.Instance.ServerProgress(_wave, _alive.Count);
+            int killed = before - _alive.Count;
+            if (killed > 0) Siege.Instance.ServerAddCoins(killed * (_killReward.Value + _wave));
+
             if (_alive.Count == 0 && _nextWaveAt == 0f)
             {
-                if (_wave > 0) { _cleared = _wave; Say(L10n.T("cleared", _wave, _breakSeconds.Value.ToString("0"))); }
-                _nextWaveAt = Time.time + (_wave == 0 ? 3f : _breakSeconds.Value);
+                if (_wave > 0)
+                {
+                    _cleared = _wave;
+                    int bonus = _waveBonus.Value + 5 * _wave;
+                    Siege.Instance.ServerAddCoins(bonus);
+                    Say(L10n.T("cleared", _wave, bonus, _breakSeconds.Value.ToString("0"), _readyKey.Value));
+                }
+                _nextWaveAt = Time.time + (_wave == 0 ? _firstBuildSeconds.Value : _breakSeconds.Value);
             }
+            bool building = _nextWaveAt > 0f;
+            if (building && kb != null && kb[_readyKey.Value].wasPressedThisFrame && !ChatManager.IsTyping) _nextWaveAt = Time.time;
+            Siege.Instance.ServerProgress(_wave, _alive.Count, building, building ? Mathf.CeilToInt(_nextWaveAt - Time.time) : 0);
             if (_nextWaveAt > 0f && Time.time >= _nextWaveAt)
             {
                 _nextWaveAt = 0f;
@@ -122,6 +147,7 @@ namespace HtfFortress
             _alive.Clear();
             Siege.Instance.ServerStart(Player.LocalPlayer.Transform.position);
             Say(L10n.T("start", pool.Count, _bestWave.Value, _toggleKey.Value));
+            Say(L10n.T("startHint", BuildSystem.BuildKey.Value, _readyKey.Value));
             Shot("start", 2f);
         }
 

@@ -16,6 +16,7 @@ namespace HtfFortress
         private static readonly Dictionary<string, Model> Cache = new Dictionary<string, Model>();
         private static Material _template;
         private static readonly Dictionary<Renderer, Color[]> BaseColors = new Dictionary<Renderer, Color[]>();
+        private static readonly Dictionary<Renderer, Color[]> Originals = new Dictionary<Renderer, Color[]>();
 
         // ---------- materials ----------
 
@@ -93,7 +94,9 @@ namespace HtfFortress
             go.transform.localPosition = model != null ? Vector3.zero : fallbackOffset;
             go.layer = parent.gameObject.layer;
             var r = go.GetComponent<Renderer>();
-            BaseColors[r] = r.sharedMaterials.Select(m => m.HasProperty("_BaseColor") ? m.GetColor("_BaseColor") : m.HasProperty("_Color") ? m.color : Color.white).ToArray();
+            var cols = model != null ? model.Colors.ToArray() : new[] { new Color(0.6f, 0.45f, 0.3f) };
+            BaseColors[r] = cols;
+            Originals[r] = cols.ToArray();
             return go;
         }
 
@@ -107,6 +110,26 @@ namespace HtfFortress
                 for (int i = 0; i < mats.Length && i < baseCols.Length; i++)
                     SetMatColor(mats[i], Color.Lerp(new Color(0.5f, 0.08f, 0.08f), baseCols[i], t));
             }
+        }
+
+        // Upgrades change the look: walls/floors go wood -> stone -> metal, turrets gain gold trim.
+        public static void SetLevelLook(GameObject root, PieceType type, int level)
+        {
+            foreach (var r in root.GetComponentsInChildren<Renderer>())
+            {
+                if (!Originals.TryGetValue(r, out var orig)) continue;
+                BaseColors[r] = orig.Select(c => LevelColor(c, type, level)).ToArray();
+            }
+        }
+
+        private static Color LevelColor(Color c, PieceType type, int level)
+        {
+            if (level <= 1) return c;
+            float lum = c.grayscale;
+            if (Catalog.IsTurret(type))
+                return Color.Lerp(c, new Color(1f, 0.8f, 0.3f), level == 2 ? 0.2f : 0.45f);
+            var target = level == 2 ? new Color(0.58f, 0.58f, 0.6f) : new Color(0.38f, 0.43f, 0.52f);
+            return Color.Lerp(new Color(lum, lum, lum), target, 0.75f) * (0.7f + lum);
         }
 
         // Ghost preview: every material one flat colour.

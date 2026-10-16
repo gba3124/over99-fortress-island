@@ -13,7 +13,7 @@ using UnityEngine;
 namespace HtfFortress
 {
     // Host -> everyone: the core and the wave status shown on the HUD.
-    public struct SiegeState : IBroadcast { public bool Active; public Vector3 CorePos; public int CoreHp; public int CoreMax; public int Wave; public int Remaining; }
+    public struct SiegeState : IBroadcast { public bool Active; public Vector3 CorePos; public int CoreHp; public int CoreMax; public int Wave; public int Remaining; public int Coins; public bool Building; public int Countdown; }
 
     // The fortress core, and the walkers that charge it and break walls in the way.
     // All decisions run on the host; clients just draw the core and the HUD from SiegeState.
@@ -22,6 +22,7 @@ namespace HtfFortress
         public static Siege Instance;
         public static ConfigEntry<int> CoreMaxHp;
         public static ConfigEntry<int> WalkerDamage;
+        public static ConfigEntry<int> StartCoins;
 
         private const float CoreRadius = 0.8f;
         private const float CoreHitRange = CoreRadius + 1.3f;
@@ -48,12 +49,12 @@ namespace HtfFortress
             GenericWriter<SiegeState>.SetWrite((w, v) =>
             {
                 w.WriteBoolean(v.Active); w.WriteVector3(v.CorePos); w.WriteInt32(v.CoreHp); w.WriteInt32(v.CoreMax);
-                w.WriteInt32(v.Wave); w.WriteInt32(v.Remaining);
+                w.WriteInt32(v.Wave); w.WriteInt32(v.Remaining); w.WriteInt32(v.Coins); w.WriteBoolean(v.Building); w.WriteInt32(v.Countdown);
             });
             GenericReader<SiegeState>.SetRead(r => new SiegeState
             {
                 Active = r.ReadBoolean(), CorePos = r.ReadVector3(), CoreHp = r.ReadInt32(), CoreMax = r.ReadInt32(),
-                Wave = r.ReadInt32(), Remaining = r.ReadInt32()
+                Wave = r.ReadInt32(), Remaining = r.ReadInt32(), Coins = r.ReadInt32(), Building = r.ReadBoolean(), Countdown = r.ReadInt32()
             });
         }
 
@@ -63,6 +64,25 @@ namespace HtfFortress
 
         public bool CoreDestroyed => _server.Active && _server.CoreHp <= 0;
         public Vector3 CorePos => _server.CorePos;
+        public bool ServerActive => _server.Active;
+        public bool ViewActive => _view.Active;
+        public int ViewCoins => _view.Coins;
+
+        // Outside fortress mode building is free (sandbox); inside it costs the team's coins.
+        public bool ServerTrySpend(int cost)
+        {
+            if (!_server.Active) return true;
+            if (_server.Coins < cost) return false;
+            _server.Coins -= cost;
+            Send(true);
+            return true;
+        }
+
+        public void ServerAddCoins(int amount)
+        {
+            if (!_server.Active || amount <= 0) return;
+            _server.Coins += amount;
+        }
 
         public void ServerStart(Vector3 near)
         {
@@ -71,7 +91,7 @@ namespace HtfFortress
             if (Physics.Raycast(near + Vector3.up * 2f, Vector3.down, out var rh, 6f, GameInfo.LevelLayer)) pos = rh.point;
             pos.y = Mathf.Max(pos.y, WaterManager.GetWaterHeight(pos));
             BuildSystem.Log.LogInfo($"Core placed at {pos} (host at {near}).");
-            _server = new SiegeState { Active = true, CorePos = pos, CoreHp = CoreMaxHp.Value, CoreMax = CoreMaxHp.Value };
+            _server = new SiegeState { Active = true, CorePos = pos, CoreHp = CoreMaxHp.Value, CoreMax = CoreMaxHp.Value, Coins = StartCoins.Value, Building = true };
             _walkers.Clear();
             _nextAttack.Clear();
             Send(true);
@@ -85,10 +105,12 @@ namespace HtfFortress
             Send(true);
         }
 
-        public void ServerProgress(int wave, int remaining)
+        public void ServerProgress(int wave, int remaining, bool building, int countdown)
         {
             _server.Wave = wave;
             _server.Remaining = remaining;
+            _server.Building = building;
+            _server.Countdown = countdown;
         }
 
         public void RegisterWalker(Creature c)
@@ -123,11 +145,13 @@ namespace HtfFortress
 
             if (dist <= CoreHitRange) { Halt(rig); TryAttack(fish, null); return true; }
 
+            // Overlap just ahead (a cast would miss a wall the fish is already pressed against).
             int mask = 1 << BuildSystem.PieceLayer;
-            if (Physics.SphereCast(pos + Vector3.up * 0.4f, 0.3f, dir, out var hit, 0.9f, mask, QueryTriggerInteraction.Ignore) && BuildSystem.IsWall(hit.collider))
+            foreach (var col in Physics.OverlapSphere(pos + dir * 0.6f + Vector3.up * 0.4f, 0.45f, mask, QueryTriggerInteraction.Ignore))
             {
+                if (!BuildSystem.IsWall(col)) continue;
                 Halt(rig);
-                TryAttack(fish, hit.collider);
+                TryAttack(fish, col);
                 return true;
             }
 
@@ -182,7 +206,8 @@ namespace HtfFortress
             if (_hud)
             {
                 _hud.gameObject.SetActive(true);
-                _hud.text = L10n.T("siegeHud", _view.Wave, _view.CoreHp, _view.CoreMax, _view.Remaining);
+                string phase = _view.Building ? L10n.T("buildPhase", _view.Countdown) : L10n.T("fightPhase");
+                _hud.text = L10n.T("siegeHud", _view.Wave, _view.CoreHp, _view.CoreMax, _view.Remaining, _view.Coins) + "\n" + phase;
             }
         }
 
