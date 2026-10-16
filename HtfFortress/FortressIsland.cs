@@ -96,9 +96,10 @@ namespace HtfFortress
 
             if (!unlocked) { Despawn(); return; }
             // Sit offshore of whichever island is loaded; only move between rounds.
-            if (!(Siege.Instance && Siege.Instance.ViewActive) && (float.IsNaN(_anchor.x) || (Island.IslandPos - _anchor).sqrMagnitude > 1f))
+            Vector3 anchor = MainIslandPos();
+            if (!(Siege.Instance && Siege.Instance.ViewActive) && (float.IsNaN(_anchor.x) || (anchor - _anchor).sqrMagnitude > 1f))
             {
-                _anchor = Island.IslandPos;
+                _anchor = anchor;
                 Center = PickCenter(_anchor);
                 Despawn();
             }
@@ -112,6 +113,14 @@ namespace HtfFortress
         }
         private bool _wasUnlockedKnown;
         private bool _welcomed;
+
+        // The main island you're on (fixed per island). Island.IslandPos also follows the random mini islands
+        // the game streams in ahead of the boat, which would make the fortress jump around.
+        private static Vector3 MainIslandPos()
+        {
+            try { return IslandManager.GetIslandInfo(OnlineIslandManager.CurIsland).IslandPosition; }
+            catch { return Island.IslandPos; }
+        }
 
         // Offshore, pointing away from the other islands so it never overlaps one.
         private static Vector3 PickCenter(Vector3 cur)
