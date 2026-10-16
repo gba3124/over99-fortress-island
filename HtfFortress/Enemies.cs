@@ -150,6 +150,53 @@ namespace HtfFortress
                 }
             }
             for (int i = used; i < _markers.Count; i++) if (_markers[i]) _markers[i].gameObject.SetActive(false);
+            DrawPlates(cam);
+        }
+
+        // Over elites, bosses and the special kinds: name and health bar; over anything hurt: just the bar.
+        private readonly List<(RectTransform root, TMPro.TextMeshProUGUI name, Hud.Bar bar)> _plates = new List<(RectTransform, TMPro.TextMeshProUGUI, Hud.Bar)>();
+        private readonly Dictionary<int, int> _seenMax = new Dictionary<int, int>();
+
+        private static bool Named(EnemyTag t) => t.Elite || EnemyCatalog.IsBoss(t.Kind) || t.Kind >= EnemyKind.Thief && t.Kind != EnemyKind.Mini;
+
+        private void DrawPlates(Camera cam)
+        {
+            int used = 0;
+            var cm = InstanceFinder.ClientManager;
+            if (cam && cm != null && Hud.Font && Siege.Instance && Siege.Instance.ViewActive)
+                foreach (int id in _dressed)
+                {
+                    if (used >= 24) break;
+                    if (!cm.Objects.Spawned.TryGetValue(id, out NetworkObject nob) || !nob || !(nob.GetComponent<Creature>() is Creature c) || !_clientTags.TryGetValue(id, out var tag)) continue;
+                    int hp = c._hp.Value;
+                    if (hp <= 0) continue;
+                    int max = _seenMax.TryGetValue(id, out int m) ? Mathf.Max(m, hp) : hp;
+                    _seenMax[id] = max;
+                    bool named = Named(tag), hurt = hp < max;
+                    float dist = Vector3.Distance(cam.transform.position, nob.transform.position);
+                    if (!(named && dist < 35f) && !(hurt && dist < 22f)) continue;
+                    var rends = nob.GetComponentsInChildren<Renderer>();
+                    float top = rends.Length > 0 ? rends.Max(r => r.bounds.max.y) : nob.transform.position.y + 1f;
+                    Vector3 sp = cam.WorldToScreenPoint(new Vector3(nob.transform.position.x, top + 0.35f, nob.transform.position.z));
+                    if (sp.z < 0f) continue;
+                    if (used >= _plates.Count)
+                    {
+                        var rt = Hud.Node(Hud.Root, "Plate", Vector2.zero, Vector2.zero, new Vector2(160f, 40f), new Vector2(0.5f, 0f));
+                        var name = Hud.Label(rt, "", 18f, new Vector2(0.5f, 0f), new Vector2(0f, 12f), new Vector2(240f, 26f), TMPro.TextAlignmentOptions.Bottom, bold: true, outline: true);
+                        var bar = Hud.Bar.Make(rt, new Vector2(0.5f, 0f), Vector2.zero, new Vector2(74f, 9f), Hud.Bad);
+                        _plates.Add((rt, name, bar));
+                    }
+                    var (root, label, hpBar) = _plates[used++];
+                    root.gameObject.SetActive(true);
+                    root.anchorMin = root.anchorMax = new Vector2(sp.x / Screen.width, sp.y / Screen.height);
+                    root.anchoredPosition = Vector2.zero;
+                    float scale = Mathf.Clamp(14f / Mathf.Max(1f, dist), 0.65f, 1.15f) * (EnemyCatalog.IsBoss(tag.Kind) ? 1.4f : 1f);
+                    root.localScale = Vector3.one * scale;
+                    label.gameObject.SetActive(named);
+                    if (named) { label.text = (tag.Elite ? "★ " : "") + L10n.T("enemy" + tag.Kind); label.color = tag.Elite || EnemyCatalog.IsBoss(tag.Kind) ? Hud.Gold : Color.Lerp(Color.white, DyeOf(tag.Kind), 0.8f); }
+                    hpBar.Set((float)hp / Mathf.Max(1, max), Hud.Bad);
+                }
+            for (int i = used; i < _plates.Count; i++) if (_plates[i].root) _plates[i].root.gameObject.SetActive(false);
         }
 
         private void Update()
@@ -189,11 +236,64 @@ namespace HtfFortress
             float width = Mathf.Max(0.3f, Mathf.Min(b.size.x, b.size.z));
             Vector3 topLocal = root.InverseTransformPoint(new Vector3(b.center.x, b.max.y, b.center.z));
 
+            _clientTags[tag.ObjectId] = tag;
+            Tint(root, tag.Kind); // before the gear goes on, so only the fish is dyed
             if (stats.Gear != null) Wear(root, stats.Gear, topLocal - Vector3.up * (stats.Gear.EndsWith("Shell") ? 0.35f * b.size.y / stats.Scale : 0.05f), width / stats.Scale);
             if (tag.Elite) Wear(root, "Crown", topLocal, width * 0.7f / stats.Scale);
             _dressed.Add(tag.ObjectId);
             AutoTest.Count("dressed_" + tag.Kind);
             return true;
+        }
+
+        // ---------- look: a dye per kind (a tinted copy of the fish's palette texture) ----------
+
+        private readonly Dictionary<int, EnemyTag> _clientTags = new Dictionary<int, EnemyTag>();
+        private static readonly Dictionary<(Texture, EnemyKind), Texture> Tinted = new Dictionary<(Texture, EnemyKind), Texture>();
+        private static Material _blit;
+
+        public static Color DyeOf(EnemyKind k)
+        {
+            switch (k)
+            {
+                case EnemyKind.Charger: return new Color(1f, 0.7f, 0.66f);
+                case EnemyKind.Bomber: return new Color(0.72f, 0.72f, 0.8f);
+                case EnemyKind.Tank: return new Color(0.82f, 0.8f, 0.72f);
+                case EnemyKind.Thief: return new Color(0.82f, 0.7f, 1f);
+                case EnemyKind.Shield: return new Color(0.72f, 0.84f, 1f);
+                case EnemyKind.Digger: return new Color(0.92f, 0.78f, 0.58f);
+                case EnemyKind.Healer: return new Color(0.68f, 1f, 0.72f);
+                case EnemyKind.Splitter: case EnemyKind.Mini: return new Color(0.84f, 1f, 0.52f);
+                case EnemyKind.Queen: return new Color(1f, 0.74f, 0.84f);
+                case EnemyKind.Tide: return new Color(0.62f, 0.84f, 1f);
+                case EnemyKind.Boss: return new Color(0.78f, 0.74f, 0.7f);
+                default: return Color.white;
+            }
+        }
+
+        private static void Tint(Transform root, EnemyKind kind)
+        {
+            Color c = DyeOf(kind);
+            if (c == Color.white) return;
+            if (!_blit) { var sh = Shader.Find("UI/Default"); if (!sh) return; _blit = new Material(sh); }
+            foreach (var r in root.GetComponentsInChildren<Renderer>())
+            {
+                var mats = r.materials; // per-fish instances
+                foreach (var m in mats)
+                    foreach (string prop in new[] { "_Colors", "_BaseMap", "_MainTex" })
+                    {
+                        if (!m.HasProperty(prop) || !(m.GetTexture(prop) is Texture src)) continue;
+                        if (!Tinted.TryGetValue((src, kind), out var dst))
+                        {
+                            var rt = new RenderTexture(src.width, src.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { filterMode = src.filterMode, wrapMode = src.wrapMode };
+                            _blit.color = c;
+                            Graphics.Blit(src, rt, _blit);
+                            Tinted[(src, kind)] = dst = rt;
+                        }
+                        m.SetTexture(prop, dst);
+                        break;
+                    }
+                r.materials = mats;
+            }
         }
 
         private static void Wear(Transform root, string model, Vector3 localPos, float size)

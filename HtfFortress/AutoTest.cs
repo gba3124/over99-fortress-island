@@ -140,6 +140,17 @@ namespace HtfFortress
                 .Where(kv => kv.Value && !kv.Value.GetComponent<Creature>()).OrderBy(kv => kv.Key)
                 .Select(kv => $"{kv.Key}|{kv.Value.Type}|{kv.Value.DefaultWorth}|{string.Join(",", kv.Value.GetComponents<MonoBehaviour>().Select(m => m.GetType().Name).Where(n => n != "Item" && !n.StartsWith("Network")).Distinct())}");
             File.WriteAllText(Path.Combine(Root, "fortress-items.txt"), string.Join("\n", items));
+            // The walking fish's materials (for dyeing enemies).
+            var dripper = ((Dictionary<string, Item>)AccessTools.Field(typeof(GameInfo), "_nameToSpawnable").GetValue(null)).TryGetValue("dripper", out var dp) ? dp : null;
+            if (dripper)
+                foreach (var r in dripper.GetComponentsInChildren<Renderer>(true))
+                    foreach (var m in r.sharedMaterials.Where(x => x))
+                    {
+                        var sh = m.shader;
+                        var props = Enumerable.Range(0, sh.GetPropertyCount()).Select(i => sh.GetPropertyName(i) + ":" + sh.GetPropertyType(i) + (sh.GetPropertyType(i) == UnityEngine.Rendering.ShaderPropertyType.Texture ? "=" + (m.GetTexture(sh.GetPropertyName(i)) ? m.GetTexture(sh.GetPropertyName(i)).name : "null") : ""));
+                        Note($"dripper renderer {r.name} ({r.GetType().Name}) material {m.name} shader {sh.name}: {string.Join(", ", props)}");
+                    }
+
             // The game's own UI sprites and fonts (to build our UI from the same pieces).
             string PathOf(Transform t) { var parts = new List<string>(); for (; t; t = t.parent) parts.Add(t.name); parts.Reverse(); return string.Join("/", parts); }
             var ui = Resources.FindObjectsOfTypeAll<UnityEngine.UI.Image>().Where(i => i.sprite)
@@ -551,6 +562,15 @@ namespace HtfFortress
             yield return Look(row + new Vector3(0f, 0.3f, 3.8f), 180f, "foes_gallery", 0.6f);
             foreach (var c in shown) if (c) c.ServerChangeHp(1000000);
             me.LocalTeleport(center + new Vector3(0f, 2f, 0f), 0f, true);
+
+            // Dye check: a plain runner next to a thief, a healer and a splitter, up close.
+            Vector3 row2 = center + new Vector3(0f, FortressIsland.CoreLocal.y + 0.3f, -9f);
+            var dyed = new List<Creature>();
+            var dk = new[] { EnemyKind.Runner, EnemyKind.Thief, EnemyKind.Healer, EnemyKind.Splitter };
+            for (int i = 0; i < dk.Length; i++) dyed.Add(plugin.DebugShowcase(dk[i], false, row2 + new Vector3((i - 1.5f) * 1.3f, 0f, 0f), 0f));
+            yield return new WaitForSecondsRealtime(0.8f);
+            yield return Look(row2 + new Vector3(0f, 0.4f, 3f), 180f, "foes_dyes", 0.6f);
+            foreach (var c in dyed) if (c) c.ServerChangeHp(1000000);
 
             // Thief, no corpses around: it goes for the crate's coins, then runs for the sea.
             int coins0 = Siege.Instance.ServerCoins;
