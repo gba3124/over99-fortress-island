@@ -283,13 +283,13 @@ namespace HtfFortress
     [HarmonyPatch(typeof(Player), nameof(Player.BlockInputs), MethodType.Getter)]
     internal static class BlockInputsWhileVaultOpen
     {
-        private static void Postfix(ref bool __result) { if (VaultUI.IsOpen) __result = true; }
+        private static void Postfix(ref bool __result) { if (Hud.ModalOpen) __result = true; }
     }
 
     [HarmonyPatch(typeof(PlayerCamera), nameof(PlayerCamera.ToggleMouse))]
     internal static class FreeMouseWhileVaultOpen
     {
-        private static void Prefix(ref bool __0) { if (VaultUI.IsOpen) __0 = true; }
+        private static void Prefix(ref bool __0) { if (Hud.ModalOpen) __0 = true; }
     }
 
     [HarmonyPatch(typeof(PauseManager), "PauseInput")]
@@ -297,8 +297,9 @@ namespace HtfFortress
     {
         private static bool Prefix()
         {
-            if (!VaultUI.IsOpen) return true;
-            VaultUI.Instance.Close();
+            if (!Hud.ModalOpen) return true;
+            if (VaultUI.IsOpen) VaultUI.Instance.Close();
+            if (PieceMenu.IsOpen) PieceMenu.Instance.Close();
             return false;
         }
     }

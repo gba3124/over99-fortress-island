@@ -42,6 +42,9 @@ namespace HtfFortress
             return cache;
         }
 
+        // A mouse menu is up (vault, piece menu): the game's own input is held and the cursor is free.
+        public static bool ModalOpen => VaultUI.IsOpen || PieceMenu.IsOpen;
+
         public static TMP_FontAsset Font => AccessTools.Field(typeof(LocalizationManager), "_defaultFontAsset")?.GetValue(
             AccessTools.Field(typeof(LocalizationManager), "_instance")?.GetValue(null)) as TMP_FontAsset;
 
@@ -218,12 +221,37 @@ namespace HtfFortress
 
         public static void HideBanner() => _bannerUntil = 0f;
 
+        // A progress ring around the crosshair with a caption (building, removing). Call every frame while it shows.
+        private static Image _ringBack, _ringFill;
+        private static TextMeshProUGUI _ringText;
+        private static int _ringFrame = -10;
+
+        public static void Ring(float progress, string caption, Color? color = null)
+        {
+            if (!Font) return;
+            if (!_ringBack)
+            {
+                _ringBack = Icon(Root, "UICircle_outline", new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(92f, 92f), new Color(0f, 0f, 0f, 0.45f));
+                _ringFill = Icon(_ringBack.transform, "UICircle_outline", new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(92f, 92f), Accent);
+                _ringFill.type = Image.Type.Filled;
+                _ringFill.fillMethod = Image.FillMethod.Radial360;
+                _ringFill.fillOrigin = (int)Image.Origin360.Top;
+                _ringFill.fillClockwise = true;
+                _ringText = Label(_ringBack.transform, "", 22f, new Vector2(0.5f, 0f), new Vector2(0f, -36f), new Vector2(600f, 32f), TextAlignmentOptions.Center, bold: true, outline: true);
+            }
+            _ringFill.fillAmount = Mathf.Clamp01(progress);
+            _ringFill.color = color ?? Accent;
+            _ringText.text = caption;
+            _ringFrame = Time.frameCount;
+        }
+
         // Drives the prompt and the banner's pop-in / fade-out.
         internal class HudRunner : MonoBehaviour
         {
             private void LateUpdate()
             {
                 if (_promptBox) _promptBox.gameObject.SetActive(Time.frameCount - _promptFrame <= 1);
+                if (_ringBack) _ringBack.gameObject.SetActive(Time.frameCount - _ringFrame <= 1);
                 if (!_banner) return;
                 float t = Time.time;
                 bool on = t < _bannerUntil;

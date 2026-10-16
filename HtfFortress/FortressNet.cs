@@ -152,7 +152,7 @@ namespace HtfFortress
         private void ClientInput()
         {
             var kb = Keyboard.current;
-            if (kb == null || ChatManager.IsTyping || BuildSystem.Building || VaultUI.IsOpen) return;
+            if (kb == null || ChatManager.IsTyping || BuildSystem.Building || Hud.ModalOpen) return;
             if (kb.uKey.wasPressedThisFrame && NearCrate() && Siege.Instance.ViewActive && InstanceFinder.IsClientStarted)
                 InstanceFinder.ClientManager.Broadcast(new NetUpgradeRequest());
         }

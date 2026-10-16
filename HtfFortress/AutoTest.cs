@@ -108,6 +108,7 @@ namespace HtfFortress
                 case "loot": yield return LootScenario(); break;
                 case "gear": yield return GearScenario(); break;
                 case "ui": yield return UiScenario(); break;
+                case "construct": yield return ConstructScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -520,6 +521,100 @@ namespace HtfFortress
             Note($"respawn: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.DockPos):F1} m from dock, boat {boat:F1} m from dock");
             FortressPlugin.Shot("coop_results");
             yield return new WaitForSecondsRealtime(1f);
+        }
+
+        // Building takes time (faster with a teammate), abandoned sites refund, the right-click menu, hold-H removal.
+        private IEnumerator ConstructScenario()
+        {
+            var island = FortressIsland.Instance;
+            var plugin = FortressPlugin.Instance;
+            var con = Construction.Instance;
+            var bs = BuildSystem.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            PlayerManager.ToggleGodMode();
+            IgnorePlayers = true;
+            var me = Player.LocalPlayer;
+            Vector3 center = island.Center;
+            me.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => plugin.Running, 15f, "round start");
+            Siege.Instance.ServerAddCoins(2000);
+            float c = BuildSystem.Cell;
+            Vector3 Cell(Vector3 w) { var p = new Vector3((Mathf.Floor(w.x / c) + 0.5f) * c, w.y + 5f, (Mathf.Floor(w.z / c) + 0.5f) * c); if (Physics.Raycast(p, Vector3.down, out var rh, 12f, GameInfo.LevelLayer)) p.y = rh.point.y; return p; }
+            float g0 = FortressIsland.GapAngles[0] * Mathf.Deg2Rad;
+            Vector3 gd = new Vector3(Mathf.Cos(g0), 0f, Mathf.Sin(g0)), side = Vector3.Cross(Vector3.up, gd);
+            bool Built(Vector3 pos) => bs.ServerPieces.Any(p => (p.Pos - pos).sqrMagnitude < 0.01f);
+
+            // Hold on one spot (optionally with a stand-in teammate) and time it.
+            IEnumerator Hold(PieceType t, Vector3 pos, bool teammate, string shotAt, System.Action<float> done)
+            {
+                float t0 = Time.time, next = 0f;
+                bool shot = false;
+                while (!Built(pos) && Time.time - t0 < 4f)
+                {
+                    if (Time.time >= next)
+                    {
+                        next = Time.time + Construction.SendEvery;
+                        con.Work(t, pos, 0f);
+                        if (teammate) con.ServerWork(777777, new BuildWork { Type = t, Pos = pos, RotY = 0f });
+                    }
+                    if (shotAt != null && !shot && Time.time - t0 > 0.45f) { shot = true; FortressPlugin.Shot(shotAt); }
+                    yield return null;
+                }
+                done(Built(pos) ? Time.time - t0 : -1f);
+            }
+
+            Vector3 eye = Cell(center + gd * 5f + Vector3.up * 2f) + Vector3.up * 0.5f;
+            me.LocalTeleport(eye, YawTo(eye, center + gd * 11f), true);
+            yield return new WaitForSecondsRealtime(1f);
+            Vector3 wallPos = new Vector3((Mathf.Floor((center + gd * 14f).x / c) + 0.5f) * c, Mathf.Floor((center.y + 1.45f + 0.25f) / c) * c + c * 0.5f, (Mathf.Floor((center + gd * 14f).z / c)) * c);
+            int coins = Siege.Instance.ServerCoins;
+            float tw = 0f; yield return Hold(PieceType.Wall, wallPos, false, null, x => tw = x);
+            Note($"wall alone: {tw:F2}s (expect ~{Construction.BuildTime(PieceType.Wall):F1}), cost {coins - Siege.Instance.ServerCoins}");
+            Vector3 gunPos = Cell(center + gd * 11f);
+            float tg = 0f; yield return Hold(PieceType.Gun, gunPos, false, "construct_mid", x => tg = x);
+            Note($"gun alone: {tg:F2}s (expect ~{Construction.BuildTime(PieceType.Gun):F1})");
+            Vector3 canPos = Cell(center + gd * 11f + side * c);
+            float tc = 0f; yield return Hold(PieceType.Cannon, canPos, true, null, x => tc = x);
+            Note($"cannon with a teammate: {tc:F2}s (expect ~{Construction.BuildTime(PieceType.Cannon) / (1f + Construction.TeamBonus):F2})");
+
+            // Abandon: work a moment, let go, the site disappears and the coins come back.
+            Vector3 morPos = Cell(center + gd * 11f - side * c);
+            coins = Siege.Instance.ServerCoins;
+            for (float t = 0f; t < 0.3f; t += 0.15f) { con.Work(PieceType.Mortar, morPos, 0f); yield return new WaitForSeconds(0.15f); }
+            int during = Siege.Instance.ServerCoins;
+            yield return new WaitForSeconds(Construction.Abandon + 0.6f);
+            Note($"abandoned mortar: coins {coins} -> {during} while building -> {Siege.Instance.ServerCoins} after (refund), sites left {con.ServerSiteCount}, built {Built(morPos)}");
+
+            // The right-click menu on the gun: upgrade, then the branch choice.
+            int gunId = bs.ServerPieces.First(p => (p.Pos - gunPos).sqrMagnitude < 0.01f).Id;
+            bs.DebugSetBuilding(true, PieceType.Gun);
+            PieceMenu.Instance.Open(gunId);
+            yield return new WaitForSecondsRealtime(0.8f);
+            FortressPlugin.Shot("menu_upgrade");
+            yield return new WaitForSecondsRealtime(0.4f);
+            PieceMenu.Instance.DebugUpgrade(1);
+            yield return new WaitForSecondsRealtime(0.8f);
+            FortressPlugin.Shot("menu_branch");
+            yield return new WaitForSecondsRealtime(0.4f);
+            PieceMenu.Instance.DebugUpgrade(2);
+            yield return new WaitForSecondsRealtime(0.8f);
+            var gun = bs.ServerPieces.First(p => p.Id == gunId);
+            Note($"menu: gun now Lv{gun.Level} branch {gun.Branch} (expect Lv3 branch 2), menu open {PieceMenu.IsOpen}, inputs blocked {me.BlockInputs}");
+            PieceMenu.Instance.Close();
+
+            // Hold H on the wall: it sinks, then goes.
+            int wallId = bs.ServerPieces.First(p => (p.Pos - wallPos).sqrMagnitude < 0.01f).Id;
+            float h0 = Time.time;
+            bool shotRemove = false;
+            while (Time.time - h0 < BuildSystem.RemoveTime + 0.3f && bs.ServerPieces.Any(p => p.Id == wallId))
+            {
+                bs.DebugRemoveHold(wallId);
+                if (!shotRemove && Time.time - h0 > 0.35f) { shotRemove = true; FortressPlugin.Shot("remove_hold"); }
+                yield return null;
+            }
+            yield return new WaitForSecondsRealtime(0.5f);
+            Note($"hold-H remove: wall gone {!bs.ServerPieces.Any(p => p.Id == wallId)} after {Time.time - h0:F2}s");
+            bs.DebugSetBuilding(false, PieceType.Wall);
         }
 
         // A screenshot of every piece of fortress UI.

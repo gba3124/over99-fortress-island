@@ -87,6 +87,8 @@ namespace HtfFortress
             gameObject.AddComponent<FortressNet>();
             gameObject.AddComponent<Loot>();
             gameObject.AddComponent<VaultUI>();
+            gameObject.AddComponent<Construction>();
+            gameObject.AddComponent<PieceMenu>();
             gameObject.AddComponent<AutoTest>();
             // One class at a time: a patch that breaks after a game update must not take the others down with it.
             var harmony = new Harmony("owen.htf.fortress");
@@ -139,7 +141,7 @@ namespace HtfFortress
                 _testHelp.rectTransform.sizeDelta = new Vector2(330f, t.GetPreferredValues(t.text, 300f, 0f).y + 26f);
             }
             if (_testHelp) _testHelp.gameObject.SetActive(_debugKeys.Value);
-            if (!_debugKeys.Value || kb == null || ChatManager.IsTyping || VaultUI.IsOpen) return;
+            if (!_debugKeys.Value || kb == null || ChatManager.IsTyping || Hud.ModalOpen) return;
             foreach (var key in new[] { Key.F4, Key.F5, Key.F6, Key.F7, Key.F8, _toggleKey.Value })
                 if (kb[key].wasPressedThisFrame) TestKey(key, kb.shiftKey.isPressed);
         }

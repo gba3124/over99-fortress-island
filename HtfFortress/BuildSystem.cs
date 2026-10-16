@@ -53,7 +53,6 @@ namespace HtfFortress
         private GameObject _ghost;
         private PieceType _ghostType = (PieceType)255;
         private bool _ghostValid;
-        private Vector3 _lastSentPos = Vector3.positiveInfinity;
         private string _lookInfo = "", _lookKeys = "";
         private int _lookLevel, _lookHp, _lookMax;
         private string _blockReason = "";
@@ -96,7 +95,7 @@ namespace HtfFortress
             EnsureRegistered();
 
             var kb = Keyboard.current;
-            if (kb == null || ChatManager.IsTyping || VaultUI.IsOpen) return;
+            if (kb == null || ChatManager.IsTyping || Hud.ModalOpen) return;
             if (kb[BuildKey.Value].wasPressedThisFrame) SetBuilding(!_building);
             if (!_building) return;
             if (!InstanceFinder.IsClientStarted || !GameInfo.CurCamera || !Player.LocalPlayer || Cursor.lockState != CursorLockMode.Locked)
@@ -114,16 +113,63 @@ namespace HtfFortress
             UpdateLookInfo(out int lookedId);
 
             var mouse = Mouse.current;
-            if (mouse != null && mouse.leftButton.isPressed && _ghostValid && _ghost.transform.position != _lastSentPos)
+            // Hold the mouse to build: on a teammate's site under the crosshair, or on the preview.
+            var cam = GameInfo.CurCamera.transform;
+            bool helping = Construction.Instance.SiteUnderAim(new Ray(cam.position, cam.forward), Reach, out var site);
+            if (helping && _ghost) _ghost.SetActive(false);
+            if (mouse != null && mouse.leftButton.isPressed && Time.time >= _nextWork && (helping || _ghostValid))
             {
-                _lastSentPos = _ghost.transform.position;
-                InstanceFinder.ClientManager.Broadcast(new PiecePlaceRequest { Type = _type, Pos = _lastSentPos, RotY = _ghost.transform.eulerAngles.y });
+                _nextWork = Time.time + Construction.SendEvery;
+                if (helping) Construction.Instance.Work(site.Type, site.Pos, site.RotY);
+                else Construction.Instance.Work(_type, _ghost.transform.position, _ghost.transform.eulerAngles.y);
             }
-            if (mouse != null && mouse.leftButton.wasReleasedThisFrame) _lastSentPos = Vector3.positiveInfinity;
-            if (lookedId != 0 && kb.hKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceRemoveRequest { Id = lookedId });
+            // Hold H to take a piece down (it shakes and sinks); U / J are instant shortcuts; right click opens the menu.
+            UpdateRemoveHold(kb.hKey.isPressed ? lookedId : _debugHold);
+            _debugHold = 0;
             if (lookedId != 0 && kb.uKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = lookedId, Branch = shift ? 2 : 1 });
             if (lookedId != 0 && kb.jKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = lookedId, Repair = true });
+            if (lookedId != 0 && mouse != null && mouse.rightButton.wasPressedThisFrame && Time.frameCount - PieceMenu.ClosedFrame > 1) PieceMenu.Instance.Open(lookedId);
         }
+
+        private float _nextWork;
+        public const float RemoveTime = 0.6f;
+        private int _removeId;
+        private float _removeHold;
+        private Vector3 _removeHome;
+
+        private void UpdateRemoveHold(int id)
+        {
+            if (_removeId != 0 && (id != _removeId || !_pieces.ContainsKey(_removeId)))
+            {
+                if (_pieces.TryGetValue(_removeId, out var old) && old) old.transform.position = _removeHome;
+                _removeId = 0;
+            }
+            if (id == 0 || !_pieces.TryGetValue(id, out var go) || !go) return;
+            if (_removeId == 0) { _removeId = id; _removeHold = 0f; _removeHome = go.transform.position; }
+            _removeHold += Time.deltaTime;
+            float k = Mathf.Clamp01(_removeHold / RemoveTime);
+            go.transform.position = _removeHome + Vector3.down * 0.35f * k + Random.insideUnitSphere * 0.05f * k;
+            Hud.Ring(k, L10n.T("removing", RefundEstimate(_states[id])), Hud.Bad);
+            if (k >= 1f)
+            {
+                InstanceFinder.ClientManager.Broadcast(new PieceRemoveRequest { Id = id });
+                _removeId = 0;
+            }
+        }
+
+        // What taking a piece down gives back: half of what went into it (build + upgrades), as the host counts it.
+        public static int RefundEstimate(PieceState s)
+        {
+            int spent = Perks.MyCost(Catalog.BuildCost(s.Type));
+            for (int l = 1; l < s.Level; l++) spent += Perks.MyCost(Catalog.UpgradeCost(s.Type, l));
+            return spent / 2;
+        }
+
+        public bool TryGetState(int id, out PieceState s) => _states.TryGetValue(id, out s);
+
+        // Auto-test: hold H on this piece for one frame.
+        private int _debugHold;
+        public void DebugRemoveHold(int id) => _debugHold = id;
 
         public void DebugSetBuilding(bool on, PieceType type) { _type = type; SetBuilding(on); }
 
@@ -200,7 +246,7 @@ namespace HtfFortress
         }
 
         // Building happens on the fortress island during a round.
-        private static bool AllowedAt(Vector3 pos) => FortressIsland.Instance && FortressIsland.Instance.OnIsland(pos, FortressIsland.BuildRadius);
+        internal static bool AllowedAt(Vector3 pos) => FortressIsland.Instance && FortressIsland.Instance.OnIsland(pos, FortressIsland.BuildRadius);
 
         private static bool Clashes(PieceType a, PieceType b) => a == b || (Catalog.IsTurret(a) && Catalog.IsTurret(b));
 
@@ -209,8 +255,7 @@ namespace HtfFortress
             if (!_ghost || _ghostType != _type)
             {
                 if (_ghost) Destroy(_ghost);
-                _ghost = CreatePieceObject(_type, 0);
-                Destroy(_ghost.GetComponent<Collider>());
+                _ghost = CreatePieceVisual(_type);
                 _ghost.name = "FortressGhost";
                 _ghostType = _type;
                 DontDestroyOnLoad(_ghost);
@@ -230,6 +275,14 @@ namespace HtfFortress
             _ghost.SetActive(true);
             _ghost.transform.SetPositionAndRotation(pos, rot);
             Models.Paint(_ghost, _ghostValid ? new Color(0.3f, 0.6f, 1f) : new Color(0.9f, 0.2f, 0.2f));
+        }
+
+        // The look of a piece without its collider (previews and construction sites).
+        internal static GameObject CreatePieceVisual(PieceType t)
+        {
+            var go = CreatePieceObject(t, 0);
+            Destroy(go.GetComponent<Collider>());
+            return go;
         }
 
         // Root holds the box collider (cheap, matches the grid); the Blender model is a child. Turrets get a "Head" to aim.
@@ -404,14 +457,16 @@ namespace HtfFortress
         private readonly Dictionary<int, int> _owner = new Dictionary<int, int>();
         public int OwnerOf(int pieceId) => _owner.TryGetValue(pieceId, out int o) ? o : -1;
 
-        // Host only. Returns false if the slot is taken or the team can't afford it.
-        public bool ServerPlace(PieceType type, Vector3 pos, float rotY, int ownerId = -1)
+        public bool ServerCanPlace(PieceType type, Vector3 pos) =>
+            Siege.Instance.ServerActive && AllowedAt(pos) && !_serverPieces.Values.Any(p => Clashes(p.Type, type) && (p.Pos - pos).sqrMagnitude < 0.01f);
+
+        // Host only. Returns false if the slot is taken or the team can't afford it. A finished construction site has paid already.
+        public bool ServerPlace(PieceType type, Vector3 pos, float rotY, int ownerId = -1, int prepaid = -1)
         {
-            if (_serverPieces.Values.Any(p => Clashes(p.Type, type) && (p.Pos - pos).sqrMagnitude < 0.01f)) return false;
-            if (!Siege.Instance.ServerActive || !AllowedAt(pos)) return false;
+            if (!ServerCanPlace(type, pos)) return false;
             if (ownerId < 0 && Player.LocalPlayer) ownerId = Player.LocalPlayer.ObjectId;
-            int cost = Perks.Cost(Catalog.BuildCost(type), PlayerManager.Players.FirstOrDefault(p => p && p.ObjectId == ownerId));
-            if (!Siege.Instance.ServerTrySpend(cost)) return false;
+            int cost = prepaid >= 0 ? prepaid : Perks.Cost(Catalog.BuildCost(type), PlayerManager.Players.FirstOrDefault(p => p && p.ObjectId == ownerId));
+            if (prepaid < 0 && !Siege.Instance.ServerTrySpend(cost)) return false;
             int maxHp = Perks.MaxHp(type, 1);
             var state = new PieceState { Id = _nextId++, Type = type, Pos = pos, RotY = rotY, Hp = maxHp, MaxHp = maxHp, Level = 1 };
             _serverPieces[state.Id] = state;
@@ -603,8 +658,8 @@ namespace HtfFortress
 
     // Left/right click go to the held item; swallow them while building so placing doesn't also swing or shoot.
     [HarmonyLib.HarmonyPatch(typeof(PlayerHolding), "PrimaryInput")]
-    internal static class BlockPrimaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building && !VaultUI.IsOpen; }
+    internal static class BlockPrimaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building && !Hud.ModalOpen; }
 
     [HarmonyLib.HarmonyPatch(typeof(PlayerHolding), "SecondaryInput")]
-    internal static class BlockSecondaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building && !VaultUI.IsOpen; }
+    internal static class BlockSecondaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building && !Hud.ModalOpen; }
 }
