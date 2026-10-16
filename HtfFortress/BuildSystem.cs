@@ -125,6 +125,8 @@ namespace HtfFortress
             if (lookedId != 0 && kb.jKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = lookedId, Repair = true });
         }
 
+        public void DebugSetBuilding(bool on, PieceType type) { _type = type; SetBuilding(on); }
+
         private void SetBuilding(bool on)
         {
             _building = on;

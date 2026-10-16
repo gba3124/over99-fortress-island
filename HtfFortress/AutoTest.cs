@@ -243,6 +243,17 @@ namespace HtfFortress
             placed += TurretAt(PieceType.Cannon, center + new Vector3(4f, 1.45f, 3f)) ? 1 : 0;
             Note($"placed {placed} pieces, coins {Siege.Instance.ServerCoins}");
             yield return Look(high, YawTo(high, center), "isl_built", 2f);
+            // Build mode HUD (bar + hints) looking at a wall near the north gap.
+            {
+                float g0 = FortressIsland.GapAngles[0] * Mathf.Deg2Rad;
+                Vector3 gd = new Vector3(Mathf.Cos(g0), 0f, Mathf.Sin(g0));
+                Vector3 eye = center + gd * 9.5f;
+                BuildSystem.Instance.DebugSetBuilding(true, PieceType.Harpoon);
+                yield return Look(eye, YawTo(eye, center + gd * 15f), "isl_buildmode", 1.5f);
+                BuildSystem.Instance.DebugSetBuilding(false, PieceType.Wall);
+                Vector3 c = island.CratePos + new Vector3(-3f, 0f, -1.5f);
+                yield return Look(c, YawTo(c, island.CratePos), "isl_crate", 1.2f);
+            }
 
             var plugin = FortressPlugin.Instance;
             plugin.SkipBuildTime();
