@@ -54,8 +54,8 @@ namespace HtfFortress
         private void Awake()
         {
             _instance = this;
-            _toggleKey = Config.Bind("Debug", "ToggleKey", Key.F9, "Debug only: host starts/stops a round where they stand (needs DebugKeys).");
-            _debugKeys = Config.Bind("Debug", "DebugKeys", false, "Enable debug keys (F9 start/stop anywhere).");
+            _toggleKey = Config.Bind("Debug", "ToggleKey", Key.F9, "Test key: host starts / ends a round (needs DebugKeys).");
+            _debugKeys = Config.Bind("Debug", "DebugKeys", false, "Test keys for the host: F4 teleport to the fortress, F5 +500 coins, F6 god mode, F7 kill all, F8 skip build time (Shift: jump 5 waves), F9 start/end a round.");
             FortressIsland.Unlock = Config.Bind("Island", "Unlock", IslandUnlock.AfterFinalBoss, "When the fortress island appears: after beating the final boss, or always.");
             _pool = Config.Bind("Waves", "CreaturePool", "", "Comma-separated creature names to spawn. Empty = hostile creatures only. Names are listed in the BepInEx log on start.");
             _baseCount = Config.Bind("Waves", "BaseCount", 3, new ConfigDescription("Creatures in wave 1.", new AcceptableValueRange<int>(1, 50)));
@@ -119,6 +119,59 @@ namespace HtfFortress
 
         public void DebugKillAll() { foreach (var c in _alive.Where(c => c && c._hp.Value > 0).ToList()) c.ServerChangeHp(1000000); }
 
+        // ---------- test keys (Debug / DebugKeys, host only; Mac keyboards need Fn for the F keys) ----------
+
+        private TMPro.TextMeshProUGUI _testHelp;
+
+        private void UpdateTestKeys(Keyboard kb)
+        {
+            if (!_testHelp && _debugKeys.Value)
+            {
+                _testHelp = Hud.CreateText("FortressTestKeys", new Vector2(1f, 1f), new Vector2(-24f, -24f), 20f, TMPro.TextAlignmentOptions.TopRight);
+                if (_testHelp) { _testHelp.rectTransform.pivot = new Vector2(1f, 1f); _testHelp.rectTransform.sizeDelta = new Vector2(560f, 220f); }
+            }
+            if (_testHelp) { _testHelp.gameObject.SetActive(_debugKeys.Value); _testHelp.text = L10n.T("testKeys"); }
+            if (!_debugKeys.Value || kb == null || ChatManager.IsTyping) return;
+            foreach (var key in new[] { Key.F4, Key.F5, Key.F6, Key.F7, Key.F8, _toggleKey.Value })
+                if (kb[key].wasPressedThisFrame) TestKey(key, kb.shiftKey.isPressed);
+        }
+
+        public void TestKey(Key key, bool shift)
+        {
+            if (!Player.LocalPlayer) return;
+            if (!IsHost) { Say(L10n.T("testHostOnly")); return; }
+            var island = FortressIsland.Instance;
+            if (key == _toggleKey.Value)
+            {
+                if (_running) Stop(L10n.T("stopped"));
+                else StartRound(island != null && island.Exists ? island.CorePos : Player.LocalPlayer.Transform.position);
+                return;
+            }
+            switch (key)
+            {
+                case Key.F4: // to the ready circle, boat to the berth
+                    if (island == null || !island.Exists) { Say(L10n.T("testNoIsland")); break; }
+                    Player.LocalPlayer.LocalTeleport(island.Center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+                    island.ServerMoveBoatToBerth();
+                    break;
+                case Key.F5:
+                    if (_running) Siege.Instance.ServerAddCoins(500); else Say(L10n.T("testNotRunning"));
+                    break;
+                case Key.F6:
+                    PlayerManager.ToggleGodMode();
+                    Say(L10n.T(PlayerManager.InGodMode ? "testGodOn" : "testGodOff"));
+                    break;
+                case Key.F7:
+                    DebugKillAll();
+                    break;
+                case Key.F8:
+                    if (!_running) { Say(L10n.T("testNotRunning")); break; }
+                    if (shift) { DebugKillAll(); DebugJumpToWave(_wave + 5); Say(L10n.T("testJump", _wave + 1)); }
+                    else SkipBuildTime();
+                    break;
+            }
+        }
+
         private IEnumerator ShotAfter(string tag, float delay)
         {
             if (delay > 0f) yield return new WaitForSeconds(delay);
@@ -133,11 +186,7 @@ namespace HtfFortress
         {
             var kb = Keyboard.current;
             if (kb != null && kb.f10Key.wasPressedThisFrame) Shot("manual");
-            if (_debugKeys.Value && kb != null && kb[_toggleKey.Value].wasPressedThisFrame && !ChatManager.IsTyping)
-            {
-                if (_running) Stop(L10n.T("stopped"));
-                else if (Player.LocalPlayer) StartRound(Player.LocalPlayer.Transform.position);
-            }
+            UpdateTestKeys(kb);
             if (!_running) return;
             if (!IsHost || !Player.LocalPlayer) { Stop(L10n.T("notHost")); return; }
             // Same squad-wipe check the game uses (PlayerDying.OnPlayerAmountChange).

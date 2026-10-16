@@ -29,6 +29,19 @@ BepInEx 5 模組，C#，在 Mac 的 Pixel Port 上開發與自動測試。完整
 | **N** | 房主：建造時間提早開始下一波 |
 | **F10** | 截圖（存到 `BepInEx/fortress-shots/`） |
 
+### 測試鍵（房主）
+
+在 Mod Settings 打開 `Debug / DebugKeys`，畫面右上角會列出測試鍵。Mac 鍵盤要按住 **Fn** 再按 F 鍵。
+
+| 按鍵 | 作用 |
+|---|---|
+| **F4** | 傳送到要塞島的光圈，船也移到碼頭旁 |
+| **F5** | +500 金幣（一局進行中） |
+| **F6** | 無敵 開／關（遊戲本身的無敵模式） |
+| **F7** | 清除所有敵人 |
+| **F8** | 跳過建造時間；**Shift+F8** 直接跳 5 波 |
+| **F9** | 開始／結束一局 |
+
 遊戲本身已經佔用 B、Q、R、X、E、F、C、V、Z、1–9，所以模組改用 G、T、Y、U、J、H。建造模式中左右鍵不會揮動手上的道具。
 
 ### 建築
@@ -112,7 +125,7 @@ cd ~/Desktop/Project/htf-fortress
 tools/autotest.sh island && tools/launch.sh
 ```
 
-情境：`probe`（環境資訊、音效清單）、`island`（完整流程）、`enemies`（敵人圖鑑＋各波）、`build`（所有砲塔與分支）、`balance`（AI 建造者真實打到失敗）、`coop`（不開無敵站在缺口被咬、撿魚、全滅、碼頭重生、結算表）。
+情境：`probe`（環境資訊、音效清單）、`island`（完整流程）、`enemies`（敵人圖鑑＋各波）、`build`（所有砲塔與分支）、`balance`（AI 建造者真實打到失敗）、`coop`（不開無敵站在缺口被咬、撿魚、全滅、碼頭重生、結算表）、`cheats`（每個測試鍵）。
 測試會用一個獨立的 `FortressTest` 存檔，跑完自動關遊戲。報告在 `BepInEx/fortress-test-report.txt`，截圖在 `BepInEx/fortress-shots/`。
 
 ## 技術筆記

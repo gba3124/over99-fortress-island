@@ -7,6 +7,7 @@ using System.Text;
 using BepInEx;
 using HarmonyLib;
 using UnityEngine;
+using K = UnityEngine.InputSystem.Key;
 
 namespace HtfFortress
 {
@@ -102,6 +103,7 @@ namespace HtfFortress
                 case "balance": yield return BalanceScenario(); break;
                 case "boss": yield return BossScenario(); break;
                 case "coop": yield return CoopScenario(); break;
+                case "cheats": yield return CheatsScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -502,6 +504,44 @@ namespace HtfFortress
             Note($"respawn: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.DockPos):F1} m from dock, boat {boat:F1} m from dock");
             FortressPlugin.Shot("coop_results");
             yield return new WaitForSecondsRealtime(1f);
+        }
+
+        // Every test key, called the way the key handler calls it.
+        private IEnumerator CheatsScenario()
+        {
+            var island = FortressIsland.Instance;
+            var plugin = FortressPlugin.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            plugin.TestKey(K.F4, false);
+            yield return new WaitForSecondsRealtime(2f);
+            Note($"F4: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.Center + FortressIsland.ReadyLocal):F1} m from the ready circle, boat {Vector3.Distance(BoatManager.Boat.HiddenPhysicsRig.position, island.DockPos):F1} m from dock");
+            yield return Until(() => plugin.Running, 10f, "round start from the ready circle");
+            if (!plugin.Running) { plugin.TestKey(K.F9, false); yield return Until(() => plugin.Running, 5f, "F9 start"); }
+            int coins = Siege.Instance.ServerCoins;
+            plugin.TestKey(K.F5, false);
+            Note($"F5: coins {coins} -> {Siege.Instance.ServerCoins}");
+            bool god = PlayerManager.InGodMode;
+            plugin.TestKey(K.F6, false);
+            bool god2 = PlayerManager.InGodMode;
+            plugin.TestKey(K.F6, false);
+            Note($"F6: god {god} -> {god2} -> {PlayerManager.InGodMode}");
+            plugin.TestKey(K.F8, false);
+            yield return Until(() => plugin.Wave == 1 && !plugin.InBuildTime, 5f, "F8 skips build time");
+            Note($"F8: wave {plugin.Wave}, building {plugin.InBuildTime}");
+            yield return new WaitForSecondsRealtime(9f); // all three bursts are out
+            int alive = FortressPlugin.Alive.Count;
+            plugin.TestKey(K.F7, false);
+            yield return new WaitForSecondsRealtime(1.5f);
+            Note($"F7: alive {alive} -> {FortressPlugin.Alive.Count}");
+            yield return Until(() => plugin.InBuildTime, 5f, "wave cleared after F7");
+            plugin.TestKey(K.F8, true);
+            yield return Until(() => plugin.Wave >= 6, 5f, "Shift+F8 jump");
+            Note($"Shift+F8: wave {plugin.Wave}");
+            FortressPlugin.Shot("cheats_help");
+            yield return new WaitForSecondsRealtime(1f);
+            plugin.TestKey(K.F9, false);
+            yield return new WaitForSecondsRealtime(1f);
+            Note($"F9: running {plugin.Running}");
         }
 
         private static string BuildPoolProbe()

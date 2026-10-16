@@ -41,6 +41,9 @@ namespace HtfFortress
         public Vector3 Center { get; private set; }
         public Vector3 CorePos => Center + CoreLocal;
         public Vector3 DockPos => Center + DockLocal;
+        // In the water beside the dock, where a respawn (or the F4 test key) parks the boat.
+        public Vector3 BerthPos { get { var p = Center + new Vector3(4f, 0f, -42f); p.y = WaterManager.GetWaterHeight(p); return p; } }
+        public void ServerMoveBoatToBerth() => BoatManager.Instance.TryMoveBoat(BerthPos, Quaternion.identity);
         public Vector3 CratePos { get; private set; }
 
         private GameObject _root, _ring;
@@ -373,8 +376,6 @@ namespace HtfFortress
     internal static class RespawnAtFortress
     {
         private static bool Near(Vector3 pos) => FortressIsland.Instance != null && FortressIsland.Instance.Exists && FortressIsland.Instance.OnIsland(pos, 70f);
-        private static Vector3 Center => FortressIsland.Instance.Center;
-        private static Vector3 Berth { get { var p = Center + new Vector3(4f, 0f, -42f); p.y = WaterManager.GetWaterHeight(p); return p; } }
 
         [HarmonyPostfix, HarmonyPatch(typeof(SpawnManager), nameof(SpawnManager.GetPlayerSpawnPos))]
         private static void PlayerPos(Vector3 __0, ref Vector3 __result) { if (Near(__0)) __result = FortressIsland.Instance.DockPos; }
@@ -393,7 +394,7 @@ namespace HtfFortress
         private static System.Collections.IEnumerator MoveBoatToBerth()
         {
             yield return new WaitForSeconds(0.5f);
-            BoatManager.Instance.TryMoveBoat(Berth, Quaternion.identity);
+            FortressIsland.Instance.ServerMoveBoatToBerth();
         }
     }
 }
