@@ -13,7 +13,7 @@ using UnityEngine;
 namespace HtfFortress
 {
     // Host -> everyone: the core and the wave status shown on the HUD.
-    public struct SiegeState : IBroadcast { public bool Active; public Vector3 CorePos; public int CoreHp; public int CoreMax; public int Wave; public int Remaining; public int Coins; public bool Building; public int Countdown; public int ReadyTotal; public int ReadyIn; public int ReadyCountdown; }
+    public struct SiegeState : IBroadcast { public bool Active; public Vector3 CorePos; public int CoreHp; public int CoreMax; public int Wave; public int Remaining; public int Coins; public bool Building; public int Countdown; public int ReadyTotal; public int ReadyIn; public int ReadyCountdown; public int BossHp; public int BossMax; }
 
     // The fortress core, and the walkers that charge it and break walls in the way.
     // All decisions run on the host; clients just draw the core and the HUD from SiegeState.
@@ -32,6 +32,7 @@ namespace HtfFortress
         private SiegeState _server;
         private SiegeState _lastSent;
         private float _nextSend;
+        private int _bossMax;
         private readonly HashSet<RunningFish> _walkers = new HashSet<RunningFish>();
         private readonly Dictionary<RunningFish, float> _nextAttack = new Dictionary<RunningFish, float>();
 
@@ -49,12 +50,12 @@ namespace HtfFortress
             GenericWriter<SiegeState>.SetWrite((w, v) =>
             {
                 w.WriteBoolean(v.Active); w.WriteVector3(v.CorePos); w.WriteInt32(v.CoreHp); w.WriteInt32(v.CoreMax);
-                w.WriteInt32(v.Wave); w.WriteInt32(v.Remaining); w.WriteInt32(v.Coins); w.WriteBoolean(v.Building); w.WriteInt32(v.Countdown); w.WriteInt32(v.ReadyTotal); w.WriteInt32(v.ReadyIn); w.WriteInt32(v.ReadyCountdown);
+                w.WriteInt32(v.Wave); w.WriteInt32(v.Remaining); w.WriteInt32(v.Coins); w.WriteBoolean(v.Building); w.WriteInt32(v.Countdown); w.WriteInt32(v.ReadyTotal); w.WriteInt32(v.ReadyIn); w.WriteInt32(v.ReadyCountdown); w.WriteInt32(v.BossHp); w.WriteInt32(v.BossMax);
             });
             GenericReader<SiegeState>.SetRead(r => new SiegeState
             {
                 Active = r.ReadBoolean(), CorePos = r.ReadVector3(), CoreHp = r.ReadInt32(), CoreMax = r.ReadInt32(),
-                Wave = r.ReadInt32(), Remaining = r.ReadInt32(), Coins = r.ReadInt32(), Building = r.ReadBoolean(), Countdown = r.ReadInt32(), ReadyTotal = r.ReadInt32(), ReadyIn = r.ReadInt32(), ReadyCountdown = r.ReadInt32()
+                Wave = r.ReadInt32(), Remaining = r.ReadInt32(), Coins = r.ReadInt32(), Building = r.ReadBoolean(), Countdown = r.ReadInt32(), ReadyTotal = r.ReadInt32(), ReadyIn = r.ReadInt32(), ReadyCountdown = r.ReadInt32(), BossHp = r.ReadInt32(), BossMax = r.ReadInt32()
             });
         }
 
@@ -144,7 +145,10 @@ namespace HtfFortress
         {
             if (!_server.Active || !_walkers.Contains(fish)) return false;
             if (fish.IsDead) { _walkers.Remove(fish); return false; }
+            Enemies.Instance.TryGet(fish, out var tag);
+            var stats = Enemies.StatsOf(tag);
             Rigidbody rig = fish.Rig;
+            if (tag.Kind == EnemyKind.Spitter) { SteerSpitter(fish, rig, stats); return true; }
             if (fish.AttachedRod || rig.isKinematic || !Grounded(fish)) return true; // hold still until it lands
 
             Vector3 pos = fish.transform.position;
@@ -153,19 +157,21 @@ namespace HtfFortress
             Vector3 dir = dist > 0.01f ? to / dist : fish.transform.forward;
             fish.transform.forward = dir;
 
-            if (dist <= CoreHitRange) { Halt(rig); TryAttack(fish, null); return true; }
+            float reach = CoreHitRange + 0.4f * (stats.Scale - 1f);
+            if (dist <= reach) { Halt(rig); TryAttack(fish, null, tag, stats); return true; }
 
             // Overlap just ahead (a cast would miss a wall the fish is already pressed against).
             int mask = 1 << BuildSystem.PieceLayer;
-            foreach (var col in Physics.OverlapSphere(pos + dir * 0.6f + Vector3.up * 0.4f, 0.45f, mask, QueryTriggerInteraction.Ignore))
+            float r = 0.45f * Mathf.Max(1f, stats.Scale * 0.8f);
+            foreach (var col in Physics.OverlapSphere(pos + dir * (0.6f * stats.Scale) + Vector3.up * 0.4f * stats.Scale, r, mask, QueryTriggerInteraction.Ignore))
             {
                 if (!BuildSystem.IsWall(col)) continue;
                 Halt(rig);
-                TryAttack(fish, col);
+                TryAttack(fish, col, tag, stats);
                 return true;
             }
 
-            Vector3 v = dir * RunSpeed(fish);
+            Vector3 v = dir * RunSpeed(fish) * stats.Speed;
             v.y = rig.linearVelocity.y;
             rig.linearVelocity = v;
             rig.angularVelocity = Vector3.zero;
@@ -174,14 +180,75 @@ namespace HtfFortress
 
         private static void Halt(Rigidbody rig) => rig.linearVelocity = new Vector3(0f, rig.linearVelocity.y, 0f);
 
-        private void TryAttack(RunningFish fish, Collider wall)
+        private void TryAttack(RunningFish fish, Collider wall, EnemyTag tag, EnemyStats stats)
         {
             if (!InstanceFinder.IsServerStarted) return;
             _nextAttack.TryGetValue(fish, out float next);
             if (Time.time < next) return;
             _nextAttack[fish] = Time.time + AttackInterval;
-            if (wall) { BuildSystem.Instance.ServerDamage(wall, WalkerDamage.Value); AutoTest.Count("walker_hit_piece"); }
-            else { _server.CoreHp = Mathf.Max(0, _server.CoreHp - WalkerDamage.Value); AutoTest.Count("walker_hit_core"); }
+            int dmg = Mathf.RoundToInt(WalkerDamage.Value * stats.Damage);
+            if (tag.Kind == EnemyKind.Bomber) { Explode(fish, dmg); return; }
+            if (wall) { BuildSystem.Instance.ServerDamage(wall, Mathf.RoundToInt(dmg * stats.WallMult)); AutoTest.Count("walker_hit_piece"); }
+            else { DamageCore(dmg); AutoTest.Count("walker_hit_core"); }
+        }
+
+        public void DamageCore(int dmg) => _server.CoreHp = Mathf.Max(0, _server.CoreHp - dmg);
+
+        // Bomber: blows up on whatever stopped it, hurting every piece (and the core) around.
+        private void Explode(RunningFish fish, int dmg)
+        {
+            Vector3 at = fish.transform.position + Vector3.up * 0.5f;
+            BuildSystem.Instance.ServerDamageArea(at, 3.5f, dmg);
+            if ((at - _server.CorePos).sqrMagnitude < 4.5f * 4.5f) DamageCore(dmg / 2);
+            Fx.Send(FxKind.Blast, at, at);
+            fish.ServerChangeHp(100000);
+            AutoTest.Count("bomber_exploded");
+        }
+
+        // Spitter: floats at the surface off the beach, lobs water bolts at the nearest building (or the core), and moves now and then.
+        private readonly Dictionary<RunningFish, float> _nextSpit = new Dictionary<RunningFish, float>();
+        private readonly Dictionary<RunningFish, float> _nextMove = new Dictionary<RunningFish, float>();
+
+        private void SteerSpitter(RunningFish fish, Rigidbody rig, EnemyStats stats)
+        {
+            if (!rig.isKinematic) rig.isKinematic = true;
+            Vector3 pos = fish.transform.position;
+            float water = WaterManager.GetWaterHeight(pos);
+            _nextMove.TryGetValue(fish, out float move);
+            if (Time.time > move && FortressIsland.Instance.Exists)
+            {
+                _nextMove[fish] = Time.time + Random.Range(12f, 18f);
+                if (move > 0f) pos = FortressIsland.Instance.SpitterSpot();
+            }
+            pos.y = water - 0.35f + Mathf.Sin(Time.time * 2f + fish.ObjectId) * 0.12f;
+            rig.MovePosition(pos);
+
+            Vector3 target = _server.CorePos + Vector3.up * 1.5f;
+            float best = float.MaxValue;
+            foreach (var p in BuildSystem.Instance.ServerPieces)
+            {
+                float d = (p.Pos - pos).sqrMagnitude;
+                if (d < best && d < 30f * 30f) { best = d; target = p.Pos; }
+            }
+            Vector3 face = target - pos; face.y = 0f;
+            if (face.sqrMagnitude > 0.01f) fish.transform.rotation = Quaternion.LookRotation(face);
+
+            _nextSpit.TryGetValue(fish, out float spit);
+            if (Time.time < spit) return;
+            _nextSpit[fish] = Time.time + 3f;
+            if ((target - pos).sqrMagnitude > 34f * 34f) return;
+            Vector3 mouth = pos + Vector3.up * (0.8f * stats.Scale) + fish.transform.forward * 0.5f;
+            Fx.Send(FxKind.Spit, mouth, target);
+            StartCoroutine(SpitLands(target, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage)));
+            AutoTest.Count("spits");
+        }
+
+        private System.Collections.IEnumerator SpitLands(Vector3 at, int dmg)
+        {
+            yield return new WaitForSeconds(Fx.SpitFlight);
+            if (!_server.Active) yield break;
+            BuildSystem.Instance.ServerDamageArea(at, 1.6f, dmg);
+            if ((at - _server.CorePos).sqrMagnitude < 2.5f * 2.5f) DamageCore(dmg);
         }
 
         // ---------- per frame ----------
@@ -189,7 +256,16 @@ namespace HtfFortress
         private void Update()
         {
             EnsureRegistered();
-            if (InstanceFinder.IsServerStarted) Send(false);
+            if (InstanceFinder.IsServerStarted)
+            {
+                // Boss health for everyone's HUD.
+                _server.BossHp = 0; _server.BossMax = 0;
+                if (_server.Active)
+                    foreach (var kv in Enemies.Instance.ServerAll)
+                        if (kv.Value.Kind == EnemyKind.Boss && kv.Key._hp.Value > 0) { _server.BossHp = kv.Key._hp.Value; _server.BossMax = Mathf.Max(_bossMax, kv.Key._hp.Value); _bossMax = _server.BossMax; }
+                if (_server.BossMax == 0) _bossMax = 0;
+                Send(false);
+            }
         }
 
         private void LateUpdate()
@@ -226,7 +302,8 @@ namespace HtfFortress
             {
                 _hud.gameObject.SetActive(true);
                 string phase = _view.Building ? L10n.T("buildPhase", _view.Countdown) : L10n.T("fightPhase");
-                _hud.text = L10n.T("siegeHud", _view.Wave, _view.CoreHp, _view.CoreMax, _view.Remaining, _view.Coins) + "\n" + phase;
+                string boss = _view.BossMax > 0 ? "\n<color=#ff6050>" + L10n.T("bossHud", _view.BossHp, _view.BossMax) + "</color>" : "";
+                _hud.text = L10n.T("siegeHud", _view.Wave, _view.CoreHp, _view.CoreMax, _view.Remaining, _view.Coins) + "\n" + phase + boss;
             }
         }
 

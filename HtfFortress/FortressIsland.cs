@@ -214,6 +214,16 @@ namespace HtfFortress
             return false;
         }
 
+        // In the water just off one of the landing beaches, where a spitter can see the walls.
+        public Vector3 SpitterSpot()
+        {
+            float a = (GapAngles[Random.Range(0, GapAngles.Length)] + Random.Range(-25f, 25f)) * Mathf.Deg2Rad;
+            float r = Random.Range(29f, 33f);
+            Vector3 p = Center + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
+            p.y = WaterManager.GetWaterHeight(p) - 0.35f;
+            return p;
+        }
+
         public Vector3 SeaSpawn()
         {
             float a = Random.Range(0f, Mathf.PI * 2f), r = Random.Range(38f, 45f);

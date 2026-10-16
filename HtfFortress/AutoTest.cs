@@ -96,6 +96,7 @@ namespace HtfFortress
             {
                 case "probe": break;
                 case "siege": yield return SiegeScenario(); break;
+                case "enemies": yield return EnemiesScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -255,6 +256,48 @@ namespace HtfFortress
             Note($"fight over: wave {plugin.Wave}, enemies {FortressPlugin.Alive.Count}, core {Siege.Instance.CoreHp}, running {plugin.Running}");
             if (plugin.Running) { Siege.Instance.ServerDamageCoreForTest(100000); yield return new WaitForSecondsRealtime(1.5f); }
             yield return Look(center + new Vector3(0f, 2.5f, -12f), 0f, "isl_results", 2f);
+        }
+
+        // Jump to the waves where each enemy first shows up and photograph them up close.
+        private IEnumerator EnemiesScenario()
+        {
+            var island = FortressIsland.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            PlayerManager.ToggleGodMode();
+            Vector3 center = island.Center;
+            Player.LocalPlayer.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => FortressPlugin.Instance.Running, 15f, "round start");
+            if (!FortressPlugin.Instance.Running) yield break;
+            Siege.Instance.ServerAddCoins(5000);
+            foreach (float g in FortressIsland.GapAngles)
+            {
+                Vector3 dir = new Vector3(Mathf.Cos(g * Mathf.Deg2Rad), 0f, Mathf.Sin(g * Mathf.Deg2Rad));
+                Vector3 side = Vector3.Cross(Vector3.up, dir);
+                for (int k = -1; k <= 1; k++) WallAt(center + dir * 15f + side * (k * BuildSystem.Cell) + Vector3.up * 1.2f, dir);
+            }
+            var plugin = FortressPlugin.Instance;
+            var seen = new HashSet<string>();
+            foreach (int w in new[] { 3, 5, 6, 8, 10 })
+            {
+                plugin.DebugJumpToWave(w);
+                yield return new WaitForSecondsRealtime(5f);
+                Note($"wave {w}: {FortressPlugin.Alive.Count} enemies, boss hp {Siege.Instance.View.BossHp}/{Siege.Instance.View.BossMax}");
+                foreach (var kv in Enemies.Instance.ServerAll.ToList())
+                {
+                    string key = kv.Value.Kind + (kv.Value.Elite ? "_elite" : "");
+                    if (seen.Contains(key) || !kv.Key) continue;
+                    seen.Add(key);
+                    Vector3 at = kv.Key.transform.position;
+                    Vector3 away = at - center; away.y = 0f;
+                    Vector3 eye = at - away.normalized * (kv.Value.Kind == EnemyKind.Boss ? 9f : 4f);
+                    Note($"  {key} at {at}, scale {kv.Key.transform.localScale.x:0.00}, gear {kv.Key.GetComponentsInChildren<Transform>().Count(x => x.name.EndsWith("Gear"))}");
+                    yield return Look(eye, YawTo(eye, at), "enemy_" + key, 1.2f);
+                }
+                yield return new WaitForSecondsRealtime(4f);
+                plugin.DebugKillAll();
+                yield return new WaitForSecondsRealtime(2f);
+            }
+            Note("core " + Siege.Instance.CoreHp);
         }
 
         private void Finish()

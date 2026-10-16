@@ -356,6 +356,19 @@ namespace HtfFortress
             return true;
         }
 
+        // Host only: damage every piece whose centre is within `radius` of `at` (explosions, water bolts).
+        public void ServerDamageArea(Vector3 at, float radius, int dmg)
+        {
+            foreach (var p in _serverPieces.Values.Where(p => (p.Pos - at).sqrMagnitude <= radius * radius).ToList())
+            {
+                var s = p;
+                s.Hp -= dmg;
+                if (s.Hp <= 0) { Remove(s); AutoTest.Count("pieces_destroyed"); continue; }
+                _serverPieces[s.Id] = s;
+                InstanceFinder.ServerManager.Broadcast(s);
+            }
+        }
+
         // Pieces a walker has to break through (it walks over floors and ramps).
         public static bool IsWall(Collider col) => col && (col.gameObject.name.StartsWith("FortressPiece_Wall")
             || col.gameObject.name.StartsWith("FortressPiece_Cannon") || col.gameObject.name.StartsWith("FortressPiece_Gun"));
