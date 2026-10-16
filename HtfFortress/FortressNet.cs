@@ -33,6 +33,7 @@ namespace HtfFortress
         private float _nextTick;
         // client
         private NetState _mine;
+        public bool ClientNetFull => _mine.Capacity > 0 && _mine.Count >= _mine.Capacity;
         private NetworkManager _registeredOn;
 
         static FortressNet()
@@ -225,8 +226,9 @@ namespace HtfFortress
             _netCount.text = $"{_mine.Count}<size=70%><color={Hud.Hex(Hud.Muted)}> / {cap}</color></size>";
             _netCount.color = full ? Hud.Bad : Hud.Ink;
             _netBar.Set((float)_mine.Count / cap, full ? Hud.Bad : Hud.Accent);
-            _netFull.gameObject.SetActive(full);
-            _netFull.text = L10n.T("netFullShort");
+            _netFull.gameObject.SetActive(full || _mine.Count == 0);
+            _netFull.text = full ? L10n.T("netFullShort") : L10n.T("netHow");
+            _netFull.color = full ? Hud.Bad : Hud.Muted;
             if (NearCrate())
             {
                 int bonus = Mathf.RoundToInt(Loot.Instance.ClientVault.PersonalValue(Loot.KeyOf(Player.LocalPlayer), Gear.BigNet));

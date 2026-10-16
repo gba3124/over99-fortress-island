@@ -38,6 +38,7 @@ namespace HtfFortress
         }
 
         private void Awake() => Instance = this;
+        public bool ClientHasActive => Player.LocalPlayer && Loot.Instance && Equipped(Loot.Instance.ClientVault, Player.LocalPlayer) != null;
 
         private static (Gear g, Rarity r)? Equipped(VaultData v, Player p) =>
             p && v.Personal.TryGetValue(Loot.KeyOf(p), out var l) && l.Any(x => GearCatalog.IsActive(x.Item1)) ? l.First(x => GearCatalog.IsActive(x.Item1)) : ((Gear, Rarity)?)null;

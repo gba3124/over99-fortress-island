@@ -115,6 +115,7 @@ namespace HtfFortress
         }
 
         public bool LocalWorking => Time.time - _lastLocalWork < WorkGap;
+        public bool ClientOthersBuilding => _views.Values.Any(v => !(LocalWorking && v.S.Id == _localSite));
 
         // ---------- host ----------
 

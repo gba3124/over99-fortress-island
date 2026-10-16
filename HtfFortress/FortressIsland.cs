@@ -61,6 +61,7 @@ namespace HtfFortress
         // client: results panel
         private GameObject _results;
         private float _resultsUntil;
+        public bool ResultsShowing => _results && _results.activeSelf;
 
         static FortressIsland()
         {

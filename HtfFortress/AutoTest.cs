@@ -111,6 +111,7 @@ namespace HtfFortress
                 case "construct": yield return ConstructScenario(); break;
                 case "newfoes": yield return NewFoesScenario(); break;
                 case "gear2": yield return Gear2Scenario(); break;
+                case "tips": yield return TipsScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -535,6 +536,70 @@ namespace HtfFortress
             Note($"respawn: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.DockPos):F1} m from dock, boat {boat:F1} m from dock");
             FortressPlugin.Shot("coop_results");
             yield return new WaitForSecondsRealtime(1f);
+        }
+
+        // Tip cards, markers and the help panel, with screenshots. Leaves the tips unseen for the real player.
+        private IEnumerator TipsScenario()
+        {
+            var island = FortressIsland.Instance;
+            var plugin = FortressPlugin.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            Tips.Reset.Value = true;
+            PlayerManager.ToggleGodMode();
+            IgnorePlayers = true;
+            var me = Player.LocalPlayer;
+            Vector3 center = island.Center;
+            int C(string k) => Counters.TryGetValue(k, out int v) ? v : 0;
+            Vector3 Ground(Vector3 w) { if (Physics.Raycast(w + Vector3.up * 10f, Vector3.down, out var rh, 30f, GameInfo.LevelLayer)) return rh.point; return w; }
+
+            // On the island between rounds: the island tip, the circle and vault markers.
+            Vector3 dock = Ground(island.DockPos + Vector3.forward * 4f) + Vector3.up * 1f;
+            me.LocalTeleport(dock, 0f, true);
+            yield return Until(() => C("tip_island") > 0, 10f, "island tip");
+            yield return new WaitForSecondsRealtime(1f);
+            FortressPlugin.Shot("tips_island");
+            yield return new WaitForSecondsRealtime(0.5f);
+            Tips.Instance.ToggleHelp();
+            yield return new WaitForSecondsRealtime(0.8f);
+            FortressPlugin.Shot("tips_help");
+            yield return new WaitForSecondsRealtime(0.5f);
+            Tips.Instance.ToggleHelp();
+            Note($"help panel toggled: opened {C("help_opened")}, open now {Tips.Instance.HelpOpen}");
+
+            // The round: start tip, then a corpse next to us (net tip), then a full net (crate marker pulses).
+            me.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => plugin.Running, 15f, "round start");
+            yield return Until(() => plugin.InBuildTime, 5f, "build time");
+            plugin.DebugExtendBuild(300f);
+            yield return Until(() => C("tip_start") > 0, 10f, "start tip");
+            yield return new WaitForSecondsRealtime(8f);
+            Vector3 spot = Ground(center + new Vector3(0f, 0f, -12f)) + Vector3.up * 1f;
+            me.LocalTeleport(spot, 0f, true);
+            for (int i = 0; i < 6; i++) { var c = plugin.ServerSpawnMinion(EnemyKind.Runner, spot + new Vector3(i - 2.5f, 2f, 4f)); }
+            yield return new WaitForSecondsRealtime(1f);
+            plugin.DebugKillAll();
+            yield return Until(() => C("tip_net") > 0, 15f, "net tip");
+            yield return new WaitForSecondsRealtime(1f);
+            FortressPlugin.Shot("tips_net");
+            yield return new WaitForSecondsRealtime(8f);
+            // Scoop them all: the net fills.
+            foreach (var p in FortressNet.Instance.ServerCorpsePositions().ToList()) { me.LocalTeleport(p + Vector3.up * 0.4f, 0f, true); yield return new WaitForSecondsRealtime(0.4f); }
+            yield return Until(() => C("tip_netFull") > 0, 10f, "net-full tip");
+            me.LocalTeleport(spot, YawTo(spot, island.CratePos), true);
+            yield return new WaitForSecondsRealtime(1.5f);
+            FortressPlugin.Shot("tips_netfull");
+            yield return new WaitForSecondsRealtime(9f);
+
+            // A thief shows up.
+            plugin.ServerSpawnMinion(EnemyKind.Thief, spot + new Vector3(0f, 2f, 6f));
+            yield return Until(() => C("tip_foeThief") > 0, 10f, "thief tip");
+            yield return new WaitForSecondsRealtime(1f);
+            FortressPlugin.Shot("tips_thief");
+            yield return new WaitForSecondsRealtime(0.5f);
+            Note("tips shown: " + string.Join(", ", Counters.Where(kv => kv.Key.StartsWith("tip_")).Select(kv => kv.Key.Substring(4))));
+            plugin.DebugKillAll();
+            Tips.Reset.Value = true; // the real player still gets every tip
+            yield return new WaitForSecondsRealtime(0.5f);
         }
 
         // Blueprints and the new turrets, the five actives, the legendary specials.

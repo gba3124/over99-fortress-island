@@ -695,7 +695,7 @@ namespace HtfFortress
                 _titleText.gameObject.SetActive(true);
                 _titleText.text = L10n.T("islandName");
                 SetPhase(_view.ReadyCountdown > 0 ? $"<color={Hud.Hex(Hud.Accent)}><b>{L10n.T("readyCountdown", _view.ReadyCountdown)}</b></color>"
-                                                  : L10n.T("readyPrompt", _view.ReadyIn, _view.ReadyTotal));
+                                                  : L10n.T("readyPrompt", _view.ReadyIn, _view.ReadyTotal) + "　" + L10n.T("helpHint"));
                 return;
             }
             if (!_core)

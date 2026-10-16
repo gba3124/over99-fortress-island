@@ -116,6 +116,27 @@ namespace HtfFortress
                     yield return nob.transform;
         }
 
+        // For the tips: corpses near you, and which kinds are around.
+        public bool ClientCorpseNear(Vector3 pos, float r)
+        {
+            var cm = InstanceFinder.ClientManager;
+            if (cm == null) return false;
+            foreach (int id in _dressed)
+                if (cm.Objects.Spawned.TryGetValue(id, out NetworkObject nob) && nob && nob.GetComponent<Creature>() is Creature c && c._hp.Value <= 0
+                    && (nob.transform.position - pos).sqrMagnitude < r * r) return true;
+            return false;
+        }
+
+        public IEnumerable<EnemyKind> ClientKindsNear(Vector3 pos, float r)
+        {
+            var cm = InstanceFinder.ClientManager;
+            if (cm == null) yield break;
+            foreach (int id in _dressed)
+                if (_clientTags.TryGetValue(id, out var t) && cm.Objects.Spawned.TryGetValue(id, out NetworkObject nob) && nob
+                    && nob.GetComponent<Creature>() is Creature c && c._hp.Value > 0 && (nob.transform.position - pos).sqrMagnitude < r * r)
+                    yield return t.Kind;
+        }
+
         // Edge-of-screen markers for enemies you can't see (within 70 m).
         private readonly List<UnityEngine.UI.Image> _markers = new List<UnityEngine.UI.Image>();
 

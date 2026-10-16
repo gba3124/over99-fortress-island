@@ -90,6 +90,9 @@ namespace HtfFortress
             gameObject.AddComponent<Construction>();
             gameObject.AddComponent<PieceMenu>();
             gameObject.AddComponent<Actives>();
+            Tips.Show = Config.Bind("Tips", "ShowTips", true, "Show a short tip card the first time something new happens.");
+            Tips.Reset = Config.Bind("Tips", "ResetTips", false, "Set to true to see every tip card again.");
+            gameObject.AddComponent<Tips>();
             gameObject.AddComponent<AutoTest>();
             // One class at a time: a patch that breaks after a game update must not take the others down with it.
             var harmony = new Harmony("owen.htf.fortress");

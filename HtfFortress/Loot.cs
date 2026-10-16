@@ -41,6 +41,8 @@ namespace HtfFortress
         public VaultData ClientVault { get; private set; } = new VaultData();
         private readonly Dictionary<int, GameObject> _dropViews = new Dictionary<int, GameObject>();
         private GameObject _chestView;
+        public bool ClientHasDrops => _dropViews.Count > 0;
+        public Vector3? ClientChestPos => _chestView ? _chestView.transform.position : (Vector3?)null;
         private NetworkManager _registeredOn;
 
         static Loot()
