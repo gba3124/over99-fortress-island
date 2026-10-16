@@ -65,13 +65,13 @@ namespace HtfFortress
             _bestWave = Config.Bind("Stats", "BestWave", 0, "Most waves cleared in one run (saved automatically).");
             _walkerShare = Config.Bind("Siege", "WalkerShare", 0.5f, new ConfigDescription("Share of each wave that are walkers charging the core.", new AcceptableValueRange<float>(0f, 1f)));
             _walkerRadius = Config.Bind("Siege", "WalkerSpawnRadius", 25f, new ConfigDescription("How far from the core walkers appear (on land).", new AcceptableValueRange<float>(8f, 80f)));
-            Siege.CoreMaxHp = Config.Bind("Siege", "CoreMaxHp", 500, new ConfigDescription("Core health.", new AcceptableValueRange<int>(50, 10000)));
+            Siege.CoreMaxHp = Config.Bind("Siege", "CoreMaxHp", 1000, new ConfigDescription("Core health.", new AcceptableValueRange<int>(50, 10000)));
             Siege.WalkerDamage = Config.Bind("Siege", "WalkerDamage", 10, new ConfigDescription("Damage a walker deals per hit to walls and the core.", new AcceptableValueRange<int>(1, 500)));
             _readyKey = Config.Bind("Waves", "ReadyKey", Key.N, "Host presses this during build time to start the next wave right away.");
             _firstBuildSeconds = Config.Bind("Waves", "FirstBuildSeconds", 45f, new ConfigDescription("Build time before wave 1.", new AcceptableValueRange<float>(0f, 120f)));
             Siege.StartCoins = Config.Bind("Economy", "StartCoins", 150, new ConfigDescription("Team coins at the start of a run.", new AcceptableValueRange<int>(0, 10000)));
             _killReward = Config.Bind("Economy", "KillReward", 3, new ConfigDescription("Coins per kill (plus the wave number).", new AcceptableValueRange<int>(0, 100)));
-            _waveBonus = Config.Bind("Economy", "WaveBonus", 20, new ConfigDescription("Coins for clearing a wave (plus 5 x wave).", new AcceptableValueRange<int>(0, 500)));
+            _waveBonus = Config.Bind("Economy", "WaveBonus", 30, new ConfigDescription("Coins for clearing a wave (plus 8 x wave).", new AcceptableValueRange<int>(0, 500)));
             Turrets.DamageMultiplier = Config.Bind("Economy", "TurretDamage", 1f, new ConfigDescription("Turret damage multiplier.", new AcceptableValueRange<float>(0.1f, 10f)));
             L10n.Setting = Config.Bind("General", "Language", LanguageSetting.Auto, "Language for Fortress messages. Auto follows the game.");
             BuildSystem.BuildKey = Config.Bind("Build", "BuildKey", Key.G, "Toggle build mode.");
@@ -83,6 +83,7 @@ namespace HtfFortress
             gameObject.AddComponent<FortressIsland>();
             gameObject.AddComponent<Enemies>();
             gameObject.AddComponent<Fx>();
+            gameObject.AddComponent<FortressNet>();
             gameObject.AddComponent<AutoTest>();
             new Harmony("owen.htf.fortress").PatchAll();
             Logger.LogInfo("HTF Fortress loaded.");
@@ -150,7 +151,10 @@ namespace HtfFortress
             int killed = dead.Count, reward = 0;
             foreach (var d in dead)
             {
-                reward += Enemies.Instance.TryGet(d, out var tag) ? Enemies.StatsOf(tag).Reward + _wave / 2 : _killReward.Value;
+                bool tagged = Enemies.Instance.TryGet(d, out var tag);
+                int r = tagged ? Enemies.StatsOf(tag).Reward + _wave / 2 : _killReward.Value;
+                reward += r;
+                FortressNet.Instance.ServerAddCorpse(d, 2 + r / 2); // the body is worth a bit more if you net it and sell it
                 Enemies.Instance.ServerForget(d);
             }
             _alive.RemoveAll(c => !c || c._hp.Value <= 0);
@@ -170,7 +174,7 @@ namespace HtfFortress
                 if (_wave > 0)
                 {
                     _cleared = _wave;
-                    int bonus = _waveBonus.Value + 5 * _wave;
+                    int bonus = _waveBonus.Value + 8 * _wave;
                     Siege.Instance.ServerAddCoins(bonus);
                     Say(L10n.T("cleared", _wave, bonus, _breakSeconds.Value.ToString("0"), _readyKey.Value));
                     Fx.Announce("clearedBanner", _wave);
@@ -217,6 +221,7 @@ namespace HtfFortress
             _alive.Clear();
             _required.Clear();
             Enemies.Instance.ServerClear();
+            FortressNet.Instance.ServerReset();
             Siege.Instance.ServerStop();
             bool record = _cleared > _bestWave.Value;
             string recordText = record ? L10n.T("newRecord") : L10n.T("best", _bestWave.Value);
@@ -289,7 +294,7 @@ namespace HtfFortress
                 if (kind == EnemyKind.Spitter && island) pos = FortressIsland.Instance.SpitterSpot();
                 else if (island) { if (!FortressIsland.Instance.WalkerSpawn(out pos)) continue; }
                 else if (!FindLandAround(core, _walkerRadius.Value, out pos)) { if (!_warnedNoLand) { _warnedNoLand = true; Say(L10n.T("noLand")); } continue; }
-                var c = SpawnCreature(walkerPrefab, pos, hpMult * Enemies.StatsOf(new EnemyTag { Kind = kind, Elite = elite }).Hp);
+                var c = SpawnCreature(walkerPrefab, pos, 0f, Enemies.StatsOf(new EnemyTag { Kind = kind, Elite = elite }).BaseHp * hpMult);
                 Enemies.Instance.ServerTag(c, kind, elite);
                 Siege.Instance.RegisterWalker(c);
                 _required.Add(c);
@@ -300,7 +305,7 @@ namespace HtfFortress
             {
                 Item prefab = _poolPrefabs[UnityEngine.Random.Range(0, _poolPrefabs.Count)];
                 Vector3 pos = island ? FortressIsland.Instance.SeaSpawn() : FindSpawnPos(host, _radius.Value, WalksOnLand(prefab.GetComponent<Creature>()));
-                SpawnCreature(prefab, pos, hpMult);
+                SpawnCreature(prefab, pos, 0f, 25f * hpMult); // harassers: about a walker's health
                 AutoTest.Count("sea_spawned");
             }
 
@@ -309,11 +314,12 @@ namespace HtfFortress
             Shot("wave" + wave, 4f);
         }
 
-        private Creature SpawnCreature(Item prefab, Vector3 pos, float hpMult)
+        // hp > 0 sets an absolute health; otherwise the game's own max health times hpMult.
+        private Creature SpawnCreature(Item prefab, Vector3 pos, float hpMult, float hp = 0f)
         {
             Item item = Instantiate(prefab, pos, Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f));
             Creature c = item.Creature;
-            c._hp.Value = Mathf.Max(1, Mathf.RoundToInt(c.MaxHp * hpMult));
+            c._hp.Value = Mathf.Max(1, Mathf.RoundToInt(hp > 0f ? hp : c.MaxHp * hpMult));
             Server.Instance.Spawn(item.gameObject);
             _alive.Add(c);
             return c;

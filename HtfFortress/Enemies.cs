@@ -18,6 +18,7 @@ namespace HtfFortress
     public struct EnemyStats
     {
         public float Speed, Hp, Damage, WallMult, Scale;
+        public float BaseHp; // absolute health at wave 1 (the game's own fish health is far too high for a tower defence)
         public int Reward;
         public string Gear;
         public int FirstWave;
@@ -31,12 +32,12 @@ namespace HtfFortress
         {
             switch (k)
             {
-                case EnemyKind.Charger: return new EnemyStats { Speed = 1.8f, Hp = 0.5f, Damage = 0.6f, WallMult = 1f, Scale = 0.75f, Reward = 2, Gear = null, FirstWave = 3 };
-                case EnemyKind.Spitter: return new EnemyStats { Speed = 0f, Hp = 1.2f, Damage = 1.5f, WallMult = 1f, Scale = 1.1f, Reward = 6, Gear = "SpitterCannon", FirstWave = 4 };
-                case EnemyKind.Bomber: return new EnemyStats { Speed = 1.2f, Hp = 0.6f, Damage = 8f, WallMult = 1f, Scale = 1f, Reward = 5, Gear = "Bomb", FirstWave = 6 };
-                case EnemyKind.Tank: return new EnemyStats { Speed = 0.5f, Hp = 5f, Damage = 2.5f, WallMult = 2f, Scale = 1.8f, Reward = 12, Gear = "Shell", FirstWave = 8 };
-                case EnemyKind.Boss: return new EnemyStats { Speed = 0.45f, Hp = 40f, Damage = 6f, WallMult = 2f, Scale = 3.5f, Reward = 200, Gear = "Shell", FirstWave = 10 };
-                default: return new EnemyStats { Speed = 1f, Hp = 1f, Damage = 1f, WallMult = 1f, Scale = 1f, Reward = 3, Gear = null, FirstWave = 1 };
+                case EnemyKind.Charger: return new EnemyStats { BaseHp = 15f, Speed = 1.8f, Hp = 0.5f, Damage = 0.6f, WallMult = 1f, Scale = 0.75f, Reward = 4, Gear = null, FirstWave = 3 };
+                case EnemyKind.Spitter: return new EnemyStats { BaseHp = 40f, Speed = 0f, Hp = 1.2f, Damage = 1f, WallMult = 1f, Scale = 1.1f, Reward = 9, Gear = "SpitterCannon", FirstWave = 5 };
+                case EnemyKind.Bomber: return new EnemyStats { BaseHp = 20f, Speed = 1.2f, Hp = 0.6f, Damage = 8f, WallMult = 1f, Scale = 1f, Reward = 8, Gear = "Bomb", FirstWave = 6 };
+                case EnemyKind.Tank: return new EnemyStats { BaseHp = 150f, Speed = 0.5f, Hp = 5f, Damage = 2.5f, WallMult = 2f, Scale = 1.8f, Reward = 20, Gear = "Shell", FirstWave = 8 };
+                case EnemyKind.Boss: return new EnemyStats { BaseHp = 1200f, Speed = 0.45f, Hp = 40f, Damage = 6f, WallMult = 2f, Scale = 3.5f, Reward = 200, Gear = "Shell", FirstWave = 10 };
+                default: return new EnemyStats { BaseHp = 30f, Speed = 1f, Hp = 1f, Damage = 1f, WallMult = 1f, Scale = 1f, Reward = 6, Gear = null, FirstWave = 1 };
             }
         }
 
@@ -68,7 +69,7 @@ namespace HtfFortress
         public static EnemyStats StatsOf(EnemyTag t)
         {
             var s = EnemyCatalog.Of(t.Kind);
-            if (t.Elite) { s.Hp *= EnemyCatalog.EliteHp; s.Damage *= EnemyCatalog.EliteDamage; s.Scale *= EnemyCatalog.EliteScale; s.Reward *= EnemyCatalog.EliteReward; }
+            if (t.Elite) { s.BaseHp *= EnemyCatalog.EliteHp; s.Hp *= EnemyCatalog.EliteHp; s.Damage *= EnemyCatalog.EliteDamage; s.Scale *= EnemyCatalog.EliteScale; s.Reward *= EnemyCatalog.EliteReward; }
             return s;
         }
 

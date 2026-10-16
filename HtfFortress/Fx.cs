@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace HtfFortress
 {
-    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce, Harpoon, Mortar, Zap, Burn }
+    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce, Harpoon, Mortar, Zap, Burn, Scoop, Sell }
 
     // Host -> everyone: a visual effect (and for Announce, a banner: Key = string key, Arg = number).
     public struct FxEvent : IBroadcast { public FxKind Kind; public Vector3 From; public Vector3 To; public int PieceId; public string Key; public int Arg; }
@@ -95,6 +95,8 @@ namespace HtfFortress
                 case FxKind.Harpoon: StartCoroutine(Bolt(e.From, e.To)); SoundRandom("BowShoot_0", 1, 4, e.From, 0.9f); break;
                 case FxKind.Mortar: StartCoroutine(Arc(e.From, e.To, _ball, 0.45f, MortarFlight, 9f, true)); Sound("BoatFire", e.From, 0.8f); break;
                 case FxKind.Zap: StartCoroutine(Zap(e.From, e.To)); if (e.PieceId != 0) Sound("Ignite", e.From, 0.6f); break;
+                case FxKind.Scoop: StartCoroutine(Fly(e.From, e.To + Vector3.up * 1.2f)); SoundRandom("PickUp_V", 1, 3, e.To, 0.7f, AudioDistance.Short); break;
+                case FxKind.Sell: SoundRandom("Sell_0", 1, 3, e.To, 1f); StartCoroutine(Blast(e.To + Vector3.up, 1.6f, _tracer)); break;
                 case FxKind.Burn: StartCoroutine(Blast(e.To + Random.insideUnitSphere * 1.5f, 1.4f, _fire)); break;
             }
         }
@@ -126,6 +128,21 @@ namespace HtfFortress
             go.transform.SetPositionAndRotation(from + d * 0.5f, Quaternion.LookRotation(d));
             go.transform.localScale = new Vector3(0.05f, 0.05f, d.magnitude);
             yield return new WaitForSeconds(0.05f);
+            Destroy(go);
+        }
+
+        // Net scoop: a little fish-coloured blob hops from the corpse into the player.
+        private IEnumerator Fly(Vector3 from, Vector3 to)
+        {
+            var go = Shape(PrimitiveType.Sphere, _spit);
+            go.transform.localScale = Vector3.one * 0.35f;
+            for (float t = 0f; t < 0.3f; t += Time.deltaTime)
+            {
+                float k = t / 0.3f;
+                go.transform.position = Vector3.Lerp(from, to, k) + Vector3.up * Mathf.Sin(k * Mathf.PI) * 1.2f;
+                go.transform.localScale = Vector3.one * 0.35f * (1f - k * 0.6f);
+                yield return null;
+            }
             Destroy(go);
         }
 

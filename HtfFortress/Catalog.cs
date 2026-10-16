@@ -55,11 +55,11 @@ namespace HtfFortress
             int i = Mathf.Clamp(level, 1, MaxLevel) - 1;
             switch (t)
             {
-                case PieceType.Wall: return new[] { 150, 300, 500 }[i];   // wood, stone, metal
+                case PieceType.Wall: return new[] { 200, 400, 650 }[i];   // wood, stone, metal
                 case PieceType.Floor:
                 case PieceType.Ramp: return new[] { 100, 200, 350 }[i];
                 case PieceType.Spikes: return new[] { 120, 200, 300 }[i];
-                default: return new[] { 200, 300, 400 }[i];               // turrets
+                default: return new[] { 300, 450, 600 }[i];               // turrets
             }
         }
 
@@ -78,7 +78,7 @@ namespace HtfFortress
             switch (t)
             {
                 case PieceType.Gun:
-                    s.Damage = new[] { 4, 6, 9 }[i]; s.Interval = new[] { 0.25f, 0.2f, 0.15f }[i]; s.Range = new[] { 14f, 16f, 18f }[i];
+                    s.Damage = new[] { 6, 9, 13 }[i]; s.Interval = new[] { 0.25f, 0.2f, 0.15f }[i]; s.Range = new[] { 16f, 18f, 20f }[i];
                     if (branch == 1) s.Interval *= 0.5f;            // Storm
                     if (branch == 2) s.BossMult = 3f;               // Armour piercing: x3 vs tanks/boss
                     break;

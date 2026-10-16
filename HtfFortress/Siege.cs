@@ -202,7 +202,7 @@ namespace HtfFortress
             int dmg = Mathf.RoundToInt(WalkerDamage.Value * stats.Damage);
             if (tag.Kind == EnemyKind.Bomber) { Explode(fish, dmg); return; }
             if (wall) { BuildSystem.Instance.ServerDamage(wall, Mathf.RoundToInt(dmg * stats.WallMult)); AutoTest.Count("walker_hit_piece"); }
-            else { DamageCore(dmg); AutoTest.Count("walker_hit_core"); }
+            else { DamageCore(Mathf.Max(1, dmg / 2)); AutoTest.Count("walker_hit_core"); } // the lighthouse is sturdier than a wall
         }
 
         public void DamageCore(int dmg) => _server.CoreHp = Mathf.Clamp(_server.CoreHp - dmg, 0, _server.CoreMax);
@@ -248,7 +248,7 @@ namespace HtfFortress
 
             _nextSpit.TryGetValue(fish, out float spit);
             if (Time.time < spit) return;
-            _nextSpit[fish] = Time.time + 3f;
+            _nextSpit[fish] = Time.time + 4f;
             if ((target - pos).sqrMagnitude > 34f * 34f) return;
             Vector3 mouth = pos + Vector3.up * (0.8f * stats.Scale) + fish.transform.forward * 0.5f;
             Fx.Send(FxKind.Spit, mouth, target);

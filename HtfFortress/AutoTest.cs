@@ -390,6 +390,7 @@ namespace HtfFortress
             if (!FortressPlugin.Instance.Running) yield break;
             var plugin = FortressPlugin.Instance;
             int lastWave = -1;
+            Note("dripper game max hp: " + (BuildPoolProbe() ?? "?"));
             float end = Time.realtimeSinceStartup + 900f;
             while (plugin.Running && Time.realtimeSinceStartup < end && plugin.Wave < 15)
             {
@@ -403,6 +404,12 @@ namespace HtfFortress
                 yield return new WaitForSecondsRealtime(1f);
             }
             Note($"balance result: reached wave {plugin.Wave}, running {plugin.Running}, core {Siege.Instance.CoreHp}");
+        }
+
+        private static string BuildPoolProbe()
+        {
+            var all = (Dictionary<string, Item>)AccessTools.Field(typeof(GameInfo), "_nameToSpawnable").GetValue(null);
+            return all.TryGetValue("dripper", out var d) && d.GetComponent<Creature>() is Creature c ? c.MaxHp.ToString() : null;
         }
 
         private static readonly List<(PieceType type, float r, float sideOffset, int gap)> Plan = BuildPlan();

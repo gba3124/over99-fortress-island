@@ -28,6 +28,7 @@ namespace HtfFortress
         public static readonly Vector3 CoreLocal = new Vector3(0f, 1.45f, 0f);
         public static readonly Vector3 ReadyLocal = new Vector3(0f, 1.46f, -4.5f);
         public static readonly Vector3 DockLocal = new Vector3(0f, 0.6f, -36f);
+        public static readonly Vector3 CrateLocal = new Vector3(4.5f, 0f, -20f); // on the beach beside the dock
         public const float ReadyRadius = 1.8f;
         public const float BuildRadius = 27f;
         public const float IslandRadius = 36f;
@@ -39,6 +40,7 @@ namespace HtfFortress
         public Vector3 Center { get; private set; }
         public Vector3 CorePos => Center + CoreLocal;
         public Vector3 DockPos => Center + DockLocal;
+        public Vector3 CratePos { get; private set; }
 
         private GameObject _root, _ring;
         private Material _ringMat;
@@ -141,6 +143,17 @@ namespace HtfFortress
             var mc = model.AddComponent<MeshCollider>();
             if (mf && mf.sharedMesh) mc.sharedMesh = mf.sharedMesh;
 
+            // Fish crate: sell your net here (and buy a bigger one).
+            CratePos = Center + CrateLocal;
+            if (Physics.Raycast(CratePos + Vector3.up * 20f, Vector3.down, out var gh, 40f, GameInfo.LevelLayer)) CratePos = gh.point;
+            var crate = new GameObject("FishCrate");
+            crate.layer = BuildSystem.PieceLayer;
+            crate.transform.SetParent(_root.transform, false);
+            crate.transform.position = CratePos;
+            crate.transform.rotation = Quaternion.Euler(0f, 20f, 0f);
+            var box = crate.AddComponent<BoxCollider>(); box.size = new Vector3(1.6f, 1.1f, 1.2f); box.center = new Vector3(0f, 0.55f, 0f);
+            Models.Attach("FishCrate", crate.transform, new Vector3(1.6f, 1.1f, 1.2f), new Vector3(0f, 0.55f, 0f));
+
             _ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             Destroy(_ring.GetComponent<Collider>());
             _ring.name = "ReadyCircle";
@@ -222,7 +235,7 @@ namespace HtfFortress
         public Vector3 SpitterSpot()
         {
             float a = (GapAngles[Random.Range(0, GapAngles.Length)] + Random.Range(-25f, 25f)) * Mathf.Deg2Rad;
-            float r = Random.Range(29f, 33f);
+            float r = Random.Range(27.5f, 29.5f); // just past the waterline, in reach of the beach turrets
             Vector3 p = Center + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
             p.y = WaterManager.GetWaterHeight(p) - 0.35f;
             return p;
