@@ -172,16 +172,32 @@ namespace HtfFortress
             float reach = CoreHitRange + 0.4f * (stats.Scale - 1f);
             if (dist <= reach) { Halt(rig); TryAttack(fish, null, tag, stats); return true; }
 
-            // Overlap just ahead (a cast would miss a wall the fish is already pressed against).
-            int mask = 1 << BuildSystem.PieceLayer;
-            float r = 0.45f * Mathf.Max(1f, stats.Scale * 0.8f);
-            foreach (var col in Physics.OverlapSphere(pos + dir * (0.6f * stats.Scale) + Vector3.up * 0.4f * stats.Scale, r, mask, QueryTriggerInteraction.Ignore))
+            // Flanking: after being held at a wall for 3 s, walk sideways along it for a while looking for a way round.
+            bool flanking = _flank.TryGetValue(fish, out var fl) && Time.time < fl.until;
+            if (flanking) dir = fl.dir;
+            fish.transform.forward = dir;
+
+            Collider wall = WallAhead(pos, dir, stats);
+            if (wall)
             {
-                if (!BuildSystem.IsWall(col)) continue;
+                if (flanking) { _flank.Remove(fish); _blockedSince.Remove(fish); } // flank blocked too: just smash through
+                else
+                {
+                    if (!_blockedSince.TryGetValue(fish, out float since)) _blockedSince[fish] = since = Time.time;
+                    if (Time.time - since > 3f && tag.Kind != EnemyKind.Bomber && tag.Kind != EnemyKind.Tank && tag.Kind != EnemyKind.Boss)
+                    {
+                        float side = (fish.ObjectId & 1) == 0 ? 1f : -1f;
+                        _flank[fish] = (Quaternion.Euler(0f, 80f * side, 0f) * dir, Time.time + 2.5f);
+                        _blockedSince.Remove(fish);
+                        AutoTest.Count("flanks");
+                        return true;
+                    }
+                }
                 Halt(rig);
-                TryAttack(fish, col, tag, stats);
+                TryAttack(fish, wall, tag, stats);
                 return true;
             }
+            if (!flanking) _blockedSince.Remove(fish);
 
             Vector3 v = dir * RunSpeed(fish) * stats.Speed * SlowFactor(fish);
             v.y = rig.linearVelocity.y;
@@ -200,6 +216,19 @@ namespace HtfFortress
             _slow[c] = (f, Time.time + seconds);
         }
         private float SlowFactor(Creature c) => _slow.TryGetValue(c, out var s) && s.until > Time.time ? s.factor : 1f;
+
+        private readonly Dictionary<RunningFish, float> _blockedSince = new Dictionary<RunningFish, float>();
+        private readonly Dictionary<RunningFish, (Vector3 dir, float until)> _flank = new Dictionary<RunningFish, (Vector3, float)>();
+
+        // Overlap just ahead (a cast would miss a wall the fish is already pressed against).
+        private static Collider WallAhead(Vector3 pos, Vector3 dir, EnemyStats stats)
+        {
+            int mask = 1 << BuildSystem.PieceLayer;
+            float r = 0.45f * Mathf.Max(1f, stats.Scale * 0.8f);
+            foreach (var col in Physics.OverlapSphere(pos + dir * (0.6f * stats.Scale) + Vector3.up * 0.4f * stats.Scale, r, mask, QueryTriggerInteraction.Ignore))
+                if (BuildSystem.IsWall(col)) return col;
+            return null;
+        }
 
         private readonly Dictionary<RunningFish, (Vector3 pos, float time)> _progress = new Dictionary<RunningFish, (Vector3, float)>();
 

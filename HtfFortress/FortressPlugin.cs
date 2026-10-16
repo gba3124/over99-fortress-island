@@ -281,9 +281,9 @@ namespace HtfFortress
             _required.Clear();
             int players = Mathf.Max(1, PlayerManager.Players.Count);
             float crowd = 1f + 0.4f * (players - 1);
-            int land = Mathf.RoundToInt((_baseCount.Value + _countPerWave.Value * (wave - 1)) * crowd);
+            int land = Mathf.RoundToInt((_baseCount.Value + _countPerWave.Value * (wave - 1) + 2 * Mathf.Max(0, wave - 8)) * crowd);
             float hpMult = 1f + _hpPerWave.Value * (wave - 1);
-            bool bossWave = wave % 10 == 0, eliteWave = wave % 5 == 0 && !bossWave;
+            bool bossWave = wave % 10 == 0, eliteWave = !bossWave && (wave % 5 == 0 || (wave > 10 && wave % 3 == 0));
             int elites = eliteWave ? 2 + wave / 10 : 0;
 
             var plan = new List<(EnemyKind kind, bool elite)>();
