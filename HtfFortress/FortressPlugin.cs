@@ -294,7 +294,7 @@ namespace HtfFortress
             float crowd = 1f + 0.4f * (players - 1);
             int land = Mathf.RoundToInt((_baseCount.Value + _countPerWave.Value * (wave - 1) + 2 * Mathf.Max(0, wave - 8)) * crowd);
             // Linear growth plus a gentle square term so late waves really bite.
-            float hpMult = 1f + _hpPerWave.Value * (wave - 1) + 0.03f * (wave - 1) * (wave - 1);
+            float hpMult = 1f + _hpPerWave.Value * (wave - 1) + 0.05f * (wave - 1) * (wave - 1);
             bool bossWave = wave % 10 == 0, eliteWave = !bossWave && (wave % 5 == 0 || (wave > 10 && wave % 3 == 0));
             int elites = eliteWave ? 2 + wave / 10 : 0;
 
@@ -308,7 +308,7 @@ namespace HtfFortress
             bool island = FortressIsland.Instance.Exists && FortressIsland.Instance.OnIsland(core);
             Item walkerPrefab = _walkerPrefabs.FirstOrDefault();
 
-            // Three bursts, 6 s apart, spread evenly over the three beaches so the team has to split up.
+            // Three bursts, 3.5 s apart, spread evenly over the three beaches so the team has to split up.
             int gapStart = UnityEngine.Random.Range(0, 3);
             var shuffled = plan.OrderBy(_ => UnityEngine.Random.value).ToList();
             _spawning = true;
@@ -337,7 +337,7 @@ namespace HtfFortress
                     var c = SpawnCreature(walkerPrefab, pos, 0f, Enemies.StatsOf(new EnemyTag { Kind = kind, Elite = elite }).BaseHp * hpMult);
                     Enemies.Instance.ServerTag(c, kind, elite);
                     Siege.Instance.RegisterWalker(c);
-                    _required.Add(c);
+                    if (kind != EnemyKind.Spitter) _required.Add(c); // spitters only harass: they dive once the landing party is dead
                     AutoTest.Count("spawned_" + kind + (elite ? "_elite" : ""));
                 }
                 if (burst == 0)
@@ -348,7 +348,7 @@ namespace HtfFortress
                         SpawnCreature(prefab, pos, 0f, 25f * hpMult); // harassers: about a walker's health
                         AutoTest.Count("sea_spawned");
                     }
-                if (burst < 2) yield return new WaitForSeconds(6f);
+                if (burst < 2) yield return new WaitForSeconds(3.5f);
             }
             _spawning = false;
         }
