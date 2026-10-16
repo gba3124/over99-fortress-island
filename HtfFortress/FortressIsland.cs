@@ -274,4 +274,17 @@ namespace HtfFortress
             }
         }
     }
+
+    // Dying mid-round respawns you at the fortress dock instead of back home.
+    [HarmonyPatch(typeof(PlayerManager), nameof(PlayerManager.OnPlayerResurrected))]
+    internal static class RespawnAtDock
+    {
+        private static void Postfix(Player player)
+        {
+            var island = FortressIsland.Instance;
+            if (player != Player.LocalPlayer || island == null || !island.Exists || !(Siege.Instance && Siege.Instance.ViewActive)) return;
+            var d = island.Center - island.DockPos;
+            player.LocalTeleport(island.DockPos, Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg, true);
+        }
+    }
 }

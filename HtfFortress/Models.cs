@@ -73,7 +73,8 @@ namespace HtfFortress
             if (Swatch.TryGetValue(m, out var tex) && tex)
             {
                 // Model colours are authored in sRGB (Blender); the game's lighting is bright, so feed linear values.
-                var lc = c.linear;
+                // Slightly muted to sit with the game's pastel palette.
+                var lc = (Color.Lerp(c, new Color(c.grayscale, c.grayscale, c.grayscale), 0.15f) * 0.9f).linear;
                 tex.SetPixels(new[] { lc, lc, lc, lc });
                 tex.Apply(false);
             }

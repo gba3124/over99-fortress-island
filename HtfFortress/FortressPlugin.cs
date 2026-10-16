@@ -37,6 +37,10 @@ namespace HtfFortress
         // Wave creatures still alive; turrets pick targets from here.
         public static readonly List<Creature> Alive = new List<Creature>();
         private List<Creature> _alive => Alive;
+        // Enemies that must die to clear a wave (land attackers); sea creatures are extras and get cleaned up.
+        private readonly HashSet<Creature> _required = new HashSet<Creature>();
+        private float _waveStarted;
+        private bool _requiredSpawned;
         private List<Item> _poolPrefabs = new List<Item>();
         private List<Item> _walkerPrefabs = new List<Item>();
         private bool _running;
@@ -121,9 +125,22 @@ namespace HtfFortress
             if (Siege.Instance.CoreDestroyed) { Stop(L10n.T("coreDown")); return; }
 
             // Creature.Hp is only filled in OnStartClient; the synced _hp is valid from spawn.
+            // Anything that wandered far from the fight (or a sea creature that swam off) is removed.
+            Vector3 corePos = Siege.Instance.CorePos;
+            foreach (var c in _alive.Where(c => c && c._hp.Value > 0 && c.IsSpawned && (c.transform.position - corePos).sqrMagnitude > 80f * 80f).ToList())
+            { _alive.Remove(c); _required.Remove(c); c.DestroyItem(); AutoTest.Count("escaped"); }
             int before = _alive.Count;
             _alive.RemoveAll(c => !c || c._hp.Value <= 0);
+            _required.RemoveWhere(c => !c || c._hp.Value <= 0);
             int killed = before - _alive.Count;
+            // Wave is over when the land attackers are dead (or, if a wave had none, everything), or after 3 minutes for extras.
+            bool waveDone = _wave > 0 && _nextWaveAt == 0f && (_requiredSpawned ? _required.Count == 0 : _alive.Count == 0);
+            if (_wave > 0 && _nextWaveAt == 0f && Time.time - _waveStarted > 180f && _required.Count == 0) waveDone = true;
+            if (waveDone && _alive.Count > 0)
+            {
+                foreach (var c in _alive.Where(c => c && c.IsSpawned).ToList()) c.DestroyItem();
+                _alive.Clear();
+            }
             if (killed > 0) { Siege.Instance.ServerAddCoins(killed * (_killReward.Value + _wave)); _kills += killed; AutoTest.Count("kills", killed); }
 
             if (_alive.Count == 0 && _nextWaveAt == 0f)
@@ -175,6 +192,7 @@ namespace HtfFortress
             bool coreLost = Siege.Instance.CoreDestroyed;
             foreach (var c in _alive.Where(c => c && c.IsSpawned)) c.DestroyItem();
             _alive.Clear();
+            _required.Clear();
             Siege.Instance.ServerStop();
             bool record = _cleared > _bestWave.Value;
             string recordText = record ? L10n.T("newRecord") : L10n.T("best", _bestWave.Value);
@@ -208,6 +226,9 @@ namespace HtfFortress
 
         private void SpawnWave(int wave)
         {
+            _waveStarted = Time.time;
+            _requiredSpawned = false;
+            _required.Clear();
             int count = _baseCount.Value + _countPerWave.Value * (wave - 1);
             float hpMult = 1f + _hpPerWave.Value * (wave - 1);
             int walkers = _walkerPrefabs.Count > 0 ? Mathf.RoundToInt(count * (_poolPrefabs.Count > 0 ? _walkerShare.Value : 1f)) : 0;
@@ -232,7 +253,7 @@ namespace HtfFortress
                 Creature c = item.Creature;
                 c._hp.Value = Mathf.Max(1, Mathf.RoundToInt(c.MaxHp * hpMult));
                 Server.Instance.Spawn(item.gameObject);
-                if (walker) { Siege.Instance.RegisterWalker(c); AutoTest.Count("walkers_spawned"); } else AutoTest.Count("sea_spawned");
+                if (walker) { Siege.Instance.RegisterWalker(c); _required.Add(c); _requiredSpawned = true; AutoTest.Count("walkers_spawned"); } else AutoTest.Count("sea_spawned");
                 _alive.Add(c);
                 Logger.LogInfo($"  spawned {prefab.name}{(walker ? " [walker]" : "")} at {pos}");
             }
