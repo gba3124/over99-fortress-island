@@ -47,6 +47,7 @@ namespace HtfFortress
         private void Awake() => Instance = this;
 
         private int Cap => Capacity[Mathf.Clamp(_netLevel, 0, Capacity.Length - 1)];
+        private int CapOf(int playerId) => Cap + Mathf.RoundToInt(Perks.Of(playerId, Gear.BigNet)); // + the Big Net gear
 
         // ---------- host API ----------
 
@@ -56,6 +57,7 @@ namespace HtfFortress
         }
 
         public IEnumerable<Vector3> ServerCorpsePositions() => _corpses.Keys.Where(c => c && c.IsSpawned).Select(c => c.transform.position);
+        public int ServerCapOf(int playerId) => CapOf(playerId);
         public int ServerNetCount(int playerId) => _nets.TryGetValue(playerId, out var n) ? n.count : 0;
 
         public void ServerReset()
@@ -70,7 +72,7 @@ namespace HtfFortress
         private void Send(int playerId)
         {
             _nets.TryGetValue(playerId, out var n);
-            InstanceFinder.ServerManager.Broadcast(new NetState { PlayerId = playerId, Count = n.count, Capacity = Cap, Value = n.value });
+            InstanceFinder.ServerManager.Broadcast(new NetState { PlayerId = playerId, Count = n.count, Capacity = CapOf(playerId), Value = n.value });
         }
 
         private void Update()
@@ -105,10 +107,11 @@ namespace HtfFortress
                 _nets.TryGetValue(p.ObjectId, out var net);
                 bool changed = false;
                 // Scoop.
-                if (net.count < Cap)
+                int cap = CapOf(p.ObjectId);
+                if (net.count < cap)
                     foreach (var kv in _corpses.Where(kv => kv.Key && (kv.Key.transform.position - pos).sqrMagnitude < ScoopRadius * ScoopRadius).ToList())
                     {
-                        if (net.count >= Cap) break;
+                        if (net.count >= cap) break;
                         net.count++; net.value += kv.Value.value; changed = true;
                         Fx.Send(FxKind.Scoop, kv.Key.transform.position, pos);
                         kv.Key.DestroyItem();
@@ -118,9 +121,10 @@ namespace HtfFortress
                 // Sell at the crate.
                 if (net.count > 0 && (pos - crate).sqrMagnitude < CrateRadius * CrateRadius)
                 {
-                    Siege.Instance.ServerAddCoins(net.value);
-                    Stats.Fished(p.ObjectId, net.value);
-                    Fx.Send(FxKind.Sell, crate, crate, 0, net.value);
+                    int value = Mathf.RoundToInt(net.value * (1f + Perks.Of(p, Gear.FishGloves))); // + Fishmonger's Gloves
+                    Siege.Instance.ServerAddCoins(value);
+                    Stats.Fished(p.ObjectId, value);
+                    Fx.Send(FxKind.Sell, crate, crate, 0, value);
                     AutoTest.Count("net_sold", net.count);
                     net = default; changed = true;
                 }
@@ -149,7 +153,7 @@ namespace HtfFortress
         private void ClientInput()
         {
             var kb = Keyboard.current;
-            if (kb == null || ChatManager.IsTyping || BuildSystem.Building) return;
+            if (kb == null || ChatManager.IsTyping || BuildSystem.Building || VaultUI.IsOpen) return;
             if (kb.uKey.wasPressedThisFrame && NearCrate() && Siege.Instance.ViewActive && InstanceFinder.IsClientStarted)
                 InstanceFinder.ClientManager.Broadcast(new NetUpgradeRequest());
         }
@@ -168,7 +172,8 @@ namespace HtfFortress
             string line = L10n.T("netHud", _mine.Count, cap, _mine.Value) + full;
             if (NearCrate())
             {
-                int lvl = System.Array.IndexOf(Capacity, cap);
+                int bonus = Mathf.RoundToInt(Loot.Instance.ClientVault.PersonalValue(Loot.KeyOf(Player.LocalPlayer), Gear.BigNet));
+                int lvl = System.Array.IndexOf(Capacity, cap - bonus);
                 line += "\n" + (lvl >= 0 && lvl < UpgradeCost.Length ? L10n.T("netUpgradeHint", Capacity[lvl + 1], UpgradeCost[lvl]) : L10n.T("netMax"));
             }
             _hud.text = line;

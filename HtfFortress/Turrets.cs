@@ -26,7 +26,7 @@ namespace HtfFortress
             if (alive.Count == 0) return;
             foreach (var p in BuildSystem.Instance.ServerPieces.ToList())
                 if (Catalog.IsTurret(p.Type)) Fire(p, alive);
-            if (Time.time >= _nextSpikeTick) { _nextSpikeTick = Time.time + 0.5f; Spikes(alive); }
+            if (Time.time >= _nextSpikeTick) { _nextSpikeTick = Time.time + 0.5f; Spikes(alive); BurnTick(); }
         }
 
         private static bool Alive(Creature c) => c && c._hp.Value > 0;
@@ -36,8 +36,9 @@ namespace HtfFortress
         private int Dmg(int baseDmg, Creature c, Catalog.TurretStats s)
         {
             Stats.TurretHit(c, _owner);
-            float d = baseDmg * DamageMultiplier.Value;
-            if (Enemies.Instance.TryGet(c, out var tag) && (tag.Kind == EnemyKind.Tank || tag.Kind == EnemyKind.Boss)) d *= s.BossMult;
+            float d = baseDmg * DamageMultiplier.Value * (1f + Perks.Team(Gear.Gunpowder));
+            if (Enemies.Instance.TryGet(c, out var tag) && (tag.Kind == EnemyKind.Tank || tag.Kind == EnemyKind.Boss)) d *= s.BossMult * (1f + Perks.Team(Gear.ApRounds));
+            Siege.Instance.Slow(c, Perks.Team(Gear.FrostCore), 1.5f);
             if (s.WaterMult != 1f && c.transform.position.y < WaterManager.GetWaterHeight(c.transform.position) + 0.3f) d *= s.WaterMult;
             return Mathf.Max(1, Mathf.RoundToInt(d));
         }
@@ -47,6 +48,8 @@ namespace HtfFortress
             _nextFire.TryGetValue(p.Id, out float next);
             if (Time.time < next) return;
             var s = Catalog.Turret(p.Type, p.Level, p.Branch);
+            s.Range *= 1f + Perks.Team(Gear.Scope);
+            if (p.Type == PieceType.Tesla) s.Chain += Mathf.RoundToInt(Perks.Team(Gear.TeslaCoil));
             _owner = BuildSystem.Instance.OwnerOf(p.Id);
             Vector3 muzzle = p.Pos + Vector3.up * 1.1f;
 
@@ -69,6 +72,7 @@ namespace HtfFortress
                 {
                     int dmg = Dmg(s.Damage, target, s);
                     target.ServerChangeHp(dmg);
+                    Ignite(target);
                     Fx.Send(FxKind.Tracer, muzzle, hit, p.Id, dmg);
                     break;
                 }
@@ -77,7 +81,7 @@ namespace HtfFortress
                     for (int i = 0; i < s.Shots; i++)
                     {
                         Vector3 at = i == 0 ? hit : hit + Random.insideUnitSphere.Flat() * 3f;
-                        Splash(alive, at, s.Splash, s.Damage, s);
+                        Splash(alive, at, s.Splash, s.Damage, s, ignite: true);
                         Fx.Send(FxKind.Cannonball, muzzle, at, i == 0 ? p.Id : 0, Mathf.RoundToInt(s.Damage * DamageMultiplier.Value));
                     }
                     break;
@@ -135,11 +139,35 @@ namespace HtfFortress
             }
         }
 
-        private void Splash(List<Creature> alive, Vector3 at, float radius, int dmg, Catalog.TurretStats s)
+        private void Splash(List<Creature> alive, Vector3 at, float radius, int dmg, Catalog.TurretStats s, bool ignite = false)
         {
             float r2 = radius * radius;
             foreach (var c in alive.Where(Alive).ToList())
-                if ((c.transform.position - at).sqrMagnitude <= r2) c.ServerChangeHp(Dmg(dmg, c, s));
+                if ((c.transform.position - at).sqrMagnitude <= r2) { c.ServerChangeHp(Dmg(dmg, c, s)); if (ignite) Ignite(c); }
+        }
+
+        // Incendiary rounds (fortress gear): gun and cannon hits set the target burning for 3 s.
+        private readonly Dictionary<Creature, (float dps, float until, int owner)> _burning = new Dictionary<Creature, (float, float, int)>();
+        private int _burnTicks;
+
+        private void Ignite(Creature c)
+        {
+            float dps = Perks.Team(Gear.Incendiary);
+            if (dps > 0f && Alive(c)) _burning[c] = (dps, Time.time + 3f, _owner);
+        }
+
+        private void BurnTick()
+        {
+            bool fx = (++_burnTicks & 1) == 0; // flames once a second, damage every half second
+            foreach (var kv in _burning.ToList())
+            {
+                var c = kv.Key;
+                if (!Alive(c) || Time.time > kv.Value.until) { _burning.Remove(c); continue; }
+                Stats.TurretHit(c, kv.Value.owner);
+                c.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(kv.Value.dps * 0.5f * DamageMultiplier.Value)));
+                if (fx) Fx.Send(FxKind.Burn, c.transform.position, c.transform.position);
+                AutoTest.Count("burn_ticks");
+            }
         }
 
         private IEnumerator MortarLands(Vector3 at, Catalog.TurretStats s)

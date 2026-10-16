@@ -30,6 +30,7 @@ namespace HtfFortress
         public static readonly Vector3 ReadyLocal = new Vector3(0f, 1.46f, -4.5f);
         public static readonly Vector3 DockLocal = new Vector3(0f, 0.6f, -36f);
         public static readonly Vector3 CrateLocal = new Vector3(4.5f, 0f, -20f); // on the beach beside the dock
+        public static readonly Vector3 VaultLocal = new Vector3(-5.5f, 0f, -20.5f); // the other side of the dock
         public const float ReadyRadius = 1.8f;
         public const float BuildRadius = 27f;
         public const float IslandRadius = 36f;
@@ -45,6 +46,7 @@ namespace HtfFortress
         public Vector3 BerthPos { get { var p = Center + new Vector3(4f, 0f, -42f); p.y = WaterManager.GetWaterHeight(p); return p; } }
         public void ServerMoveBoatToBerth() => BoatManager.Instance.TryMoveBoat(BerthPos, Quaternion.identity);
         public Vector3 CratePos { get; private set; }
+        public Vector3 VaultPos { get; private set; }
 
         private GameObject _root, _ring;
         private Material _ringMat;
@@ -168,6 +170,17 @@ namespace HtfFortress
             crate.transform.rotation = Quaternion.Euler(0f, 20f, 0f);
             var box = crate.AddComponent<BoxCollider>(); box.size = new Vector3(1.6f, 1.1f, 1.2f); box.center = new Vector3(0f, 0.55f, 0f);
             Models.Attach("FishCrate", crate.transform, new Vector3(1.6f, 1.1f, 1.2f), new Vector3(0f, 0.55f, 0f));
+
+            // Vault: the team's gear between rounds (see VaultUI).
+            VaultPos = Center + VaultLocal;
+            if (Physics.Raycast(VaultPos + Vector3.up * 20f, Vector3.down, out var vh, 40f, GameInfo.LevelLayer)) VaultPos = vh.point;
+            var vault = new GameObject("Vault");
+            vault.layer = BuildSystem.PieceLayer;
+            vault.transform.SetParent(_root.transform, false);
+            vault.transform.position = VaultPos;
+            vault.transform.rotation = Quaternion.Euler(0f, -20f, 0f);
+            var vbox = vault.AddComponent<BoxCollider>(); vbox.size = new Vector3(2.4f, 2.2f, 1.8f); vbox.center = new Vector3(0f, 1.1f, 0f);
+            Models.Attach("Vault", vault.transform, new Vector3(2.4f, 2.2f, 1.8f), new Vector3(0f, 1.1f, 0f));
 
             _ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             Destroy(_ring.GetComponent<Collider>());

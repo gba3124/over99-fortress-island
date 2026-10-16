@@ -1,0 +1,291 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using FishNet;
+using HarmonyLib;
+using TMPro;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.UI;
+using UnityEngine.UI;
+
+namespace HtfFortress
+{
+    // The vault menu: stand at the vault door between rounds and press U. Mouse-driven; the game's own input
+    // (moving, looking, using items, the pause menu) is held while it is open.
+    public class VaultUI : MonoBehaviour
+    {
+        public static VaultUI Instance;
+        public static bool IsOpen { get; private set; }
+        private const float UseRadius = 3.5f;
+
+        private GameObject _root;
+        private TextMeshProUGUI _detail, _team, _prompt;
+        private Transform _grid, _fortRow, _mineRow;
+        private Button _merge, _equip;
+        private TextMeshProUGUI _mergeText, _equipText;
+        private (Gear g, Rarity r)? _sel;
+        private VaultData _drawn;
+
+        private void Awake() => Instance = this;
+
+        private static bool Near()
+        {
+            var island = FortressIsland.Instance;
+            return island != null && island.Exists && Player.LocalPlayer && Player.LocalPlayer.Transform
+                   && (Player.LocalPlayer.Transform.position - island.VaultPos).sqrMagnitude < UseRadius * UseRadius;
+        }
+
+        private static bool RoundRunning => Siege.Instance && Siege.Instance.ViewActive;
+
+        private void Update()
+        {
+            bool near = Near();
+            if (!_prompt) _prompt = Hud.CreateText("VaultPrompt", new Vector2(0.5f, 0.28f), Vector2.zero, 28f, TextAlignmentOptions.Center);
+            if (_prompt)
+            {
+                _prompt.gameObject.SetActive(near && !IsOpen);
+                _prompt.text = RoundRunning ? L10n.T("vaultLocked") : L10n.T("vaultPrompt");
+            }
+            var kb = Keyboard.current;
+            if (IsOpen)
+            {
+                if (!near || RoundRunning || (kb != null && kb.uKey.wasPressedThisFrame)) Close();
+                else if (Loot.Instance.ClientVault != _drawn) Redraw();
+                return;
+            }
+            if (near && !RoundRunning && kb != null && kb.uKey.wasPressedThisFrame && !ChatManager.IsTyping && !BuildSystem.Building && !PauseManager.IsPaused)
+                Open();
+        }
+
+        public void Open()
+        {
+            if (!_root) Build();
+            if (!_root) return;
+            IsOpen = true;
+            _root.SetActive(true);
+            PlayerCamera.ToggleMouse(true);
+            Redraw();
+        }
+
+        // Auto-test: show one item's details.
+        public void DebugSelect(Gear g, Rarity r) { _sel = (g, r); if (IsOpen) Redraw(); }
+
+        public void Close()
+        {
+            IsOpen = false;
+            if (_root) _root.SetActive(false);
+            PlayerCamera.ToggleMouse(false);
+        }
+
+        private static void Send(VaultAction a, Gear g = default, Rarity r = default, int slot = 0)
+        {
+            if (InstanceFinder.IsClientStarted) InstanceFinder.ClientManager.Broadcast(new VaultRequest { Action = a, Gear = g, Rarity = r, Slot = (byte)slot });
+        }
+
+        // ---------- layout (1920x1080 reference) ----------
+
+        private void Build()
+        {
+            if (!Hud.Font) return;
+            if (!EventSystem.current)
+            {
+                var es = new GameObject("FortressEventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule));
+                DontDestroyOnLoad(es);
+            }
+            var canvasGo = new GameObject("FortressVault", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            DontDestroyOnLoad(canvasGo);
+            var canvas = canvasGo.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 600;
+            var scaler = canvasGo.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
+            _root = canvasGo;
+
+            var panel = Box(canvasGo.transform, new Vector2(1440f, 860f), Vector2.zero, new Color(0.06f, 0.08f, 0.11f, 1f)).transform;
+            Text(panel, L10n.T("vaultTitle"), 44f, new Vector2(1300f, 60f), new Vector2(0f, 385f), TextAlignmentOptions.Center);
+            Text(panel, L10n.T("vaultSubtitle"), 22f, new Vector2(1300f, 30f), new Vector2(0f, 345f), TextAlignmentOptions.Center).color = new Color(0.7f, 0.75f, 0.8f);
+
+            Text(panel, L10n.T("vaultFortress"), 26f, new Vector2(220f, 70f), new Vector2(-590f, 280f), TextAlignmentOptions.Left);
+            _fortRow = new GameObject("FortSlots", typeof(RectTransform)).transform;
+            _fortRow.SetParent(panel, false);
+            Text(panel, L10n.T("vaultMine"), 26f, new Vector2(220f, 70f), new Vector2(-590f, 195f), TextAlignmentOptions.Left);
+            _mineRow = new GameObject("MySlots", typeof(RectTransform)).transform;
+            _mineRow.SetParent(panel, false);
+            _team = Text(panel, "", 20f, new Vector2(560f, 80f), new Vector2(390f, 195f), TextAlignmentOptions.TopLeft);
+            _team.color = new Color(0.75f, 0.8f, 0.85f);
+
+            Box(panel, new Vector2(1380f, 2f), new Vector2(0f, 145f), new Color(1f, 1f, 1f, 0.15f));
+            _grid = new GameObject("Grid", typeof(RectTransform)).transform;
+            _grid.SetParent(panel, false);
+
+            Box(panel, new Vector2(500f, 470f), new Vector2(440f, -110f), new Color(1f, 1f, 1f, 0.05f));
+            _detail = Text(panel, "", 24f, new Vector2(460f, 330f), new Vector2(440f, -30f), TextAlignmentOptions.TopLeft);
+            _merge = Btn(panel, new Vector2(220f, 60f), new Vector2(320f, -300f), new Color(0.3f, 0.45f, 0.75f), () =>
+            {
+                if (_sel is (Gear g, Rarity r)) Send(VaultAction.Merge, g, r);
+            }, out _mergeText);
+            _equip = Btn(panel, new Vector2(220f, 60f), new Vector2(560f, -300f), new Color(0.25f, 0.6f, 0.4f), () =>
+            {
+                if (_sel is (Gear g, Rarity r)) Send(GearCatalog.IsFortress(g) ? VaultAction.EquipFortress : VaultAction.EquipPersonal, g, r);
+            }, out _equipText);
+
+            Text(panel, L10n.T("vaultHelp"), 20f, new Vector2(1300f, 30f), new Vector2(0f, -400f), TextAlignmentOptions.Center).color = new Color(0.6f, 0.65f, 0.7f);
+            _root.SetActive(false);
+        }
+
+        private void Redraw()
+        {
+            var v = Loot.Instance.ClientVault;
+            _drawn = v;
+            ulong me = Player.LocalPlayer ? Loot.KeyOf(Player.LocalPlayer) : 0;
+
+            Clear(_fortRow);
+            for (int i = 0; i < GearCatalog.FortressSlots; i++)
+            {
+                int slot = i;
+                Slot(_fortRow, i < v.Fortress.Count ? v.Fortress[i] : ((Gear, Rarity)?)null, new Vector2(-370f + 245f * i, 280f), () => Send(VaultAction.UnequipFortress, slot: slot));
+            }
+            Clear(_mineRow);
+            var mine = v.Personal.TryGetValue(me, out var l) ? l : new List<(Gear, Rarity)>();
+            for (int i = 0; i < GearCatalog.PersonalSlots; i++)
+            {
+                int slot = i;
+                Slot(_mineRow, i < mine.Count ? mine[i] : ((Gear, Rarity)?)null, new Vector2(-370f + 245f * i, 195f), () => Send(VaultAction.UnequipPersonal, slot: slot));
+            }
+            var others = v.Personal.Where(kv => kv.Key != me && kv.Value.Count > 0)
+                .Select(kv => (v.Names.TryGetValue(kv.Key, out var n) ? n : "?") + "：" + string.Join("、", kv.Value.Select(s => GearCatalog.Label(s.Item1, s.Item2)))).ToList();
+            _team.text = others.Count > 0 ? L10n.T("vaultTeam") + "\n" + string.Join("\n", others) : "";
+
+            // Collection: fortress gear first, then personal; best rarity first. ponytail: no scrolling, 40 stacks max.
+            Clear(_grid);
+            var stacks = v.Owned.OrderBy(kv => GearCatalog.IsFortress(kv.Key.Item1) ? 0 : 1).ThenBy(kv => kv.Key.Item1).ThenByDescending(kv => kv.Key.Item2).Take(40).ToList();
+            if (stacks.Count == 0) Text(_grid, L10n.T("vaultEmpty"), 26f, new Vector2(800f, 60f), new Vector2(-260f, -100f), TextAlignmentOptions.Center).color = new Color(0.6f, 0.65f, 0.7f);
+            for (int i = 0; i < stacks.Count; i++)
+            {
+                var (g, r) = stacks[i].Key;
+                int n = stacks[i].Value;
+                Vector2 pos = new Vector2(-610f + 162f * (i % 5), 100f - 66f * (i / 5));
+                var b = Btn(_grid, new Vector2(154f, 58f), pos, Darken(GearCatalog.Color(r), _sel == (g, r) ? 0.75f : 0.4f), () => { _sel = (g, r); Redraw(); }, out var t);
+                t.text = $"{GearCatalog.Name(g)}\n<size=78%>{GearCatalog.RarityName(r)} ×{n}</size>";
+                t.fontSize = 19f;
+            }
+
+            // Selected item.
+            if (_sel is (Gear sg, Rarity sr) && v.Count(sg, sr) > 0)
+            {
+                var lines = new List<string> { $"<size=120%>{GearCatalog.Label(sg, sr)}</size>", L10n.T(GearCatalog.IsFortress(sg) ? "vaultKindFortress" : "vaultKindPersonal"), "" };
+                foreach (Rarity rr in Enum.GetValues(typeof(Rarity)))
+                    lines.Add((rr == sr ? "▶ " : "　") + $"<color=#{GearCatalog.Hex(rr)}>{GearCatalog.RarityName(rr)}</color>　{GearCatalog.Effect(sg, rr)}");
+                lines.Add("");
+                lines.Add(L10n.T("vaultOwned", v.Count(sg, sr)));
+                _detail.text = string.Join("\n", lines);
+                bool canMerge = sr != Rarity.Legendary && v.Count(sg, sr) >= 3;
+                _merge.interactable = canMerge;
+                _mergeText.text = sr == Rarity.Legendary ? L10n.T("vaultMaxed") : L10n.T("vaultMerge", v.Count(sg, sr));
+                bool fortress = GearCatalog.IsFortress(sg);
+                bool full = fortress ? v.Fortress.Count >= GearCatalog.FortressSlots : mine.Count >= GearCatalog.PersonalSlots;
+                bool dup = fortress ? v.Fortress.Any(f => f.Item1 == sg) : mine.Any(m => m.Item1 == sg);
+                _equip.interactable = !full && !dup;
+                _equipText.text = dup ? L10n.T("vaultAlready") : full ? L10n.T("vaultFull") : L10n.T(fortress ? "vaultEquipFortress" : "vaultEquipMine");
+                _merge.gameObject.SetActive(true);
+                _equip.gameObject.SetActive(true);
+            }
+            else
+            {
+                _sel = null;
+                _detail.text = L10n.T("vaultPick");
+                _merge.gameObject.SetActive(false);
+                _equip.gameObject.SetActive(false);
+            }
+        }
+
+        private void Slot(Transform parent, (Gear, Rarity)? item, Vector2 pos, Action unequip)
+        {
+            if (item is (Gear g, Rarity r))
+            {
+                var b = Btn(parent, new Vector2(230f, 70f), pos, Darken(GearCatalog.Color(r), 0.55f), unequip, out var t);
+                t.text = $"{GearCatalog.Name(g)}\n<size=75%>{GearCatalog.FormatValue(g, r)} · {L10n.T("vaultUnequip")}</size>";
+                t.fontSize = 20f;
+            }
+            else
+            {
+                var box = Box(parent, new Vector2(230f, 70f), pos, new Color(1f, 1f, 1f, 0.06f));
+                Text(box.transform, L10n.T("vaultEmptySlot"), 20f, new Vector2(220f, 60f), Vector2.zero, TextAlignmentOptions.Center).color = new Color(0.5f, 0.55f, 0.6f);
+            }
+        }
+
+        // ---------- tiny UI kit ----------
+
+        private static Color Darken(Color c, float k) => new Color(c.r * k, c.g * k, c.b * k, 1f);
+
+        private static void Clear(Transform t) { foreach (Transform c in t) Destroy(c.gameObject); }
+
+        private static Image Box(Transform parent, Vector2 size, Vector2 pos, Color c)
+        {
+            var go = new GameObject("Box", typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            var img = go.GetComponent<Image>();
+            img.color = c;
+            img.rectTransform.sizeDelta = size;
+            img.rectTransform.anchoredPosition = pos;
+            return img;
+        }
+
+        private static TextMeshProUGUI Text(Transform parent, string s, float size, Vector2 box, Vector2 pos, TextAlignmentOptions align)
+        {
+            var go = new GameObject("Text", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var t = go.AddComponent<TextMeshProUGUI>();
+            t.font = Hud.Font;
+            t.fontSize = size;
+            t.alignment = align;
+            t.text = s;
+            t.raycastTarget = false;
+            t.rectTransform.sizeDelta = box;
+            t.rectTransform.anchoredPosition = pos;
+            return t;
+        }
+
+        private static Button Btn(Transform parent, Vector2 size, Vector2 pos, Color c, Action onClick, out TextMeshProUGUI label)
+        {
+            var img = Box(parent, size, pos, c);
+            var b = img.gameObject.AddComponent<Button>();
+            var colors = b.colors;
+            colors.highlightedColor = new Color(1.25f, 1.25f, 1.25f);
+            colors.disabledColor = new Color(0.45f, 0.45f, 0.45f, 0.6f);
+            b.colors = colors;
+            b.onClick.AddListener(() => onClick());
+            label = Text(img.transform, "", 22f, size - new Vector2(10f, 6f), Vector2.zero, TextAlignmentOptions.Center);
+            return b;
+        }
+    }
+
+    // While the vault is open: no moving / looking / using items, the mouse stays free, and Esc closes the vault
+    // instead of opening the pause menu.
+    [HarmonyPatch(typeof(Player), nameof(Player.BlockInputs), MethodType.Getter)]
+    internal static class BlockInputsWhileVaultOpen
+    {
+        private static void Postfix(ref bool __result) { if (VaultUI.IsOpen) __result = true; }
+    }
+
+    [HarmonyPatch(typeof(PlayerCamera), nameof(PlayerCamera.ToggleMouse))]
+    internal static class FreeMouseWhileVaultOpen
+    {
+        private static void Prefix(ref bool __0) { if (VaultUI.IsOpen) __0 = true; }
+    }
+
+    [HarmonyPatch(typeof(PauseManager), "PauseInput")]
+    internal static class EscClosesVault
+    {
+        private static bool Prefix()
+        {
+            if (!VaultUI.IsOpen) return true;
+            VaultUI.Instance.Close();
+            return false;
+        }
+    }
+}

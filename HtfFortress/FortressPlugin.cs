@@ -14,7 +14,7 @@ namespace HtfFortress
 {
     // Fortress mode: host presses a key, a core appears where they stand, and waves of the game's own creatures attack.
     // Walkers (RunningFish) charge the core and break walls; the rest spawn near the host. Each wave is bigger and tougher.
-    [BepInPlugin("owen.htf.fortress", "HTF Fortress", "0.4.0")]
+    [BepInPlugin("owen.htf.fortress", "HTF Fortress", "0.5.0")]
     public class FortressPlugin : BaseUnityPlugin
     {
         private ConfigEntry<Key> _toggleKey;
@@ -85,6 +85,8 @@ namespace HtfFortress
             gameObject.AddComponent<Enemies>();
             gameObject.AddComponent<Fx>();
             gameObject.AddComponent<FortressNet>();
+            gameObject.AddComponent<Loot>();
+            gameObject.AddComponent<VaultUI>();
             gameObject.AddComponent<AutoTest>();
             // One class at a time: a patch that breaks after a game update must not take the others down with it.
             var harmony = new Harmony("owen.htf.fortress");
@@ -131,7 +133,7 @@ namespace HtfFortress
                 if (_testHelp) { _testHelp.rectTransform.pivot = new Vector2(1f, 1f); _testHelp.rectTransform.sizeDelta = new Vector2(560f, 220f); }
             }
             if (_testHelp) { _testHelp.gameObject.SetActive(_debugKeys.Value); _testHelp.text = L10n.T("testKeys"); }
-            if (!_debugKeys.Value || kb == null || ChatManager.IsTyping) return;
+            if (!_debugKeys.Value || kb == null || ChatManager.IsTyping || VaultUI.IsOpen) return;
             foreach (var key in new[] { Key.F4, Key.F5, Key.F6, Key.F7, Key.F8, _toggleKey.Value })
                 if (kb[key].wasPressedThisFrame) TestKey(key, kb.shiftKey.isPressed);
         }
@@ -207,8 +209,9 @@ namespace HtfFortress
             foreach (var d in dead)
             {
                 if (!d) { killed--; continue; } // despawned (retreated / cleaned up), not killed: no reward
-                Stats.Killed(d);
+                int killer = Stats.Killed(d);
                 bool tagged = Enemies.Instance.TryGet(d, out var tag);
+                if (tagged) Loot.Instance.ServerOnKill(d.transform.position, tag.Kind, tag.Elite, killer, _wave);
                 int r = tagged ? Enemies.StatsOf(tag).Reward + _wave / 4 : _killReward.Value;
                 reward += r;
                 FortressNet.Instance.ServerAddCorpse(d, 2 + r); // most of the money is in the bodies: someone has to go fishing
@@ -243,6 +246,7 @@ namespace HtfFortress
                     Siege.Instance.ServerAddCoins(bonus);
                     Say(L10n.T("cleared", _wave, bonus, _breakSeconds.Value.ToString("0"), _readyKey.Value));
                     Fx.Announce("clearedBanner", _wave);
+                    if (_wave % 5 == 0) Loot.Instance.ServerSpawnChest(_wave);
                 }
                 _nextWaveAt = Time.time + (_wave == 0 ? _firstBuildSeconds.Value : _breakSeconds.Value);
             }
@@ -292,6 +296,7 @@ namespace HtfFortress
             Enemies.Instance.ServerClear();
             FortressNet.Instance.ServerReset();
             Siege.Instance.ServerStop();
+            Loot.Instance.ServerCollectAll();
             bool record = _cleared > _bestWave.Value;
             string recordText = record ? L10n.T("newRecord") : L10n.T("best", _bestWave.Value);
             if (record) _bestWave.Value = _cleared;

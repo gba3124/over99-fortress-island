@@ -38,11 +38,14 @@ namespace HtfFortress
         public static void Fished(int playerId, int coins) => RowOf(playerId).Fished += coins;
 
         // A kill goes to the last player who hit it by hand in the last 4 s, else to whoever built the turret that hit it.
-        public static void Killed(Creature c)
+        // Returns the credited player's id (-1 if nobody).
+        public static int Killed(Creature c)
         {
-            if (LastHand.TryGetValue(c, out var h) && Time.time - h.time < 4f) RowOf(h.player).Kills++;
-            else if (LastTurretOwner.TryGetValue(c, out int owner)) RowOf(owner).TurretKills++;
+            int who = -1;
+            if (LastHand.TryGetValue(c, out var h) && Time.time - h.time < 4f) RowOf(who = h.player).Kills++;
+            else if (LastTurretOwner.TryGetValue(c, out int owner)) RowOf(who = owner).TurretKills++;
             LastHand.Remove(c); LastTurretOwner.Remove(c);
+            return who;
         }
 
         // Called every frame during a round: count each time someone goes down.
@@ -79,6 +82,10 @@ namespace HtfFortress
     [HarmonyPatch(typeof(Server), "RpcLogic___HitCreature___215526726")]
     internal static class RecordHandHits
     {
-        private static void Prefix(Creature __0, Player __1) => Stats.HandHit(__0, __1);
+        private static void Prefix(Creature __0, Player __1, ref int __2)
+        {
+            Stats.HandHit(__0, __1);
+            if (__0 && Enemies.Instance && Enemies.Instance.TryGet(__0, out _)) __2 = Mathf.RoundToInt(__2 * (1f + Perks.Of(__1, Gear.Gauntlet)));
+        }
     }
 }

@@ -18,6 +18,7 @@ namespace HtfFortress
     {
         public static bool Running { get; private set; }
         public static bool IgnorePlayers;
+        public static bool ForceGameItem;
 
         // Counters the rest of the mod bumps so a run can be judged from the report.
         public static readonly Dictionary<string, int> Counters = new Dictionary<string, int>();
@@ -104,6 +105,8 @@ namespace HtfFortress
                 case "boss": yield return BossScenario(); break;
                 case "coop": yield return CoopScenario(); break;
                 case "cheats": yield return CheatsScenario(); break;
+                case "loot": yield return LootScenario(); break;
+                case "gear": yield return GearScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -129,6 +132,11 @@ namespace HtfFortress
             var clips = AccessTools.Field(typeof(AudioManager), "_realClips")?.GetValue(null) as System.Collections.IDictionary;
             if (clips != null) File.WriteAllText(Path.Combine(Root, "fortress-sounds.txt"), string.Join("\n", clips.Keys.Cast<object>().Select(k => k.ToString()).OrderBy(k => k)));
             Note("sound clips: " + (clips?.Count ?? -1));
+            // Every non-creature spawnable: name | type | worth | components (for picking chest rewards).
+            var items = ((Dictionary<string, Item>)AccessTools.Field(typeof(GameInfo), "_nameToSpawnable").GetValue(null))
+                .Where(kv => kv.Value && !kv.Value.GetComponent<Creature>()).OrderBy(kv => kv.Key)
+                .Select(kv => $"{kv.Key}|{kv.Value.Type}|{kv.Value.DefaultWorth}|{string.Join(",", kv.Value.GetComponents<MonoBehaviour>().Select(m => m.GetType().Name).Where(n => n != "Item" && !n.StartsWith("Network")).Distinct())}");
+            File.WriteAllText(Path.Combine(Root, "fortress-items.txt"), string.Join("\n", items));
         }
 
         // Fortress round where the player stands: pre-built ring of walls + turrets, waves start immediately.
@@ -504,6 +512,155 @@ namespace HtfFortress
             Note($"respawn: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.DockPos):F1} m from dock, boat {boat:F1} m from dock");
             FortressPlugin.Shot("coop_results");
             yield return new WaitForSecondsRealtime(1f);
+        }
+
+        // Every gear effect in a real round: two loadouts, then a chest that throws out a game item.
+        private IEnumerator GearScenario()
+        {
+            var island = FortressIsland.Instance;
+            var plugin = FortressPlugin.Instance;
+            var loot = Loot.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            loot.ServerWipeVaultForTest();
+            IgnorePlayers = true;
+            var me = Player.LocalPlayer;
+            Vector3 center = island.Center;
+            void Equip(params Gear[] gear)
+            {
+                foreach (var g in gear)
+                {
+                    loot.ServerGive(g, Rarity.Legendary);
+                    loot.ServerRequest(me, new VaultRequest { Action = GearCatalog.IsFortress(g) ? VaultAction.EquipFortress : VaultAction.EquipPersonal, Gear = g, Rarity = Rarity.Legendary });
+                }
+            }
+
+            // Round 1: Gunpowder, Rebar, Lighthouse Shield, War Chest + Shark Armor, Tool Belt.
+            Equip(Gear.Gunpowder, Gear.Rebar, Gear.CoreShield, Gear.WarChest, Gear.SharkArmor, Gear.ToolBelt);
+            Note($"loadout 1: fortress [{string.Join(",", loot.Vault.Fortress)}], mine [{string.Join(",", loot.Vault.Slots(Loot.KeyOf(me)))}]");
+            me.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => plugin.Running, 15f, "round 1 start");
+            Note($"core {Siege.Instance.CoreHp}/{Siege.Instance.CoreMax} (expect 2000), coins {Siege.Instance.ServerCoins} (expect 425)");
+            int coins = Siege.Instance.ServerCoins;
+            float g0 = FortressIsland.GapAngles[0] * Mathf.Deg2Rad;
+            Vector3 gd = new Vector3(Mathf.Cos(g0), 0f, Mathf.Sin(g0));
+            WallAt(center + gd * 15f + Vector3.up * 1.2f, gd);
+            var wall = BuildSystem.Instance.ServerPieces.OrderByDescending(p => p.Id).FirstOrDefault();
+            Note($"wall: cost {coins - Siege.Instance.ServerCoins} (expect 8), max hp {wall.MaxHp} (expect 360)");
+            yield return new WaitForSecondsRealtime(1f);
+            int hp0 = me.Vitals.Health;
+            Siege.HurtPlayer(me, 40, Vector3.zero);
+            yield return new WaitForSecondsRealtime(1f);
+            Note($"bite of 40 with shark armor: hp {hp0} -> {me.Vitals.Health} (expect -22)");
+            plugin.TestKey(UnityEngine.InputSystem.Key.F9, false);
+            yield return new WaitForSecondsRealtime(2f);
+
+            // Round 2: Incendiary, Frost Core, Tesla Coil, Scope + Big Net, Fishmonger's Gloves.
+            while (loot.Vault.Fortress.Count > 0) loot.ServerRequest(me, new VaultRequest { Action = VaultAction.UnequipFortress, Slot = 0 });
+            while (loot.Vault.Slots(Loot.KeyOf(me)).Count > 0) loot.ServerRequest(me, new VaultRequest { Action = VaultAction.UnequipPersonal, Slot = 0 });
+            Equip(Gear.Incendiary, Gear.FrostCore, Gear.TeslaCoil, Gear.Scope, Gear.BigNet, Gear.FishGloves);
+            Note($"loadout 2: fortress [{string.Join(",", loot.Vault.Fortress)}], mine [{string.Join(",", loot.Vault.Slots(Loot.KeyOf(me)))}]");
+            PlayerManager.ToggleGodMode();
+            me.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => plugin.Running, 15f, "round 2 start");
+            Note($"net capacity {FortressNet.Instance.ServerCapOf(me.ObjectId)} (expect 20)");
+            Siege.Instance.ServerAddCoins(600);
+            SpendLikeAPlayer(center);
+            plugin.SkipBuildTime();
+            yield return Until(() => Counters.ContainsKey("burn_ticks"), 40f, "incendiary burn");
+            Note($"burn ticks {(Counters.TryGetValue("burn_ticks", out int bt) ? bt : 0)}, tesla shots {(Counters.TryGetValue("shots_Tesla", out int ts) ? ts : 0)}");
+            plugin.TestKey(UnityEngine.InputSystem.Key.F9, false);
+            yield return new WaitForSecondsRealtime(2f);
+
+            // A chest that is sure to throw out a game item.
+            ForceGameItem = true;
+            loot.ServerSpawnChest(20);
+            var chest = loot.ServerChestPos ?? center;
+            yield return new WaitForSecondsRealtime(0.5f);
+            me.LocalTeleport(chest + Vector3.up * 0.5f, 0f, true);
+            yield return new WaitForSecondsRealtime(2f);
+            ForceGameItem = false;
+            Note("game item: " + string.Join(", ", Counters.Where(kv => kv.Key.StartsWith("game_item_")).Select(kv => kv.Key.Substring(10))));
+            yield return Look(chest + new Vector3(-2.5f, 1.2f, -3f), YawTo(chest + new Vector3(-2.5f, 0f, -3f), chest), "chest_item", 1f);
+        }
+
+        // Drops, the wave-5 chest, the boss drop, leftovers at round end, then vault actions and the save file.
+        private IEnumerator LootScenario()
+        {
+            var island = FortressIsland.Instance;
+            var plugin = FortressPlugin.Instance;
+            var loot = Loot.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            loot.ServerWipeVaultForTest();
+            PlayerManager.ToggleGodMode();
+            IgnorePlayers = true;
+            Vector3 center = island.Center;
+            var me = Player.LocalPlayer;
+            me.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => plugin.Running, 15f, "round start");
+            if (!plugin.Running) yield break;
+            Siege.Instance.ServerAddCoins(400);
+            bool shotDrop = false, shotChest = false, jumped = false;
+            float end = Time.realtimeSinceStartup + 420f;
+            while (plugin.Running && Time.realtimeSinceStartup < end && plugin.Wave <= 10)
+            {
+                if (plugin.InBuildTime)
+                {
+                    SpendLikeAPlayer(center);
+                    if (loot.ServerChestPos is Vector3 chest)
+                    {
+                        if (!shotChest) { shotChest = true; yield return Look(chest + new Vector3(-3f, 1f, -4f), YawTo(chest + new Vector3(-3f, 0f, -4f), chest), "loot_chest", 1f); }
+                        me.LocalTeleport(chest + Vector3.up * 0.5f, 0f, true);
+                        yield return new WaitForSecondsRealtime(1f);
+                    }
+                    if (plugin.Wave == 5 && !jumped) { jumped = true; Siege.Instance.ServerAddCoins(1500); SpendLikeAPlayer(center); plugin.DebugJumpToWave(10); }
+                    else plugin.SkipBuildTime();
+                }
+                var drop = loot.ServerDropPositions.Cast<Vector3?>().FirstOrDefault();
+                if (drop is Vector3 d)
+                {
+                    if (!shotDrop) { shotDrop = true; yield return Look(d + new Vector3(0f, 0.8f, -2.5f), 0f, "loot_drop", 0.8f); }
+                    me.LocalTeleport(d + Vector3.up * 0.3f, 0f, true);
+                }
+                yield return new WaitForSecondsRealtime(1f);
+            }
+            int ownedBeforeStop = loot.Vault.Owned.Values.Sum();
+            if (plugin.Running) plugin.TestKey(UnityEngine.InputSystem.Key.F9, false);
+            yield return new WaitForSecondsRealtime(1.5f);
+            Note($"loot: wave reached {plugin.Wave}, vault {ownedBeforeStop} before stop, {loot.Vault.Owned.Values.Sum()} after; drops left {loot.ServerDropCount}");
+            Note("vault: " + string.Join(", ", loot.Vault.Owned.Select(kv => $"{kv.Key.Item1}/{kv.Key.Item2} x{kv.Value}")));
+
+            // Vault actions, as a client would ask for them.
+            loot.ServerGive(Gear.Gunpowder, Rarity.Common, 3);
+            loot.ServerGive(Gear.SharkArmor, Rarity.Rare, 1);
+            int rareBefore = loot.Vault.Count(Gear.Gunpowder, Rarity.Rare);
+            loot.ServerRequest(me, new VaultRequest { Action = VaultAction.Merge, Gear = Gear.Gunpowder, Rarity = Rarity.Common });
+            Note($"merge: gunpowder rare {rareBefore} -> {loot.Vault.Count(Gear.Gunpowder, Rarity.Rare)}, common left {loot.Vault.Count(Gear.Gunpowder, Rarity.Common)}");
+            loot.ServerRequest(me, new VaultRequest { Action = VaultAction.EquipFortress, Gear = Gear.Gunpowder, Rarity = Rarity.Rare });
+            loot.ServerRequest(me, new VaultRequest { Action = VaultAction.EquipFortress, Gear = Gear.SharkArmor, Rarity = Rarity.Rare }); // personal gear: refused
+            loot.ServerRequest(me, new VaultRequest { Action = VaultAction.EquipPersonal, Gear = Gear.SharkArmor, Rarity = Rarity.Rare });
+            Note($"equip: fortress [{string.Join(",", loot.Vault.Fortress)}], mine [{string.Join(",", loot.Vault.Slots(Loot.KeyOf(me)))}], gunpowder value {loot.Vault.FortressValue(Gear.Gunpowder)}, armor value {loot.Vault.PersonalValue(Loot.KeyOf(me), Gear.SharkArmor)}");
+            yield return new WaitForSecondsRealtime(0.5f);
+            Note($"client mirror matches host: {loot.ClientVault.Write() == loot.Vault.Write()}");
+            string file = loot.ServerVaultFile;
+            Note($"vault file {file}: {(file != null && File.Exists(file) ? File.ReadAllLines(file).Length + " lines" : "missing")}");
+            loot.ServerRequest(me, new VaultRequest { Action = VaultAction.UnequipPersonal, Slot = 0 });
+            Note($"unequip: mine [{string.Join(",", loot.Vault.Slots(Loot.KeyOf(me)))}], armor back in vault {loot.Vault.Count(Gear.SharkArmor, Rarity.Rare)}");
+            // The vault building and its menu.
+            Vector3 door = island.VaultPos + Quaternion.Euler(0f, -20f, 0f) * new Vector3(0f, 0f, 2.6f);
+            yield return Look(door + Vector3.up * 0.5f + (door - island.VaultPos) * 1.5f, YawTo(door, island.VaultPos), "vault_outside", 1f);
+            me.LocalTeleport(door + Vector3.up * 0.5f, YawTo(door, island.VaultPos), true);
+            yield return new WaitForSecondsRealtime(1f);
+            loot.ServerGive(Gear.Rebar, Rarity.Epic, 1);
+            loot.ServerGive(Gear.LuckyCharm, Rarity.Common, 4);
+            yield return new WaitForSecondsRealtime(0.5f);
+            VaultUI.Instance.Open();
+            VaultUI.Instance.DebugSelect(Gear.LuckyCharm, Rarity.Common);
+            yield return new WaitForSecondsRealtime(1f);
+            Note($"vault menu open {VaultUI.IsOpen}, inputs blocked {me.BlockInputs}, cursor {Cursor.lockState}");
+            FortressPlugin.Shot("vault_ui");
+            yield return new WaitForSecondsRealtime(1f);
+            VaultUI.Instance.Close();
+            Note($"vault menu closed: open {VaultUI.IsOpen}, inputs blocked {me.BlockInputs}");
         }
 
         // Every test key, called the way the key handler calls it.

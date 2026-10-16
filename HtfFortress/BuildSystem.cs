@@ -96,7 +96,7 @@ namespace HtfFortress
             EnsureRegistered();
 
             var kb = Keyboard.current;
-            if (kb == null || ChatManager.IsTyping) return;
+            if (kb == null || ChatManager.IsTyping || VaultUI.IsOpen) return;
             if (kb[BuildKey.Value].wasPressedThisFrame) SetBuilding(!_building);
             if (!_building) return;
             if (!InstanceFinder.IsClientStarted || !GameInfo.CurCamera || !Player.LocalPlayer || Cursor.lockState != CursorLockMode.Locked)
@@ -219,7 +219,7 @@ namespace HtfFortress
             bool hit = ComputePlacement(out var pos, out var rot);
             bool aboveWater = pos.y + Cell > WaterManager.GetWaterHeight(pos);
             bool free = !_states.Values.Any(s => Clashes(s.Type, _type) && (s.Pos - pos).sqrMagnitude < 0.01f);
-            bool affordable = Siege.Instance.ViewCoins >= Catalog.BuildCost(_type);
+            bool affordable = Siege.Instance.ViewCoins >= Perks.MyCost(Catalog.BuildCost(_type));
             bool zone = AllowedAt(pos);
             _blockReason = !Siege.Instance.ViewActive ? L10n.T("needRound")
                          : !zone ? L10n.T("needIsland")
@@ -266,9 +266,9 @@ namespace HtfFortress
             string up;
             if (s.Level >= Catalog.MaxLevel) up = L10n.T("maxLevel");
             else if (s.Level == Catalog.MaxLevel - 1 && Catalog.HasBranches(s.Type))
-                up = L10n.T("branchHint", L10n.T(Catalog.BranchKey(s.Type, 1)), L10n.T(Catalog.BranchKey(s.Type, 2)), Catalog.UpgradeCost(s.Type, s.Level));
-            else up = L10n.T("upgradeHint", Catalog.UpgradeCost(s.Type, s.Level));
-            string repair = s.Hp < s.MaxHp ? "   " + L10n.T("repairHint", Catalog.RepairCost(s.Hp, s.MaxHp)) : "";
+                up = L10n.T("branchHint", L10n.T(Catalog.BranchKey(s.Type, 1)), L10n.T(Catalog.BranchKey(s.Type, 2)), Perks.MyCost(Catalog.UpgradeCost(s.Type, s.Level)));
+            else up = L10n.T("upgradeHint", Perks.MyCost(Catalog.UpgradeCost(s.Type, s.Level)));
+            string repair = s.Hp < s.MaxHp ? "   " + L10n.T("repairHint", Perks.MyCost(Catalog.RepairCost(s.Hp, s.MaxHp))) : "";
             string branch = s.Branch > 0 ? " · " + L10n.T(Catalog.BranchKey(s.Type, s.Branch)) : "";
             _lookInfo = L10n.T("lookInfo", PieceName(s.Type, s.Level) + branch, s.Level, s.Hp, s.MaxHp, up + repair);
         }
@@ -296,8 +296,8 @@ namespace HtfFortress
                 for (int i = 0; i < Catalog.TypeCount; i++)
                 {
                     var t = (PieceType)i;
-                    bool sel = t == _type, afford = Siege.Instance.ViewCoins >= Catalog.BuildCost(t);
-                    string line = (sel ? "▶ " : "   ") + PieceName(t, 1) + "  " + Catalog.BuildCost(t);
+                    bool sel = t == _type, afford = Siege.Instance.ViewCoins >= Perks.MyCost(Catalog.BuildCost(t));
+                    string line = (sel ? "▶ " : "   ") + PieceName(t, 1) + "  " + Perks.MyCost(Catalog.BuildCost(t));
                     sb.AppendLine(sel ? "<color=#ffd75a><b>" + line + "</b></color>" : afford ? line : "<color=#9a9a9a>" + line + "</color>");
                 }
                 sb.Append("<size=80%>" + L10n.T("barHint") + "</size>");
@@ -306,7 +306,7 @@ namespace HtfFortress
             if (!_hud) _hud = Hud.CreateText("BuildHint", new Vector2(0.5f, 0f), new Vector2(0f, 80f), 26f, TextAlignmentOptions.Bottom);
             if (!_hud) return;
             _hud.gameObject.SetActive(true);
-            string cost = L10n.T("cost", Catalog.BuildCost(_type));
+            string cost = L10n.T("cost", Perks.MyCost(Catalog.BuildCost(_type)));
             string top = _blockReason.Length > 0 ? "<color=#ff7060>" + _blockReason + "</color>" : _lookInfo;
             _hud.text = (top.Length > 0 ? top + "\n" : "") + L10n.T("buildHud", PieceName(_type, 1) + cost);
         }
@@ -343,15 +343,15 @@ namespace HtfFortress
         {
             if (_serverPieces.Values.Any(p => Clashes(p.Type, type) && (p.Pos - pos).sqrMagnitude < 0.01f)) return false;
             if (!Siege.Instance.ServerActive || !AllowedAt(pos)) return false;
-            int cost = Catalog.BuildCost(type);
+            if (ownerId < 0 && Player.LocalPlayer) ownerId = Player.LocalPlayer.ObjectId;
+            int cost = Perks.Cost(Catalog.BuildCost(type), PlayerManager.Players.FirstOrDefault(p => p && p.ObjectId == ownerId));
             if (!Siege.Instance.ServerTrySpend(cost)) return false;
-            int maxHp = Catalog.MaxHp(type, 1);
+            int maxHp = Perks.MaxHp(type, 1);
             var state = new PieceState { Id = _nextId++, Type = type, Pos = pos, RotY = rotY, Hp = maxHp, MaxHp = maxHp, Level = 1 };
             _serverPieces[state.Id] = state;
             _spent[state.Id] = Siege.Instance.ServerActive ? cost : 0;
             InstanceFinder.ServerManager.Broadcast(state);
             RoundBuilt++;
-            if (ownerId < 0 && Player.LocalPlayer) ownerId = Player.LocalPlayer.ObjectId;
             _owner[state.Id] = ownerId;
             Stats.Built(ownerId);
             AutoTest.Count("placed_" + type);
@@ -363,9 +363,10 @@ namespace HtfFortress
         private void OnUpgradeRequest(NetworkConnection conn, PieceUpgradeRequest req, Channel ch)
         {
             if (!_serverPieces.TryGetValue(req.Id, out var s)) return;
+            var who = conn == null ? Player.LocalPlayer : PlayerManager.Players.FirstOrDefault(p => p && p.Owner == conn);
             if (req.Repair)
             {
-                if (s.Hp >= s.MaxHp || !Siege.Instance.ServerTrySpend(Catalog.RepairCost(s.Hp, s.MaxHp))) return;
+                if (s.Hp >= s.MaxHp || !Siege.Instance.ServerTrySpend(Perks.Cost(Catalog.RepairCost(s.Hp, s.MaxHp), who))) return;
                 s.Hp = s.MaxHp;
                 _serverPieces[s.Id] = s;
                 InstanceFinder.ServerManager.Broadcast(s);
@@ -373,12 +374,12 @@ namespace HtfFortress
                 return;
             }
             if (s.Level >= Catalog.MaxLevel) return;
-            int cost = Catalog.UpgradeCost(s.Type, s.Level);
+            int cost = Perks.Cost(Catalog.UpgradeCost(s.Type, s.Level), who);
             if (!Siege.Instance.ServerTrySpend(cost)) return;
             if (Siege.Instance.ServerActive) _spent[s.Id] += cost;
             s.Level++;
             if (s.Level == Catalog.MaxLevel && Catalog.HasBranches(s.Type)) s.Branch = req.Branch == 2 ? 2 : 1;
-            int newMax = Catalog.MaxHp(s.Type, s.Level);
+            int newMax = Perks.MaxHp(s.Type, s.Level);
             s.Hp += newMax - s.MaxHp; // upgrading also repairs by the difference
             s.MaxHp = newMax;
             _serverPieces[s.Id] = s;
@@ -532,8 +533,8 @@ namespace HtfFortress
 
     // Left/right click go to the held item; swallow them while building so placing doesn't also swing or shoot.
     [HarmonyLib.HarmonyPatch(typeof(PlayerHolding), "PrimaryInput")]
-    internal static class BlockPrimaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building; }
+    internal static class BlockPrimaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building && !VaultUI.IsOpen; }
 
     [HarmonyLib.HarmonyPatch(typeof(PlayerHolding), "SecondaryInput")]
-    internal static class BlockSecondaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building; }
+    internal static class BlockSecondaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building && !VaultUI.IsOpen; }
 }

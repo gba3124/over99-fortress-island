@@ -29,6 +29,17 @@ BepInEx 5 模組，C#，在 Mac 的 Pixel Port 上開發與自動測試。完整
 | **N** | 房主：建造時間提早開始下一波 |
 | **F10** | 截圖（存到 `BepInEx/fortress-shots/`） |
 
+### 裝備與儲藏庫（打完還留著）
+
+一局裡的升級每局歸零；**裝備會留下來**，越玩越強。
+
+- **拿到裝備**：打怪有機會掉（發光的水晶，走過去就撿；精英 25%、魔王必掉史詩以上），每清完第 5、10、15… 波燈塔旁會出現**寶箱**，站上去就打開。寶箱還有 30% 機率噴出**遊戲原本的道具**（小刀、手槍、霰彈槍、狙擊槍、突擊步槍…），撿起來帶回主遊戲也能用
+- **儲藏庫**：碼頭左邊的紅屋頂小屋，站在門口按 **U** 打開（只有沒開局時能用）。全隊共用，存在房主的存檔裡
+- **配裝**：要塞裝備全隊 4 格（強化火藥、精準瞄具、穿甲彈、燃燒彈、寒冰核心、雷擊線圈、鋼筋、燈塔護盾、戰爭基金），個人裝備每人 2 格（鯊皮護甲、大漁網、魚販手套、鬥士拳套、工具腰帶、幸運符）
+- **合成**：3 個同名同稀有度 → 1 個高一級（普通 → 稀有 → 史詩 → 傳說）
+
+每件裝備的數值見 [DESIGN.md](DESIGN.md) 第 10 節，或 [`HtfFortress/Gear.cs`](HtfFortress/Gear.cs)。
+
 ### 測試鍵（房主）
 
 在 Mod Settings 打開 `Debug / DebugKeys`，畫面右上角會列出測試鍵。Mac 鍵盤要按住 **Fn** 再按 F 鍵。
@@ -93,6 +104,9 @@ htf-fortress/
 │   ├── BuildSystem.cs       建造：格線、預覽、放置、升級分支、修理、拆除、建造列
 │   ├── Turrets.cs           砲塔與陷阱的攻擊邏輯
 │   ├── FortressNet.cs       漁網：撿屍體、魚箱賣出、漁網升級
+│   ├── Gear.cs              裝備種類、稀有度數值、儲藏庫資料、裝備效果（Perks）
+│   ├── Loot.cs              掉落、寶箱、遊戲道具獎勵、儲藏庫存檔與同步
+│   ├── VaultUI.cs           儲藏庫滑鼠介面
 │   ├── Catalog.cs           建築數值（平衡在這裡調）
 │   ├── Fx.cs                特效、音效（沿用遊戲音效）、傷害數字、橫幅
 │   ├── Models.cs            OBJ 載入、遊戲材質上色、升級外觀、受損變紅
@@ -101,6 +115,8 @@ htf-fortress/
 │   └── Models/              Blender 模型（.obj/.mtl）＋原始檔 fortress_models.blend
 ├── tools/
 │   ├── autotest.sh          設定下一次啟動要跑的測試情境
+│   ├── run_test.sh          跑一個情境：啟動、等報告、印出結果
+│   ├── make_vault_models.py 用 Blender 產生儲藏庫、寶箱、掉落水晶模型
 │   └── launch.sh            直接用 Pixel Port 的 Wine 啟動遊戲
 └── decompiled/              遊戲反編譯碼（.gitignore，只供查閱）
 ```
@@ -125,7 +141,7 @@ cd ~/Desktop/Project/htf-fortress
 tools/autotest.sh island && tools/launch.sh
 ```
 
-情境：`probe`（環境資訊、音效清單）、`island`（完整流程）、`enemies`（敵人圖鑑＋各波）、`build`（所有砲塔與分支）、`balance`（AI 建造者真實打到失敗）、`coop`（不開無敵站在缺口被咬、撿魚、全滅、碼頭重生、結算表）、`cheats`（每個測試鍵）。
+情境：`probe`（環境資訊、音效清單）、`island`（完整流程）、`enemies`（敵人圖鑑＋各波）、`build`（所有砲塔與分支）、`balance`（AI 建造者真實打到失敗）、`coop`（不開無敵站在缺口被咬、撿魚、全滅、碼頭重生、結算表）、`cheats`（每個測試鍵）、`loot`（掉落、寶箱、合成、裝備、存檔、儲藏庫介面）、`gear`（每件裝備的效果）。
 測試會用一個獨立的 `FortressTest` 存檔，跑完自動關遊戲。報告在 `BepInEx/fortress-test-report.txt`，截圖在 `BepInEx/fortress-shots/`。
 
 ## 技術筆記

@@ -81,6 +81,7 @@ namespace HtfFortress
             _server.ReadyTotal = total; _server.ReadyIn = inCircle; _server.ReadyCountdown = countdown;
         }
         public int CoreHp => _server.CoreHp;
+        public int CoreMax => _server.CoreMax;
 
         // Outside fortress mode building is free (sandbox); inside it costs the team's coins.
         public bool ServerTrySpend(int cost)
@@ -105,7 +106,7 @@ namespace HtfFortress
             if (Physics.Raycast(near + Vector3.up * 2f, Vector3.down, out var rh, 6f, GameInfo.LevelLayer)) pos = rh.point;
             pos.y = Mathf.Max(pos.y, WaterManager.GetWaterHeight(pos));
             BuildSystem.Log.LogInfo($"Core placed at {pos} (host at {near}).");
-            _server = new SiegeState { Active = true, CorePos = pos, CoreHp = CoreMaxHp.Value, CoreMax = CoreMaxHp.Value, Coins = StartCoins.Value, Building = true };
+            _server = new SiegeState { Active = true, CorePos = pos, CoreHp = CoreShielded, CoreMax = CoreShielded, Coins = StartCoins.Value + Mathf.RoundToInt(Perks.Team(Gear.WarChest)), Building = true };
             _walkers.Clear();
             _nextAttack.Clear();
             Send(true);
@@ -299,6 +300,7 @@ namespace HtfFortress
         public static void HurtPlayer(Player p, int dmg, Vector3 force)
         {
             if (!p || !Server.Instance) return;
+            dmg = Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Perks.Of(p, Gear.SharkArmor))));
             Server.Instance.HitPlayer(p, dmg, force, p.Transform.position, 3);
             AutoTest.Count("player_hits");
         }
@@ -309,6 +311,8 @@ namespace HtfFortress
                 if (p && p.Transform && (p.Transform.position - at).sqrMagnitude <= radius * radius)
                     HurtPlayer(p, dmg, (p.Transform.position - at).normalized * 6f + Vector3.up * 3f);
         }
+
+        private static int CoreShielded => Mathf.RoundToInt(CoreMaxHp.Value * (1f + Perks.Team(Gear.CoreShield)));
 
         public void DamageCore(int dmg) => _server.CoreHp = Mathf.Clamp(_server.CoreHp - dmg, 0, _server.CoreMax);
 

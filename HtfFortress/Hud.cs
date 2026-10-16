@@ -34,10 +34,12 @@ namespace HtfFortress
             return img;
         }
 
+        public static TMP_FontAsset Font => AccessTools.Field(typeof(LocalizationManager), "_defaultFontAsset")?.GetValue(
+            AccessTools.Field(typeof(LocalizationManager), "_instance")?.GetValue(null)) as TMP_FontAsset;
+
         public static TextMeshProUGUI CreateText(string name, Vector2 anchor, Vector2 offset, float size, TextAlignmentOptions align)
         {
-            var font = AccessTools.Field(typeof(LocalizationManager), "_defaultFontAsset")?.GetValue(
-                AccessTools.Field(typeof(LocalizationManager), "_instance")?.GetValue(null)) as TMP_FontAsset;
+            var font = Font;
             if (!font) return null;
 
             var go = new GameObject(name);
