@@ -10,6 +10,7 @@ using FishNet.Transporting;
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace HtfFortress
 {
@@ -42,7 +43,13 @@ namespace HtfFortress
         // every client
         private SiegeState _view;
         private GameObject _core;
-        private TextMeshProUGUI _hud;
+        // top bar
+        private RectTransform _top;
+        private GameObject _roundGroup;
+        private TextMeshProUGUI _waveText, _hpText, _enemyText, _coinText, _phaseText, _titleText, _bossText;
+        private Hud.Bar _hpBar, _bossBar;
+        private Image _phaseBox, _bossBox;
+        private int _lastCoreHp; private float _hpFlashUntil;
         private NetworkManager _registeredOn;
 
         private static readonly AccessTools.FieldRef<RunningFish, float> RunSpeed = AccessTools.FieldRefAccess<RunningFish, float>("_runSpeed");
@@ -414,13 +421,14 @@ namespace HtfFortress
                 // Between rounds: on the island, explain how to start.
                 bool near = FortressIsland.Instance && Player.LocalPlayer && Player.LocalPlayer.Transform
                             && FortressIsland.Instance.OnIsland(Player.LocalPlayer.Transform.position, FortressIsland.IslandRadius + 6f);
-                if (!near) { if (_hud) _hud.gameObject.SetActive(false); return; }
-                if (!_hud) _hud = Hud.CreateText("SiegeStatus", new Vector2(0.5f, 1f), new Vector2(0f, -40f), 30f, TextAlignmentOptions.Top);
-                if (!_hud) return;
-                _hud.gameObject.SetActive(true);
-                _hud.text = L10n.T("islandTitle") + "\n" + (_view.ReadyCountdown > 0
-                    ? L10n.T("readyCountdown", _view.ReadyCountdown)
-                    : L10n.T("readyPrompt", _view.ReadyIn, _view.ReadyTotal));
+                if (!near || !EnsureHud()) { ShowHud(false); return; }
+                ShowHud(true);
+                _roundGroup.SetActive(false);
+                _bossBox.gameObject.SetActive(false);
+                _titleText.gameObject.SetActive(true);
+                _titleText.text = L10n.T("islandName");
+                SetPhase(_view.ReadyCountdown > 0 ? $"<color={Hud.Hex(Hud.Accent)}><b>{L10n.T("readyCountdown", _view.ReadyCountdown)}</b></color>"
+                                                  : L10n.T("readyPrompt", _view.ReadyIn, _view.ReadyTotal));
                 return;
             }
             if (!_core)
@@ -435,17 +443,75 @@ namespace HtfFortress
             _core.transform.position = _view.CorePos;
             Models.Tint(_core, _view.CoreMax > 0 ? (float)_view.CoreHp / _view.CoreMax : 1f);
 
-            if (!_hud) _hud = Hud.CreateText("SiegeStatus", new Vector2(0.5f, 1f), new Vector2(0f, -40f), 30f, TextAlignmentOptions.Top);
-            if (_hud)
+            if (!EnsureHud()) return;
+            ShowHud(true);
+            _roundGroup.SetActive(true);
+            _titleText.gameObject.SetActive(false);
+            if (_view.Coins > _lastCoins && _lastCoinsKnown) { _coinPop = "+" + (_view.Coins - _lastCoins); _coinPopUntil = Time.time + 1.2f; Fx.Sound("Sell_01", _view.CorePos, 0.4f, AudioDistance.Long); }
+            _lastCoins = _view.Coins; _lastCoinsKnown = true;
+            if (_view.CoreHp < _lastCoreHp) _hpFlashUntil = Time.time + 0.25f;
+            _lastCoreHp = _view.CoreHp;
+
+            float hp = _view.CoreMax > 0 ? (float)_view.CoreHp / _view.CoreMax : 1f;
+            _waveText.text = L10n.T("hudWave", _view.Wave);
+            _hpBar.Set(hp, Time.time < _hpFlashUntil ? Color.white : Hud.HealthColor(hp));
+            _hpText.text = $"{_view.CoreHp}<size=70%><color={Hud.Hex(Hud.Muted)}> / {_view.CoreMax}</color></size>";
+            _enemyText.text = _view.Remaining.ToString();
+            _coinText.text = _view.Coins + (Time.time < _coinPopUntil ? $" <size=72%><color={Hud.Hex(Hud.Good)}>{_coinPop}</color></size>" : "");
+            bool host = InstanceFinder.IsServerStarted;
+            SetPhase(_view.Building ? L10n.T("buildPhase", _view.Countdown) + (host ? "　" + L10n.T("phaseSkip", FortressPlugin.Instance.ReadyKeyName) : "")
+                                    : $"<color={Hud.Hex(Hud.Accent)}>{L10n.T("fightPhase")}</color>");
+            bool boss = _view.BossMax > 0;
+            _bossBox.gameObject.SetActive(boss);
+            if (boss)
             {
-                _hud.gameObject.SetActive(true);
-                string phase = _view.Building ? L10n.T("buildPhase", _view.Countdown) : L10n.T("fightPhase");
-                if (_view.Coins > _lastCoins && _lastCoinsKnown) { _coinPop = "+" + (_view.Coins - _lastCoins); _coinPopUntil = Time.time + 1.2f; Fx.Sound("Sell_01", _view.CorePos, 0.4f, AudioDistance.Long); }
-                _lastCoins = _view.Coins; _lastCoinsKnown = true;
-                string coinPop = Time.time < _coinPopUntil ? "  <color=#ffd75a>" + _coinPop + "</color>" : "";
-                string boss = _view.BossMax > 0 ? "\n<color=#ff6050>" + L10n.T("bossHud", _view.BossHp, _view.BossMax) + "</color>" : "";
-                _hud.text = L10n.T("siegeHud", _view.Wave, _view.CoreHp, _view.CoreMax, _view.Remaining, _view.Coins) + coinPop + "\n" + phase + boss;
+                _bossText.text = L10n.T("bossName");
+                _bossBar.Set((float)_view.BossHp / _view.BossMax);
             }
+        }
+
+        private void ShowHud(bool on)
+        {
+            if (_top) _top.gameObject.SetActive(on);
+            if (_phaseBox) _phaseBox.gameObject.SetActive(on);
+            if (_bossBox && !on) _bossBox.gameObject.SetActive(false);
+        }
+
+        private void SetPhase(string text)
+        {
+            text = Hud.Keys(text);
+            if (_phaseText.text == text) return;
+            _phaseText.text = text;
+            _phaseBox.rectTransform.sizeDelta = new Vector2(_phaseText.GetPreferredValues(text).x + 48f, 42f);
+        }
+
+        // Top of the screen: wave, lighthouse health, enemies left, team coins; under it the phase, then the boss.
+        private bool EnsureHud()
+        {
+            if (_top) return true;
+            if (!Hud.Font) return false;
+            var root = Hud.Root;
+            Vector2 L = new Vector2(0f, 0.5f), C = new Vector2(0.5f, 0.5f);
+            _top = Hud.Box(root, new Vector2(0.5f, 1f), new Vector2(0f, -14f), new Vector2(890f, 62f), Hud.Panel, 18f).rectTransform;
+            _roundGroup = Hud.Node(_top, "Round", Vector2.zero, Vector2.zero, Vector2.zero).gameObject;
+            var g = (RectTransform)_roundGroup.transform;
+            g.anchorMin = Vector2.zero; g.anchorMax = Vector2.one;
+            var pill = Hud.Box(g, L, new Vector2(9f, 0f), new Vector2(150f, 46f), Hud.Accent, 14f);
+            _waveText = Hud.Label(pill.transform, "", 26f, C, Vector2.zero, new Vector2(150f, 46f), TextAlignmentOptions.Center, new Color(0.13f, 0.08f, 0.02f), bold: true);
+            Hud.Label(g, L10n.T("hudLighthouse"), 22f, L, new Vector2(176f, 0f), new Vector2(70f, 40f), TextAlignmentOptions.Left, Hud.Muted);
+            _hpBar = Hud.Bar.Make(g, L, new Vector2(248f, 0f), new Vector2(220f, 16f), Hud.Good);
+            _hpText = Hud.Label(g, "", 24f, L, new Vector2(480f, 0f), new Vector2(130f, 40f), TextAlignmentOptions.Left, bold: true);
+            Hud.Icon(g, "Skull", L, new Vector2(612f, 0f), new Vector2(28f, 28f), Hud.Bad);
+            _enemyText = Hud.Label(g, "", 24f, L, new Vector2(648f, 0f), new Vector2(70f, 40f), TextAlignmentOptions.Left, bold: true);
+            Hud.Icon(g, "Money", L, new Vector2(716f, 0f), new Vector2(32f, 20f), Hud.Gold);
+            _coinText = Hud.Label(g, "", 24f, L, new Vector2(756f, 0f), new Vector2(130f, 40f), TextAlignmentOptions.Left, Hud.Gold, bold: true);
+            _titleText = Hud.Label(_top, "", 28f, C, Vector2.zero, new Vector2(860f, 60f), TextAlignmentOptions.Center, bold: true);
+            _phaseBox = Hud.Box(root, new Vector2(0.5f, 1f), new Vector2(0f, -84f), new Vector2(400f, 42f), Hud.Panel, 21f);
+            _phaseText = Hud.Label(_phaseBox.transform, "", 22f, C, Vector2.zero, new Vector2(1400f, 42f), TextAlignmentOptions.Center);
+            _bossBox = Hud.Box(root, new Vector2(0.5f, 1f), new Vector2(0f, -136f), new Vector2(660f, 46f), Hud.Panel, 16f);
+            _bossText = Hud.Label(_bossBox.transform, "", 22f, L, new Vector2(18f, 0f), new Vector2(190f, 40f), TextAlignmentOptions.Left, Hud.Bad, bold: true);
+            _bossBar = Hud.Bar.Make(_bossBox.transform, L, new Vector2(206f, 0f), new Vector2(436f, 18f), Hud.Bad);
+            return true;
         }
 
         // ---------- networking ----------

@@ -21,7 +21,7 @@ namespace HtfFortress
         private const float UseRadius = 3.5f;
 
         private GameObject _root;
-        private TextMeshProUGUI _detail, _team, _prompt;
+        private TextMeshProUGUI _detail, _team;
         private Transform _grid, _fortRow, _mineRow;
         private Button _merge, _equip;
         private TextMeshProUGUI _mergeText, _equipText;
@@ -42,12 +42,7 @@ namespace HtfFortress
         private void Update()
         {
             bool near = Near();
-            if (!_prompt) _prompt = Hud.CreateText("VaultPrompt", new Vector2(0.5f, 0.28f), Vector2.zero, 28f, TextAlignmentOptions.Center);
-            if (_prompt)
-            {
-                _prompt.gameObject.SetActive(near && !IsOpen);
-                _prompt.text = RoundRunning ? L10n.T("vaultLocked") : L10n.T("vaultPrompt");
-            }
+            if (near && !IsOpen) Hud.Prompt(RoundRunning ? L10n.T("vaultLocked") : L10n.T("vaultPrompt"));
             var kb = Keyboard.current;
             if (IsOpen)
             {
@@ -65,6 +60,7 @@ namespace HtfFortress
             if (!_root) return;
             IsOpen = true;
             _root.SetActive(true);
+            Hud.Root.gameObject.SetActive(false); // the game's panel sprite isn't fully opaque: keep the HUD from showing through
             PlayerCamera.ToggleMouse(true);
             Redraw();
         }
@@ -76,6 +72,7 @@ namespace HtfFortress
         {
             IsOpen = false;
             if (_root) _root.SetActive(false);
+            Hud.Root.gameObject.SetActive(true);
             PlayerCamera.ToggleMouse(false);
         }
 
@@ -105,9 +102,13 @@ namespace HtfFortress
             scaler.matchWidthOrHeight = 0.5f;
             _root = canvasGo;
 
-            var panel = Box(canvasGo.transform, new Vector2(1440f, 860f), Vector2.zero, new Color(0.06f, 0.08f, 0.11f, 1f)).transform;
-            Text(panel, L10n.T("vaultTitle"), 44f, new Vector2(1300f, 60f), new Vector2(0f, 385f), TextAlignmentOptions.Center);
-            Text(panel, L10n.T("vaultSubtitle"), 22f, new Vector2(1300f, 30f), new Vector2(0f, 345f), TextAlignmentOptions.Center).color = new Color(0.7f, 0.75f, 0.8f);
+            var dim = Box(canvasGo.transform, new Vector2(4000f, 3000f), Vector2.zero, new Color(0f, 0f, 0f, 0.45f), 0f);
+            dim.raycastTarget = true; // clicks outside the panel go nowhere
+            var panel = Box(canvasGo.transform, new Vector2(1440f, 860f), Vector2.zero, Hud.PanelSolid, 28f).transform;
+            var title = Text(panel, L10n.T("vaultTitle"), 44f, new Vector2(1300f, 60f), new Vector2(0f, 385f), TextAlignmentOptions.Center);
+            title.fontStyle = FontStyles.Bold;
+            Box(panel, new Vector2(90f, 5f), new Vector2(0f, 360f), Hud.Accent, 2.5f);
+            Text(panel, L10n.T("vaultSubtitle"), 21f, new Vector2(1300f, 30f), new Vector2(0f, 334f), TextAlignmentOptions.Center).color = Hud.Muted;
 
             Text(panel, L10n.T("vaultFortress"), 26f, new Vector2(220f, 70f), new Vector2(-590f, 280f), TextAlignmentOptions.Left);
             _fortRow = new GameObject("FortSlots", typeof(RectTransform)).transform;
@@ -118,22 +119,22 @@ namespace HtfFortress
             _team = Text(panel, "", 20f, new Vector2(560f, 80f), new Vector2(390f, 195f), TextAlignmentOptions.TopLeft);
             _team.color = new Color(0.75f, 0.8f, 0.85f);
 
-            Box(panel, new Vector2(1380f, 2f), new Vector2(0f, 145f), new Color(1f, 1f, 1f, 0.15f));
+            Box(panel, new Vector2(1380f, 2f), new Vector2(0f, 145f), new Color(1f, 1f, 1f, 0.12f), 0f);
             _grid = new GameObject("Grid", typeof(RectTransform)).transform;
             _grid.SetParent(panel, false);
 
-            Box(panel, new Vector2(500f, 470f), new Vector2(440f, -110f), new Color(1f, 1f, 1f, 0.05f));
+            Box(panel, new Vector2(500f, 470f), new Vector2(440f, -110f), Hud.Raised, 18f);
             _detail = Text(panel, "", 24f, new Vector2(460f, 330f), new Vector2(440f, -30f), TextAlignmentOptions.TopLeft);
-            _merge = Btn(panel, new Vector2(220f, 60f), new Vector2(320f, -300f), new Color(0.3f, 0.45f, 0.75f), () =>
+            _merge = Btn(panel, new Vector2(220f, 60f), new Vector2(320f, -300f), new Color(0.26f, 0.42f, 0.78f), () =>
             {
                 if (_sel is (Gear g, Rarity r)) Send(VaultAction.Merge, g, r);
             }, out _mergeText);
-            _equip = Btn(panel, new Vector2(220f, 60f), new Vector2(560f, -300f), new Color(0.25f, 0.6f, 0.4f), () =>
+            _equip = Btn(panel, new Vector2(220f, 60f), new Vector2(560f, -300f), new Color(0.22f, 0.58f, 0.38f), () =>
             {
                 if (_sel is (Gear g, Rarity r)) Send(GearCatalog.IsFortress(g) ? VaultAction.EquipFortress : VaultAction.EquipPersonal, g, r);
             }, out _equipText);
 
-            Text(panel, L10n.T("vaultHelp"), 20f, new Vector2(1300f, 30f), new Vector2(0f, -400f), TextAlignmentOptions.Center).color = new Color(0.6f, 0.65f, 0.7f);
+            Text(panel, Hud.Keys(L10n.T("vaultHelp")), 20f, new Vector2(1300f, 30f), new Vector2(0f, -398f), TextAlignmentOptions.Center).color = Hud.Muted;
             _root.SetActive(false);
         }
 
@@ -169,7 +170,9 @@ namespace HtfFortress
                 var (g, r) = stacks[i].Key;
                 int n = stacks[i].Value;
                 Vector2 pos = new Vector2(-610f + 162f * (i % 5), 100f - 66f * (i / 5));
-                var b = Btn(_grid, new Vector2(154f, 58f), pos, Darken(GearCatalog.Color(r), _sel == (g, r) ? 0.75f : 0.4f), () => { _sel = (g, r); Redraw(); }, out var t);
+                bool picked = _sel == (g, r);
+                var b = Btn(_grid, new Vector2(154f, 58f), pos, picked ? Darken(GearCatalog.Color(r), 0.5f) : new Color(0.13f, 0.15f, 0.19f, 1f), () => { _sel = (g, r); Redraw(); }, out var t);
+                Ring(b.transform, new Vector2(154f, 58f), GearCatalog.Color(r) * new Color(1f, 1f, 1f, picked ? 1f : 0.7f));
                 t.text = $"{GearCatalog.Name(g)}\n<size=78%>{GearCatalog.RarityName(r)} ×{n}</size>";
                 t.fontSize = 19f;
             }
@@ -207,13 +210,14 @@ namespace HtfFortress
         {
             if (item is (Gear g, Rarity r))
             {
-                var b = Btn(parent, new Vector2(230f, 70f), pos, Darken(GearCatalog.Color(r), 0.55f), unequip, out var t);
+                var b = Btn(parent, new Vector2(230f, 70f), pos, Darken(GearCatalog.Color(r), 0.4f), unequip, out var t);
+                Ring(b.transform, new Vector2(230f, 70f), GearCatalog.Color(r));
                 t.text = $"{GearCatalog.Name(g)}\n<size=75%>{GearCatalog.FormatValue(g, r)} · {L10n.T("vaultUnequip")}</size>";
                 t.fontSize = 20f;
             }
             else
             {
-                var box = Box(parent, new Vector2(230f, 70f), pos, new Color(1f, 1f, 1f, 0.06f));
+                var box = Box(parent, new Vector2(230f, 70f), pos, Hud.Raised);
                 Text(box.transform, L10n.T("vaultEmptySlot"), 20f, new Vector2(220f, 60f), Vector2.zero, TextAlignmentOptions.Center).color = new Color(0.5f, 0.55f, 0.6f);
             }
         }
@@ -224,7 +228,7 @@ namespace HtfFortress
 
         private static void Clear(Transform t) { foreach (Transform c in t) Destroy(c.gameObject); }
 
-        private static Image Box(Transform parent, Vector2 size, Vector2 pos, Color c)
+        private static Image Box(Transform parent, Vector2 size, Vector2 pos, Color c, float radius = 12f)
         {
             var go = new GameObject("Box", typeof(RectTransform), typeof(Image));
             go.transform.SetParent(parent, false);
@@ -232,7 +236,16 @@ namespace HtfFortress
             img.color = c;
             img.rectTransform.sizeDelta = size;
             img.rectTransform.anchoredPosition = pos;
+            Hud.Round(img, radius);
             return img;
+        }
+
+        // Rarity ring around a card.
+        private static void Ring(Transform card, Vector2 size, Color c)
+        {
+            var img = Box(card, size, Vector2.zero, c);
+            Hud.Round(img, 12f, "Ui_outline");
+            img.raycastTarget = false;
         }
 
         private static TextMeshProUGUI Text(Transform parent, string s, float size, Vector2 box, Vector2 pos, TextAlignmentOptions align)
@@ -253,6 +266,7 @@ namespace HtfFortress
         private static Button Btn(Transform parent, Vector2 size, Vector2 pos, Color c, Action onClick, out TextMeshProUGUI label)
         {
             var img = Box(parent, size, pos, c);
+            img.raycastTarget = true;
             var b = img.gameObject.AddComponent<Button>();
             var colors = b.colors;
             colors.highlightedColor = new Color(1.25f, 1.25f, 1.25f);

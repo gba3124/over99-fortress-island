@@ -103,6 +103,7 @@ namespace HtfFortress
         private static FortressPlugin _instance;
         public static FortressPlugin Instance => _instance;
         public bool Running => _running;
+        public string ReadyKeyName => _readyKey.Value.ToString();
         public int Wave => _wave;
         public bool InBuildTime => _running && _nextWaveAt > 0f;
         public void SkipBuildTime() { if (InBuildTime) _nextWaveAt = Time.time; }
@@ -123,16 +124,18 @@ namespace HtfFortress
 
         // ---------- test keys (Debug / DebugKeys, host only; Mac keyboards need Fn for the F keys) ----------
 
-        private TMPro.TextMeshProUGUI _testHelp;
+        private UnityEngine.UI.Image _testHelp;
 
         private void UpdateTestKeys(Keyboard kb)
         {
-            if (!_testHelp && _debugKeys.Value)
+            if (!_testHelp && _debugKeys.Value && Hud.Font)
             {
-                _testHelp = Hud.CreateText("FortressTestKeys", new Vector2(1f, 1f), new Vector2(-24f, -24f), 20f, TMPro.TextAlignmentOptions.TopRight);
-                if (_testHelp) { _testHelp.rectTransform.pivot = new Vector2(1f, 1f); _testHelp.rectTransform.sizeDelta = new Vector2(560f, 220f); }
+                _testHelp = Hud.Box(Hud.Root, new Vector2(1f, 1f), new Vector2(-18f, -18f), new Vector2(330f, 290f), Hud.Panel, 14f);
+                var t = Hud.Label(_testHelp.transform, Hud.Keys(L10n.T("testKeys")), 19f, new Vector2(0f, 1f), new Vector2(16f, -12f), new Vector2(300f, 270f), TMPro.TextAlignmentOptions.TopLeft, pivot: new Vector2(0f, 1f));
+                t.lineSpacing = 18f;
+                _testHelp.rectTransform.sizeDelta = new Vector2(330f, t.GetPreferredValues(t.text, 300f, 0f).y + 26f);
             }
-            if (_testHelp) { _testHelp.gameObject.SetActive(_debugKeys.Value); _testHelp.text = L10n.T("testKeys"); }
+            if (_testHelp) _testHelp.gameObject.SetActive(_debugKeys.Value);
             if (!_debugKeys.Value || kb == null || ChatManager.IsTyping || VaultUI.IsOpen) return;
             foreach (var key in new[] { Key.F4, Key.F5, Key.F6, Key.F7, Key.F8, _toggleKey.Value })
                 if (kb[key].wasPressedThisFrame) TestKey(key, kb.shiftKey.isPressed);

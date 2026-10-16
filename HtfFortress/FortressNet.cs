@@ -33,7 +33,6 @@ namespace HtfFortress
         private float _nextTick;
         // client
         private NetState _mine;
-        private TextMeshProUGUI _hud;
         private NetworkManager _registeredOn;
 
         static FortressNet()
@@ -158,25 +157,38 @@ namespace HtfFortress
                 InstanceFinder.ClientManager.Broadcast(new NetUpgradeRequest());
         }
 
+        private UnityEngine.UI.Image _panel;
+        private TextMeshProUGUI _netTitle, _netCount, _netFull;
+        private Hud.Bar _netBar;
+
+        // Bottom right: your net (count / size, value); a hint when it's full; the upgrade offer at the crate.
         private void LateUpdate()
         {
-            bool show = Siege.Instance && Siege.Instance.ViewActive;
-            if (!show) { if (_hud) _hud.gameObject.SetActive(false); return; }
-            if (!_hud) _hud = Hud.CreateText("NetHud", new Vector2(1f, 0f), new Vector2(-30f, 150f), 26f, TextAlignmentOptions.BottomRight);
-            if (!_hud) return;
-            _hud.rectTransform.pivot = new Vector2(1f, 0f);
-            _hud.rectTransform.sizeDelta = new Vector2(700f, 120f);
-            _hud.gameObject.SetActive(true);
+            bool show = Siege.Instance && Siege.Instance.ViewActive && Hud.Font;
+            if (!show) { if (_panel) _panel.gameObject.SetActive(false); return; }
+            if (!_panel)
+            {
+                _panel = Hud.Box(Hud.Root, new Vector2(1f, 0f), new Vector2(-24f, 150f), new Vector2(320f, 74f), Hud.Panel, 16f);
+                _netTitle = Hud.Label(_panel.transform, "", 21f, new Vector2(0f, 1f), new Vector2(16f, -8f), new Vector2(200f, 30f), TextAlignmentOptions.TopLeft);
+                _netCount = Hud.Label(_panel.transform, "", 24f, new Vector2(1f, 1f), new Vector2(-16f, -6f), new Vector2(120f, 30f), TextAlignmentOptions.TopRight, bold: true);
+                _netBar = Hud.Bar.Make(_panel.transform, new Vector2(0f, 0f), new Vector2(16f, 14f), new Vector2(288f, 14f), Hud.Accent);
+                _netFull = Hud.Label(_panel.transform, "", 20f, new Vector2(1f, 1f), new Vector2(0f, 30f), new Vector2(400f, 28f), TextAlignmentOptions.BottomRight, Hud.Bad, bold: true, outline: true);
+            }
+            _panel.gameObject.SetActive(true);
             int cap = _mine.Capacity > 0 ? _mine.Capacity : Capacity[0];
-            string full = _mine.Count >= cap ? " <color=#ff7060>" + L10n.T("netFull") + "</color>" : "";
-            string line = L10n.T("netHud", _mine.Count, cap, _mine.Value) + full;
+            bool full = _mine.Count >= cap;
+            _netTitle.text = $"{L10n.T("netTitle")}  <size=85%><color={Hud.Hex(Hud.Gold)}>{L10n.T("netWorth", _mine.Value)}</color></size>";
+            _netCount.text = $"{_mine.Count}<size=70%><color={Hud.Hex(Hud.Muted)}> / {cap}</color></size>";
+            _netCount.color = full ? Hud.Bad : Hud.Ink;
+            _netBar.Set((float)_mine.Count / cap, full ? Hud.Bad : Hud.Accent);
+            _netFull.gameObject.SetActive(full);
+            _netFull.text = L10n.T("netFullShort");
             if (NearCrate())
             {
                 int bonus = Mathf.RoundToInt(Loot.Instance.ClientVault.PersonalValue(Loot.KeyOf(Player.LocalPlayer), Gear.BigNet));
                 int lvl = System.Array.IndexOf(Capacity, cap - bonus);
-                line += "\n" + (lvl >= 0 && lvl < UpgradeCost.Length ? L10n.T("netUpgradeHint", Capacity[lvl + 1], UpgradeCost[lvl]) : L10n.T("netMax"));
+                Hud.Prompt(lvl >= 0 && lvl < UpgradeCost.Length ? L10n.T("netUpgradeHint", Capacity[lvl + 1], UpgradeCost[lvl]) : L10n.T("netMax"));
             }
-            _hud.text = line;
         }
     }
 }

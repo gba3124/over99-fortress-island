@@ -118,13 +118,13 @@ namespace HtfFortress
                     if (vp.z < 0f) d = -d;
                     if (d.sqrMagnitude < 0.0001f) d = Vector2.down;
                     d = d.normalized;
-                    if (used >= _markers.Count) _markers.Add(Hud.CreateMarker("EnemyMarker", new Color(1f, 0.25f, 0.2f, 0.9f), 18f));
+                    if (used >= _markers.Count) _markers.Add(Hud.CreateMarker("EnemyMarker", new Color(1f, 0.25f, 0.2f, 0.9f), 34f));
                     var m = _markers[used++];
                     m.gameObject.SetActive(true);
                     float s = Mathf.Max(Mathf.Abs(d.x) / 0.46f, Mathf.Abs(d.y) / 0.44f);
                     m.rectTransform.anchorMin = m.rectTransform.anchorMax = new Vector2(0.5f + d.x / s, 0.5f + d.y / s);
                     m.rectTransform.anchoredPosition = Vector2.zero;
-                    m.rectTransform.localRotation = Quaternion.Euler(0f, 0f, 45f);
+                    m.rectTransform.localRotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg + 180f); // the game's arrow sprite points left
                     m.color = new Color(1f, 0.25f, 0.2f, Mathf.Lerp(1f, 0.35f, dist / 70f));
                 }
             }

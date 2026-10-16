@@ -54,8 +54,8 @@ namespace HtfFortress
         private PieceType _ghostType = (PieceType)255;
         private bool _ghostValid;
         private Vector3 _lastSentPos = Vector3.positiveInfinity;
-        private TextMeshProUGUI _hud;
-        private string _lookInfo = "";
+        private string _lookInfo = "", _lookKeys = "";
+        private int _lookLevel, _lookHp, _lookMax;
         private string _blockReason = "";
         public int RoundBuilt;
 
@@ -270,7 +270,9 @@ namespace HtfFortress
             else up = L10n.T("upgradeHint", Perks.MyCost(Catalog.UpgradeCost(s.Type, s.Level)));
             string repair = s.Hp < s.MaxHp ? "   " + L10n.T("repairHint", Perks.MyCost(Catalog.RepairCost(s.Hp, s.MaxHp))) : "";
             string branch = s.Branch > 0 ? " · " + L10n.T(Catalog.BranchKey(s.Type, s.Branch)) : "";
-            _lookInfo = L10n.T("lookInfo", PieceName(s.Type, s.Level) + branch, s.Level, s.Hp, s.MaxHp, up + repair);
+            _lookInfo = PieceName(s.Type, s.Level) + branch;
+            _lookLevel = s.Level; _lookHp = s.Hp; _lookMax = s.MaxHp;
+            _lookKeys = up + "　" + repair.Trim() + (repair.Length > 0 ? "　" : "") + L10n.T("removeHint");
         }
 
         public static string PieceName(PieceType t, int level)
@@ -279,36 +281,91 @@ namespace HtfFortress
             return L10n.T(t.ToString());
         }
 
-        private TextMeshProUGUI _bar;
+        // ---------- build UI: piece cards above the game's hotbar, key hints, what you're looking at ----------
+
+        private RectTransform _cards;
+        private readonly List<(UnityEngine.UI.Image box, UnityEngine.UI.Image ring, TextMeshProUGUI name, TextMeshProUGUI cost)> _card =
+            new List<(UnityEngine.UI.Image, UnityEngine.UI.Image, TextMeshProUGUI, TextMeshProUGUI)>();
+        private UnityEngine.UI.Image _keysBox, _warnBox, _lookBox;
+        private TextMeshProUGUI _keysText, _warnText, _lookName, _lookKeysText;
+        private Hud.Bar _lookBar;
+
+        private bool EnsureBuildUi()
+        {
+            if (_cards) return true;
+            if (!Hud.Font) return false;
+            var root = Hud.Root;
+            Vector2 C = new Vector2(0.5f, 0.5f);
+            const float w = 112f, gap = 10f;
+            float total = Catalog.TypeCount * w + (Catalog.TypeCount - 1) * gap;
+            _cards = Hud.Node(root, "BuildCards", new Vector2(0.5f, 0f), new Vector2(0f, 128f), new Vector2(total, 90f));
+            for (int i = 0; i < Catalog.TypeCount; i++)
+            {
+                var box = Hud.Box(_cards, new Vector2(0f, 0f), new Vector2(i * (w + gap), 0f), new Vector2(w, 86f), Hud.Panel, 14f);
+                var ring = Hud.Box(box.transform, C, Vector2.zero, new Vector2(w, 86f), Hud.Accent, 14f, "Ui_outline");
+                var name = Hud.Label(box.transform, "", 19f, new Vector2(0.5f, 1f), new Vector2(0f, -8f), new Vector2(w - 10f, 44f), TextAlignmentOptions.Top);
+                var cost = Hud.Label(box.transform, "", 22f, new Vector2(0.5f, 0f), new Vector2(0f, 8f), new Vector2(w - 10f, 30f), TextAlignmentOptions.Bottom, Hud.Gold, bold: true);
+                _card.Add((box, ring, name, cost));
+            }
+            _keysBox = Hud.Box(root, new Vector2(0.5f, 0f), new Vector2(0f, 232f), new Vector2(600f, 42f), Hud.Panel, 21f);
+            _keysText = Hud.Label(_keysBox.transform, "", 21f, C, Vector2.zero, new Vector2(1600f, 42f), TextAlignmentOptions.Center);
+            _warnBox = Hud.Box(root, new Vector2(0.5f, 0f), new Vector2(0f, 284f), new Vector2(400f, 42f), new Color(0.45f, 0.08f, 0.06f, 0.85f), 21f);
+            _warnText = Hud.Label(_warnBox.transform, "", 22f, C, Vector2.zero, new Vector2(1200f, 42f), TextAlignmentOptions.Center, bold: true);
+            _lookBox = Hud.Box(root, C, new Vector2(0f, -140f), new Vector2(560f, 104f), Hud.Panel, 16f);
+            _lookName = Hud.Label(_lookBox.transform, "", 24f, new Vector2(0.5f, 1f), new Vector2(0f, -8f), new Vector2(540f, 32f), TextAlignmentOptions.Top, bold: true);
+            _lookBar = Hud.Bar.Make(_lookBox.transform, new Vector2(0.5f, 0.5f), new Vector2(0f, 2f), new Vector2(380f, 14f), Hud.Good);
+            _lookKeysText = Hud.Label(_lookBox.transform, "", 19f, new Vector2(0.5f, 0f), new Vector2(0f, 10f), new Vector2(1200f, 32f), TextAlignmentOptions.Bottom);
+            return true;
+        }
+
+        private static void FitPill(UnityEngine.UI.Image box, TextMeshProUGUI t, string text, float pad = 48f)
+        {
+            if (t.text == text) return;
+            t.text = text;
+            box.rectTransform.sizeDelta = new Vector2(t.GetPreferredValues(text).x + pad, box.rectTransform.sizeDelta.y);
+        }
 
         private void LateUpdate()
         {
-            if (_bar) _bar.gameObject.SetActive(_building);
-            if (!_building) { if (_hud) _hud.gameObject.SetActive(false); return; }
-            if (!_bar)
+            bool on = _building && EnsureBuildUi();
+            if (_cards) { _cards.gameObject.SetActive(on); _keysBox.gameObject.SetActive(on); }
+            if (!on) { if (_warnBox) { _warnBox.gameObject.SetActive(false); _lookBox.gameObject.SetActive(false); } return; }
+
+            for (int i = 0; i < _card.Count; i++)
             {
-                _bar = Hud.CreateText("BuildBar", new Vector2(0f, 0.5f), new Vector2(30f, 0f), 24f, TextAlignmentOptions.Left);
-                if (_bar) { _bar.rectTransform.pivot = new Vector2(0f, 0.5f); _bar.rectTransform.sizeDelta = new Vector2(420f, 420f); }
+                var t = (PieceType)i;
+                var (box, ring, name, cost) = _card[i];
+                int c = Perks.MyCost(Catalog.BuildCost(t));
+                bool sel = t == _type, afford = Siege.Instance.ViewCoins >= c;
+                ring.gameObject.SetActive(sel);
+                box.color = sel ? new Color(0.22f, 0.16f, 0.07f, 0.92f) : Hud.Panel;
+                box.rectTransform.anchoredPosition = new Vector2(box.rectTransform.anchoredPosition.x, sel ? 10f : 0f);
+                name.text = PieceName(t, 1);
+                name.color = afford ? Hud.Ink : Hud.Muted;
+                name.fontStyle = sel ? FontStyles.Bold : FontStyles.Normal;
+                cost.text = c.ToString();
+                cost.color = afford ? Hud.Gold : Hud.Bad;
             }
-            if (_bar)
+            FitPill(_keysBox, _keysText, Hud.Keys(L10n.T("buildKeys")));
+            bool warn = _blockReason.Length > 0;
+            _warnBox.gameObject.SetActive(warn);
+            if (warn) FitPill(_warnBox, _warnText, _blockReason);
+
+            bool look = _lookInfo.Length > 0;
+            _lookBox.gameObject.SetActive(look);
+            if (look)
             {
-                var sb = new System.Text.StringBuilder();
-                for (int i = 0; i < Catalog.TypeCount; i++)
+                string pips = new string('★', _lookLevel) + $"<color={Hud.Hex(new Color(1f, 1f, 1f, 0.25f))}>{new string('★', Mathf.Max(0, Catalog.MaxLevel - _lookLevel))}</color>";
+                _lookName.text = $"{_lookInfo}  <color={Hud.Hex(Hud.Gold)}>{pips}</color>";
+                float f = _lookMax > 0 ? (float)_lookHp / _lookMax : 1f;
+                _lookBar.Set(f, Hud.HealthColor(f));
+                string keys = Hud.Keys(_lookKeys);
+                if (_lookKeysText.text != keys)
                 {
-                    var t = (PieceType)i;
-                    bool sel = t == _type, afford = Siege.Instance.ViewCoins >= Perks.MyCost(Catalog.BuildCost(t));
-                    string line = (sel ? "▶ " : "   ") + PieceName(t, 1) + "  " + Perks.MyCost(Catalog.BuildCost(t));
-                    sb.AppendLine(sel ? "<color=#ffd75a><b>" + line + "</b></color>" : afford ? line : "<color=#9a9a9a>" + line + "</color>");
+                    _lookKeysText.text = keys;
+                    _lookBox.rectTransform.sizeDelta = new Vector2(Mathf.Max(460f, _lookKeysText.GetPreferredValues(keys).x + 48f), 104f);
                 }
-                sb.Append("<size=80%>" + L10n.T("barHint") + "</size>");
-                _bar.text = sb.ToString();
             }
-            if (!_hud) _hud = Hud.CreateText("BuildHint", new Vector2(0.5f, 0f), new Vector2(0f, 80f), 26f, TextAlignmentOptions.Bottom);
-            if (!_hud) return;
-            _hud.gameObject.SetActive(true);
-            string cost = L10n.T("cost", Perks.MyCost(Catalog.BuildCost(_type)));
-            string top = _blockReason.Length > 0 ? "<color=#ff7060>" + _blockReason + "</color>" : _lookInfo;
-            _hud.text = (top.Length > 0 ? top + "\n" : "") + L10n.T("buildHud", PieceName(_type, 1) + cost);
         }
 
         // ---------- networking ----------

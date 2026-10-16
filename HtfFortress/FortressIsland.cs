@@ -59,11 +59,8 @@ namespace HtfFortress
         private float _nextReadyLog;
 
         // client: results panel
-        private TextMeshProUGUI _results;
-        private UnityEngine.UI.Image _resultsBg;
+        private GameObject _results;
         private float _resultsUntil;
-        private TextMeshProUGUI _banner;
-        private float _bannerUntil;
 
         static FortressIsland()
         {
@@ -287,65 +284,81 @@ namespace HtfFortress
 
         // ---------- client: banner + results ----------
 
-        public void Banner(string text, float seconds)
-        {
-            if (!_banner) _banner = Hud.CreateText("FortressBanner", new Vector2(0.5f, 0.5f), new Vector2(0f, 180f), 46f, TextAlignmentOptions.Center);
-            if (!_banner) return;
-            _banner.text = text;
-            _bannerUntil = Time.time + seconds;
-        }
+        public void Banner(string text, float seconds) => Hud.Banner(text, seconds);
 
+        // End of round: title, three stat tiles, record, every player's row, MVP titles, how to go again.
         private void ShowResults(RoundResult r)
         {
-            if (!_results)
+            if (_results) Destroy(_results);
+            if (!Hud.Font) return;
+            Vector2 C = new Vector2(0.5f, 0.5f), T = new Vector2(0.5f, 1f);
+            var rows = Stats.Parse(r.Table).OrderByDescending(x => x.Kills + x.TurretKills).ToList();
+            var mvps = Mvps(rows);
+            float h = 132f + 128f + 46f + 52f + 40f * rows.Count + (mvps.Count > 0 ? 64f : 0f) + 66f;
+            var panel = Hud.Box(Hud.Root, C, new Vector2(0f, 20f), new Vector2(1000f, h), Hud.PanelSolid, 26f);
+            _results = panel.gameObject;
+            var p = panel.transform;
+            float y = 0f;
+
+            var head = Hud.Box(p, T, new Vector2(0f, -10f), new Vector2(980f, 104f), new Color(0.42f, 0.09f, 0.07f, 0.9f), 20f);
+            Hud.Label(head.transform, L10n.T(r.CoreLost ? "resultCoreTitle" : "resultWipeTitle"), 44f, C, new Vector2(0f, 10f), new Vector2(940f, 60f), TextAlignmentOptions.Center, bold: true);
+            Hud.Label(head.transform, r.NewRecord ? $"<color={Hud.Hex(Hud.Gold)}>★ {L10n.T("resultRecordShort")} ★</color>" : L10n.T("resultBest", r.Best),
+                      22f, C, new Vector2(0f, -28f), new Vector2(940f, 30f), TextAlignmentOptions.Center, Hud.Muted, bold: r.NewRecord);
+            y -= 132f;
+
+            var tiles = new[] { (r.Waves.ToString(), L10n.T("tileWaves")), (r.Kills.ToString(), L10n.T("tileKills")), (r.Built.ToString(), L10n.T("tileBuilt")) };
+            for (int i = 0; i < 3; i++)
             {
-                _resultsBg = Hud.CreateMarker("FortressResultsBg", new Color(0f, 0f, 0f, 0.8f), 1f); // created first so it draws behind
-                _results = Hud.CreateText("FortressResults", new Vector2(0.5f, 0.5f), new Vector2(0f, 40f), 34f, TextAlignmentOptions.Center);
+                var tile = Hud.Box(p, T, new Vector2((i - 1) * 316f, y - 6f), new Vector2(300f, 108f), Hud.Raised, 16f, pivot: T);
+                Hud.Label(tile.transform, tiles[i].Item1, 52f, T, new Vector2(0f, -6f), new Vector2(290f, 64f), TextAlignmentOptions.Center, i == 0 ? Hud.Accent : Hud.Ink, bold: true);
+                Hud.Label(tile.transform, tiles[i].Item2, 21f, new Vector2(0.5f, 0f), new Vector2(0f, 10f), new Vector2(290f, 30f), TextAlignmentOptions.Bottom, Hud.Muted);
             }
-            if (!_results) return;
-            _results.rectTransform.sizeDelta = new Vector2(1100f, 700f);
-            _results.text = L10n.T(r.CoreLost ? "resultCore" : "resultWipe") + "\n\n"
-                          + L10n.T("resultStats", r.Waves, r.Kills, r.Built) + "\n"
-                          + (r.NewRecord ? L10n.T("resultRecord") : L10n.T("resultBest", r.Best)) + "\n\n"
-                          + PlayerTable(r.Table) + "\n"
-                          + L10n.T("resultAgain");
-            _results.ForceMeshUpdate();
-            var b = _results.textBounds;
-            _resultsBg.rectTransform.sizeDelta = new Vector2(b.size.x + 90f, b.size.y + 60f);
-            _resultsBg.rectTransform.anchoredPosition = _results.rectTransform.anchoredPosition + (Vector2)b.center;
+            y -= 128f;
+
+            // Player table: fixed columns (percent of the row), the header is the six cells of "tableHeader".
+            int[] cols = { 3, 36, 49, 66, 80, 91 };
+            string Line(IEnumerable<string> cells) => string.Concat(cells.Select((c, i) => $"<pos={cols[i]}%>{c}"));
+            var hdr = Hud.Box(p, T, new Vector2(0f, y), new Vector2(940f, 40f), Hud.Raised, 10f, pivot: T);
+            Hud.Label(hdr.transform, Line(L10n.T("tableHeader").Split(new[] { "   " }, System.StringSplitOptions.None)), 19f, C, Vector2.zero, new Vector2(920f, 40f), TextAlignmentOptions.Left, Hud.Muted);
+            y -= 46f;
+            foreach (var row in rows)
+            {
+                string name = row.Name.Length > 16 ? row.Name.Substring(0, 15) + "…" : row.Name;
+                Hud.Label(p, Line(new[] { $"<b>{name}</b>", row.Kills.ToString(), row.TurretKills.ToString(), row.Fished.ToString(), row.Built.ToString(), row.Downs.ToString() }),
+                          22f, T, new Vector2(0f, y), new Vector2(920f, 38f), TextAlignmentOptions.Left, pivot: T);
+                y -= 40f;
+            }
+            y -= 12f;
+
+            if (mvps.Count > 0)
+            {
+                float w = 300f, x0 = -(mvps.Count - 1) * (w + 12f) / 2f;
+                for (int i = 0; i < mvps.Count; i++)
+                {
+                    var pill = Hud.Box(p, T, new Vector2(x0 + i * (w + 12f), y), new Vector2(w, 50f), new Color(0.35f, 0.26f, 0.06f, 0.75f), 25f, pivot: T);
+                    Hud.Label(pill.transform, $"<color={Hud.Hex(Hud.Gold)}><b>{mvps[i].title}</b></color>  {mvps[i].who}", 20f, C, Vector2.zero, new Vector2(w - 16f, 50f), TextAlignmentOptions.Center);
+                }
+                y -= 64f;
+            }
+            Hud.Label(p, Hud.Keys(L10n.T("resultAgain")), 22f, new Vector2(0.5f, 0f), new Vector2(0f, 22f), new Vector2(940f, 34f), TextAlignmentOptions.Center, Hud.Muted);
+
+            _results.SetActive(false);
             _resultsUntil = Time.time + 18f;
-            _bannerUntil = 0f;
+            Hud.HideBanner();
             Fx.Sound(r.NewRecord ? "CasinoWinEpic" : "Death", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Center, 1f, AudioDistance.Long);
         }
 
-        // Per-player rows plus MVP titles (each title only when someone actually earned it).
-        private static string PlayerTable(string table)
+        // MVP titles, each only when someone earned it (and only with company, except in tests).
+        private static List<(string title, string who)> Mvps(List<Stats.Row> rows)
         {
-            var rows = Stats.Parse(table);
-            if (rows.Count == 0) return "";
-            var sb = new System.Text.StringBuilder("<size=80%>");
-            // Fixed columns (percent of the panel width); the header is the same six cells split on its triple spaces.
-            int[] cols = { 12, 40, 50, 66, 79, 89 };
-            string Line(IEnumerable<string> cells) => string.Concat(cells.Select((c, i) => $"<pos={cols[i]}%>{c}"));
-            sb.Append("<align=left>");
-            sb.AppendLine("<color=#bfe3ff>" + Line(L10n.T("tableHeader").Split(new[] { "   " }, System.StringSplitOptions.None)) + "</color>");
-            foreach (var row in rows.OrderByDescending(x => x.Kills + x.TurretKills))
-            {
-                string name = row.Name.Length > 16 ? row.Name.Substring(0, 15) + "…" : row.Name;
-                sb.AppendLine(Line(new[] { name, row.Kills.ToString(), row.TurretKills.ToString(), row.Fished.ToString(), row.Built.ToString(), row.Downs.ToString() }));
-            }
-            sb.Append("</align>");
-            void Mvp(string key, Stats.Row best, int value) { if (best != null && value > 0) sb.AppendLine("<color=#ffd75a>" + L10n.T(key) + "</color>  " + best.Name + "  (" + value + ")"); }
-            if (rows.Count > 1 || AutoTest.Running)
-            {
-                sb.AppendLine();
-                var k = rows.OrderByDescending(x => x.Kills).First(); Mvp("mvpKills", k, k.Kills);
-                var t = rows.OrderByDescending(x => x.TurretKills).ThenByDescending(x => x.Built).First(); Mvp("mvpBuilder", t, t.TurretKills);
-                var f = rows.OrderByDescending(x => x.Fished).First(); Mvp("mvpFisher", f, f.Fished);
-                var s = rows.OrderBy(x => x.Downs).ThenByDescending(x => x.Kills).First(); if (s.Downs == 0) sb.AppendLine("<color=#ffd75a>" + L10n.T("mvpSurvivor") + "</color>  " + s.Name);
-            }
-            sb.Append("</size>");
-            return sb.ToString();
+            var list = new List<(string, string)>();
+            if (rows.Count == 0 || (rows.Count < 2 && !AutoTest.Running)) return list;
+            void Add(string key, Stats.Row best, int value) { if (best != null && value > 0) list.Add((L10n.T(key), $"{best.Name} ({value})")); }
+            var k = rows.OrderByDescending(x => x.Kills).First(); Add("mvpKills", k, k.Kills);
+            var t = rows.OrderByDescending(x => x.TurretKills).ThenByDescending(x => x.Built).First(); Add("mvpBuilder", t, t.TurretKills);
+            var f = rows.OrderByDescending(x => x.Fished).First(); Add("mvpFisher", f, f.Fished);
+            var s = rows.OrderBy(x => x.Downs).ThenByDescending(x => x.Kills).First(); if (s.Downs == 0) list.Add((L10n.T("mvpSurvivor"), s.Name));
+            return list;
         }
 
         private void LateUpdate()
@@ -353,9 +366,7 @@ namespace HtfFortress
             // Hold the panel while the game's death screen is up; it shows once you are back on your feet.
             bool dead = Player.LocalPlayer && !PlayerManager.AlivePlayers.Contains(Player.LocalPlayer);
             if (dead && Time.time < _resultsUntil) _resultsUntil = Time.time + 18f;
-            if (_results) _results.gameObject.SetActive(!dead && Time.time < _resultsUntil);
-            if (_resultsBg) _resultsBg.gameObject.SetActive(!dead && Time.time < _resultsUntil);
-            if (_banner) _banner.gameObject.SetActive(Time.time < _bannerUntil);
+            if (_results) _results.SetActive(!dead && Time.time < _resultsUntil);
         }
 
         // ---------- radar ----------

@@ -107,6 +107,7 @@ namespace HtfFortress
                 case "cheats": yield return CheatsScenario(); break;
                 case "loot": yield return LootScenario(); break;
                 case "gear": yield return GearScenario(); break;
+                case "ui": yield return UiScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -137,6 +138,13 @@ namespace HtfFortress
                 .Where(kv => kv.Value && !kv.Value.GetComponent<Creature>()).OrderBy(kv => kv.Key)
                 .Select(kv => $"{kv.Key}|{kv.Value.Type}|{kv.Value.DefaultWorth}|{string.Join(",", kv.Value.GetComponents<MonoBehaviour>().Select(m => m.GetType().Name).Where(n => n != "Item" && !n.StartsWith("Network")).Distinct())}");
             File.WriteAllText(Path.Combine(Root, "fortress-items.txt"), string.Join("\n", items));
+            // The game's own UI sprites and fonts (to build our UI from the same pieces).
+            string PathOf(Transform t) { var parts = new List<string>(); for (; t; t = t.parent) parts.Add(t.name); parts.Reverse(); return string.Join("/", parts); }
+            var ui = Resources.FindObjectsOfTypeAll<UnityEngine.UI.Image>().Where(i => i.sprite)
+                .Select(i => $"{i.sprite.name}|{i.sprite.rect.width}x{i.sprite.rect.height}|border {i.sprite.border}|{i.type}|{i.color}|{PathOf(i.transform)}")
+                .Distinct().OrderBy(x => x);
+            var fonts = Resources.FindObjectsOfTypeAll<TMPro.TMP_FontAsset>().Select(f => "FONT " + f.name);
+            File.WriteAllText(Path.Combine(Root, "fortress-ui.txt"), string.Join("\n", fonts.Concat(ui)));
         }
 
         // Fortress round where the player stands: pre-built ring of walls + turrets, waves start immediately.
@@ -511,6 +519,72 @@ namespace HtfFortress
             float boat = BoatManager.Boat ? Vector3.Distance(BoatManager.Boat.HiddenPhysicsRig.position, island.DockPos) : -1f;
             Note($"respawn: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.DockPos):F1} m from dock, boat {boat:F1} m from dock");
             FortressPlugin.Shot("coop_results");
+            yield return new WaitForSecondsRealtime(1f);
+        }
+
+        // A screenshot of every piece of fortress UI.
+        private IEnumerator UiScenario()
+        {
+            var island = FortressIsland.Instance;
+            var plugin = FortressPlugin.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            PlayerManager.ToggleGodMode();
+            IgnorePlayers = true;
+            var me = Player.LocalPlayer;
+            Vector3 center = island.Center;
+            Loot.Instance.ServerGive(Gear.Gunpowder, Rarity.Legendary);
+            Loot.Instance.ServerGive(Gear.SharkArmor, Rarity.Epic, 3);
+            Loot.Instance.ServerGive(Gear.Rebar, Rarity.Rare, 2);
+            Loot.Instance.ServerGive(Gear.LuckyCharm, Rarity.Common, 4);
+
+            // Lobby: the top bar explains how to start; at the vault door, the prompt.
+            Vector3 door = island.VaultPos + Quaternion.Euler(0f, -20f, 0f) * new Vector3(0f, 0f, 2.6f);
+            me.LocalTeleport(door + Vector3.up * 0.5f, YawTo(door, island.VaultPos), true);
+            yield return new WaitForSecondsRealtime(2f);
+            FortressPlugin.Shot("ui_lobby_prompt");
+            yield return new WaitForSecondsRealtime(0.5f);
+            VaultUI.Instance.Open();
+            VaultUI.Instance.DebugSelect(Gear.SharkArmor, Rarity.Epic);
+            yield return new WaitForSecondsRealtime(1f);
+            FortressPlugin.Shot("ui_vault");
+            yield return new WaitForSecondsRealtime(0.5f);
+            VaultUI.Instance.Close();
+
+            // Build time: cards, key hints, and the look-at panel on a turret in front of us.
+            me.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => plugin.Running, 15f, "round start");
+            Siege.Instance.ServerAddCoins(3000);
+            SpendLikeAPlayer(center);
+            float g0 = FortressIsland.GapAngles[0] * Mathf.Deg2Rad;
+            Vector3 gd = new Vector3(Mathf.Cos(g0), 0f, Mathf.Sin(g0));
+            Vector3 turretAt = center + gd * 10f + Vector3.Cross(Vector3.up, gd) * 0.7f * BuildSystem.Cell;
+            Vector3 eye = turretAt - gd * 3.2f + Vector3.up * 0.2f;
+            BuildSystem.Instance.DebugSetBuilding(true, PieceType.Cannon);
+            yield return Look(eye, YawTo(eye, turretAt), "ui_build_look", 1.2f);
+            Vector3 open = center + new Vector3(0f, 0.5f, -8f);
+            yield return Look(open, 180f, "ui_build", 1.2f);
+            BuildSystem.Instance.DebugSetBuilding(false, PieceType.Wall);
+
+            // A wave: top bar, phase, net panel, edge arrows; the wave banner.
+            plugin.SkipBuildTime();
+            yield return new WaitForSecondsRealtime(1.2f);
+            FortressPlugin.Shot("ui_banner");
+            yield return new WaitForSecondsRealtime(5f);
+            yield return Look(center + new Vector3(0f, 0.5f, -3f), 180f, "ui_fight", 0.5f);
+
+            // The boss bar.
+            plugin.DebugKillAll();
+            yield return Until(() => plugin.InBuildTime, 10f, "wave cleared");
+            plugin.DebugJumpToWave(10);
+            yield return Until(() => Counters.ContainsKey("spawned_Boss"), 20f, "boss");
+            yield return new WaitForSecondsRealtime(2f);
+            FortressPlugin.Shot("ui_boss");
+            yield return new WaitForSecondsRealtime(1f);
+
+            // Results (alive, so the panel shows right away).
+            plugin.TestKey(UnityEngine.InputSystem.Key.F9, false);
+            yield return new WaitForSecondsRealtime(1.5f);
+            FortressPlugin.Shot("ui_results");
             yield return new WaitForSecondsRealtime(1f);
         }
 
