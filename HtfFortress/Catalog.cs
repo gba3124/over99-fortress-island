@@ -47,8 +47,8 @@ namespace HtfFortress
             return baseCost * level;
         }
 
-        // Repairing back to full costs 1 coin per 10 missing HP (at least 1).
-        public static int RepairCost(int hp, int maxHp) => Mathf.Max(1, Mathf.CeilToInt((maxHp - hp) / 10f));
+        // Repairing back to full costs 1 coin per 5 missing HP (at least 1).
+        public static int RepairCost(int hp, int maxHp) => Mathf.Max(1, Mathf.CeilToInt((maxHp - hp) / 5f));
 
         public static int MaxHp(PieceType t, int level)
         {

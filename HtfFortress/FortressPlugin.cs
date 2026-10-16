@@ -153,9 +153,9 @@ namespace HtfFortress
             {
                 if (!d) { killed--; continue; } // despawned (retreated / cleaned up), not killed: no reward
                 bool tagged = Enemies.Instance.TryGet(d, out var tag);
-                int r = tagged ? Enemies.StatsOf(tag).Reward + _wave / 2 : _killReward.Value;
+                int r = tagged ? Enemies.StatsOf(tag).Reward + _wave / 4 : _killReward.Value;
                 reward += r;
-                FortressNet.Instance.ServerAddCorpse(d, 2 + r / 2); // the body is worth a bit more if you net it and sell it
+                FortressNet.Instance.ServerAddCorpse(d, 1 + r / 4); // the body is worth a little extra if you net it and sell it
                 Enemies.Instance.ServerForget(d);
             }
             _alive.RemoveAll(c => !c || c._hp.Value <= 0);
@@ -282,7 +282,8 @@ namespace HtfFortress
             int players = Mathf.Max(1, PlayerManager.Players.Count);
             float crowd = 1f + 0.4f * (players - 1);
             int land = Mathf.RoundToInt((_baseCount.Value + _countPerWave.Value * (wave - 1) + 2 * Mathf.Max(0, wave - 8)) * crowd);
-            float hpMult = 1f + _hpPerWave.Value * (wave - 1);
+            // Linear growth plus a gentle square term so late waves really bite.
+            float hpMult = 1f + _hpPerWave.Value * (wave - 1) + 0.03f * (wave - 1) * (wave - 1);
             bool bossWave = wave % 10 == 0, eliteWave = !bossWave && (wave % 5 == 0 || (wave > 10 && wave % 3 == 0));
             int elites = eliteWave ? 2 + wave / 10 : 0;
 
