@@ -14,7 +14,7 @@ namespace HtfFortress
     public enum IslandUnlock { AfterFinalBoss, Always }
 
     // Host -> everyone when a round ends.
-    public struct RoundResult : IBroadcast { public int Waves; public int Kills; public int Built; public int Best; public bool NewRecord; public bool CoreLost; }
+    public struct RoundResult : IBroadcast { public int Waves; public int Kills; public int Built; public int Best; public bool NewRecord; public bool CoreLost; public string Table; }
 
     // The fortress island: a Blender-made island every client builds locally off the coast of the current island,
     // shown on the radar once unlocked. Stand in the glowing circle by the lighthouse to start a round.
@@ -60,8 +60,8 @@ namespace HtfFortress
 
         static FortressIsland()
         {
-            GenericWriter<RoundResult>.SetWrite((w, v) => { w.WriteInt32(v.Waves); w.WriteInt32(v.Kills); w.WriteInt32(v.Built); w.WriteInt32(v.Best); w.WriteBoolean(v.NewRecord); w.WriteBoolean(v.CoreLost); });
-            GenericReader<RoundResult>.SetRead(r => new RoundResult { Waves = r.ReadInt32(), Kills = r.ReadInt32(), Built = r.ReadInt32(), Best = r.ReadInt32(), NewRecord = r.ReadBoolean(), CoreLost = r.ReadBoolean() });
+            GenericWriter<RoundResult>.SetWrite((w, v) => { w.WriteInt32(v.Waves); w.WriteInt32(v.Kills); w.WriteInt32(v.Built); w.WriteInt32(v.Best); w.WriteBoolean(v.NewRecord); w.WriteBoolean(v.CoreLost); w.WriteString(v.Table ?? ""); });
+            GenericReader<RoundResult>.SetRead(r => new RoundResult { Waves = r.ReadInt32(), Kills = r.ReadInt32(), Built = r.ReadInt32(), Best = r.ReadInt32(), NewRecord = r.ReadBoolean(), CoreLost = r.ReadBoolean(), Table = r.ReadString() });
         }
 
         private void Awake() => Instance = this;
@@ -229,11 +229,14 @@ namespace HtfFortress
         // ---------- host: where enemies come from ----------
 
         // A beach in one of the three rock gaps, a little inside the waterline.
-        public bool WalkerSpawn(out Vector3 pos)
+        public bool WalkerSpawn(out Vector3 pos) => WalkerSpawn(-1, out pos);
+
+        // gap = 0..2 for a specific beach, -1 for any.
+        public bool WalkerSpawn(int gap, out Vector3 pos)
         {
             for (int i = 0; i < 10; i++)
             {
-                float a = (GapAngles[Random.Range(0, GapAngles.Length)] + Random.Range(-6f, 6f)) * Mathf.Deg2Rad;
+                float a = (GapAngles[gap >= 0 ? gap % GapAngles.Length : Random.Range(0, GapAngles.Length)] + Random.Range(-6f, 6f)) * Mathf.Deg2Rad;
                 float r = Random.Range(23.5f, 26f);
                 Vector3 p = Center + new Vector3(Mathf.Cos(a) * r, 10f, Mathf.Sin(a) * r);
                 if (Physics.Raycast(p, Vector3.down, out var rh, 20f, GameInfo.LevelLayer) && rh.point.y > WaterManager.GetWaterHeight(rh.point) + 0.2f)
@@ -278,13 +281,36 @@ namespace HtfFortress
         {
             if (!_results) _results = Hud.CreateText("FortressResults", new Vector2(0.5f, 0.5f), new Vector2(0f, 40f), 34f, TextAlignmentOptions.Center);
             if (!_results) return;
-            _results.rectTransform.sizeDelta = new Vector2(1000f, 400f);
+            _results.rectTransform.sizeDelta = new Vector2(1100f, 700f);
             _results.text = L10n.T(r.CoreLost ? "resultCore" : "resultWipe") + "\n\n"
                           + L10n.T("resultStats", r.Waves, r.Kills, r.Built) + "\n"
                           + (r.NewRecord ? L10n.T("resultRecord") : L10n.T("resultBest", r.Best)) + "\n\n"
+                          + PlayerTable(r.Table) + "\n"
                           + L10n.T("resultAgain");
-            _resultsUntil = Time.time + 12f;
+            _resultsUntil = Time.time + 18f;
             Fx.Sound(r.NewRecord ? "CasinoWinEpic" : "Death", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Center, 1f, AudioDistance.Long);
+        }
+
+        // Per-player rows plus MVP titles (each title only when someone actually earned it).
+        private static string PlayerTable(string table)
+        {
+            var rows = Stats.Parse(table);
+            if (rows.Count == 0) return "";
+            var sb = new System.Text.StringBuilder("<size=80%>");
+            sb.AppendLine(L10n.T("tableHeader"));
+            foreach (var row in rows.OrderByDescending(x => x.Kills + x.TurretKills))
+                sb.AppendLine($"{row.Name}   {row.Kills}   {row.TurretKills}   {row.Fished}   {row.Built}   {row.Downs}");
+            void Mvp(string key, Stats.Row best, int value) { if (best != null && value > 0) sb.AppendLine("<color=#ffd75a>" + L10n.T(key) + "</color>  " + best.Name + "  (" + value + ")"); }
+            if (rows.Count > 1 || AutoTest.Running)
+            {
+                sb.AppendLine();
+                var k = rows.OrderByDescending(x => x.Kills).First(); Mvp("mvpKills", k, k.Kills);
+                var t = rows.OrderByDescending(x => x.TurretKills + x.Built).First(); Mvp("mvpBuilder", t, t.TurretKills);
+                var f = rows.OrderByDescending(x => x.Fished).First(); Mvp("mvpFisher", f, f.Fished);
+                var s = rows.OrderBy(x => x.Downs).ThenByDescending(x => x.Kills).First(); if (s.Downs == 0) sb.AppendLine("<color=#ffd75a>" + L10n.T("mvpSurvivor") + "</color>  " + s.Name);
+            }
+            sb.Append("</size>");
+            return sb.ToString();
         }
 
         private void LateUpdate()

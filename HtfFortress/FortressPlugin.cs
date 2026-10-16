@@ -41,6 +41,7 @@ namespace HtfFortress
         private readonly HashSet<Creature> _required = new HashSet<Creature>();
         private float _waveStarted;
         private bool _requiredSpawned;
+        private bool _spawning;
         private List<Item> _poolPrefabs = new List<Item>();
         private List<Item> _walkerPrefabs = new List<Item>();
         private bool _running;
@@ -140,6 +141,7 @@ namespace HtfFortress
             if (PlayerManager.AlivePlayers.Count > 0) _hadAlivePlayers = true;
             else if (_hadAlivePlayers && _wave > 0) { Stop(L10n.T("wipe")); return; }
             if (Siege.Instance.CoreDestroyed) { Stop(L10n.T("coreDown")); return; }
+            Stats.TrackDowns();
 
             // Creature.Hp is only filled in OnStartClient; the synced _hp is valid from spawn.
             // Anything that wandered far from the fight (or a sea creature that swam off) is removed.
@@ -152,16 +154,17 @@ namespace HtfFortress
             foreach (var d in dead)
             {
                 if (!d) { killed--; continue; } // despawned (retreated / cleaned up), not killed: no reward
+                Stats.Killed(d);
                 bool tagged = Enemies.Instance.TryGet(d, out var tag);
                 int r = tagged ? Enemies.StatsOf(tag).Reward + _wave / 4 : _killReward.Value;
                 reward += r;
-                FortressNet.Instance.ServerAddCorpse(d, 1 + r / 4); // the body is worth a little extra if you net it and sell it
+                FortressNet.Instance.ServerAddCorpse(d, 2 + r); // most of the money is in the bodies: someone has to go fishing
                 Enemies.Instance.ServerForget(d);
             }
             _alive.RemoveAll(c => !c || c._hp.Value <= 0);
             _required.RemoveWhere(c => !c || c._hp.Value <= 0);
             // Wave is over when the land attackers are dead (or, if a wave had none, everything), or after 3 minutes for extras.
-            bool waveDone = _wave > 0 && _nextWaveAt == 0f && (_requiredSpawned ? _required.Count == 0 : _alive.Count == 0);
+            bool waveDone = _wave > 0 && _nextWaveAt == 0f && !_spawning && (_requiredSpawned ? _required.Count == 0 : _alive.Count == 0);
             if (_wave > 0 && _nextWaveAt == 0f && Time.time - _waveStarted > 180f && _required.Count == 0) waveDone = true;
             // Hard cap: a wave never lasts more than 4 minutes (stragglers leave, no reward).
             if (_wave > 0 && _nextWaveAt == 0f && Time.time - _waveStarted > 240f)
@@ -213,12 +216,14 @@ namespace HtfFortress
             _warnedNoLand = false;
             _hadAlivePlayers = false;
             _kills = 0;
+            Stats.Reset();
             BuildSystem.Instance.RoundBuilt = 0;
             _nextWaveAt = 0f;
             _alive.Clear();
             Siege.Instance.ServerStart(corePos);
             Say(L10n.T("start", _bestWave.Value));
             Say(L10n.T("startHint", BuildSystem.BuildKey.Value, _readyKey.Value));
+            Say(L10n.T("fishTip"));
             Shot("start", 2f);
         }
 
@@ -229,6 +234,7 @@ namespace HtfFortress
             foreach (var c in _alive.Where(c => c && c.IsSpawned)) c.DestroyItem();
             _alive.Clear();
             _required.Clear();
+            _spawning = false;
             Enemies.Instance.ServerClear();
             FortressNet.Instance.ServerReset();
             Siege.Instance.ServerStop();
@@ -237,7 +243,7 @@ namespace HtfFortress
             if (record) _bestWave.Value = _cleared;
             Say(L10n.T("result", why, _cleared) + recordText);
             // Everyone sees the results panel; the field is cleared for the next round.
-            InstanceFinder.ServerManager.Broadcast(new RoundResult { Waves = _cleared, Kills = _kills, Built = BuildSystem.Instance.RoundBuilt, Best = _bestWave.Value, NewRecord = record, CoreLost = coreLost });
+            InstanceFinder.ServerManager.Broadcast(new RoundResult { Waves = _cleared, Kills = _kills, Built = BuildSystem.Instance.RoundBuilt, Best = _bestWave.Value, NewRecord = record, CoreLost = coreLost, Table = Stats.Table() });
             BuildSystem.Instance.ServerClearAll();
         }
 
@@ -297,34 +303,51 @@ namespace HtfFortress
             bool island = FortressIsland.Instance.Exists && FortressIsland.Instance.OnIsland(core);
             Item walkerPrefab = _walkerPrefabs.FirstOrDefault();
 
-            foreach (var (kind, elite) in plan)
-            {
-                if (!walkerPrefab) break;
-                Vector3 pos;
-                if (kind == EnemyKind.Spitter && island) pos = FortressIsland.Instance.SpitterSpot();
-                else if (island) { if (!FortressIsland.Instance.WalkerSpawn(out pos)) continue; }
-                else if (!FindLandAround(core, _walkerRadius.Value, out pos)) { if (!_warnedNoLand) { _warnedNoLand = true; Say(L10n.T("noLand")); } continue; }
-                var c = SpawnCreature(walkerPrefab, pos, 0f, Enemies.StatsOf(new EnemyTag { Kind = kind, Elite = elite }).BaseHp * hpMult);
-                Enemies.Instance.ServerTag(c, kind, elite);
-                Siege.Instance.RegisterWalker(c);
-                _required.Add(c);
-                _requiredSpawned = true;
-                AutoTest.Count("spawned_" + kind + (elite ? "_elite" : ""));
-            }
-            for (int i = 0; i < extras; i++)
-            {
-                Item prefab = _poolPrefabs[UnityEngine.Random.Range(0, _poolPrefabs.Count)];
-                Vector3 pos = island ? FortressIsland.Instance.SeaSpawn() : FindSpawnPos(host, _radius.Value, WalksOnLand(prefab.GetComponent<Creature>()));
-                SpawnCreature(prefab, pos, 0f, 25f * hpMult); // harassers: about a walker's health
-                AutoTest.Count("sea_spawned");
-            }
-
-            Say(L10n.T("wave", wave, _alive.Count, hpMult.ToString("0.##")));
+            // Three bursts, 6 s apart, spread evenly over the three beaches so the team has to split up.
+            int gapStart = UnityEngine.Random.Range(0, 3);
+            var shuffled = plan.OrderBy(_ => UnityEngine.Random.value).ToList();
+            _spawning = true;
+            _requiredSpawned = shuffled.Count > 0;
+            StartCoroutine(SpawnBursts(shuffled, gapStart, hpMult, island, core, walkerPrefab, extras, host, wave));
+            Say(L10n.T("wave", wave, plan.Count + extras, hpMult.ToString("0.##")));
             Fx.Announce(bossWave ? "bossBanner" : eliteWave ? "eliteBanner" : "waveBanner", wave);
             Shot("wave" + wave, 4f);
         }
 
         // hp > 0 sets an absolute health; otherwise the game's own max health times hpMult.
+        private IEnumerator SpawnBursts(List<(EnemyKind kind, bool elite)> plan, int gapStart, float hpMult, bool island, Vector3 core, Item walkerPrefab, int extras, Vector3 host, int wave)
+        {
+            for (int burst = 0; burst < 3; burst++)
+            {
+                if (!_running || _wave != wave) break;
+                for (int i = burst; i < plan.Count; i += 3)
+                {
+                    var (kind, elite) = plan[i];
+                    if (!walkerPrefab) break;
+                    int gap = (gapStart + i) % 3;
+                    Vector3 pos;
+                    if (kind == EnemyKind.Spitter && island) pos = FortressIsland.Instance.SpitterSpot();
+                    else if (island) { if (!FortressIsland.Instance.WalkerSpawn(gap, out pos)) continue; }
+                    else if (!FindLandAround(core, _walkerRadius.Value, out pos)) { if (!_warnedNoLand) { _warnedNoLand = true; Say(L10n.T("noLand")); } continue; }
+                    var c = SpawnCreature(walkerPrefab, pos, 0f, Enemies.StatsOf(new EnemyTag { Kind = kind, Elite = elite }).BaseHp * hpMult);
+                    Enemies.Instance.ServerTag(c, kind, elite);
+                    Siege.Instance.RegisterWalker(c);
+                    _required.Add(c);
+                    AutoTest.Count("spawned_" + kind + (elite ? "_elite" : ""));
+                }
+                if (burst == 0)
+                    for (int i = 0; i < extras; i++)
+                    {
+                        Item prefab = _poolPrefabs[UnityEngine.Random.Range(0, _poolPrefabs.Count)];
+                        Vector3 pos = island ? FortressIsland.Instance.SeaSpawn() : FindSpawnPos(host, _radius.Value, WalksOnLand(prefab.GetComponent<Creature>()));
+                        SpawnCreature(prefab, pos, 0f, 25f * hpMult); // harassers: about a walker's health
+                        AutoTest.Count("sea_spawned");
+                    }
+                if (burst < 2) yield return new WaitForSeconds(6f);
+            }
+            _spawning = false;
+        }
+
         private Creature SpawnCreature(Item prefab, Vector3 pos, float hpMult, float hp = 0f)
         {
             Item item = Instantiate(prefab, pos, Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f));

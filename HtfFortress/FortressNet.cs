@@ -119,6 +119,7 @@ namespace HtfFortress
                 if (net.count > 0 && (pos - crate).sqrMagnitude < CrateRadius * CrateRadius)
                 {
                     Siege.Instance.ServerAddCoins(net.value);
+                    Stats.Fished(p.ObjectId, net.value);
                     Fx.Send(FxKind.Sell, crate, crate, 0, net.value);
                     AutoTest.Count("net_sold", net.count);
                     net = default; changed = true;

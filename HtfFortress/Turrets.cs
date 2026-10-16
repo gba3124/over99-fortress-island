@@ -31,8 +31,11 @@ namespace HtfFortress
 
         private static bool Alive(Creature c) => c && c._hp.Value > 0;
 
+        private int _owner = -1;
+
         private int Dmg(int baseDmg, Creature c, Catalog.TurretStats s)
         {
+            Stats.TurretHit(c, _owner);
             float d = baseDmg * DamageMultiplier.Value;
             if (Enemies.Instance.TryGet(c, out var tag) && (tag.Kind == EnemyKind.Tank || tag.Kind == EnemyKind.Boss)) d *= s.BossMult;
             if (s.WaterMult != 1f && c.transform.position.y < WaterManager.GetWaterHeight(c.transform.position) + 0.3f) d *= s.WaterMult;
@@ -44,6 +47,7 @@ namespace HtfFortress
             _nextFire.TryGetValue(p.Id, out float next);
             if (Time.time < next) return;
             var s = Catalog.Turret(p.Type, p.Level, p.Branch);
+            _owner = BuildSystem.Instance.OwnerOf(p.Id);
             Vector3 muzzle = p.Pos + Vector3.up * 1.1f;
 
             Creature target = null;
@@ -164,6 +168,7 @@ namespace HtfFortress
                     Vector3 d = c.transform.position - p.Pos;
                     if (Mathf.Abs(d.x) < 1.6f && Mathf.Abs(d.z) < 1.6f && d.y > -0.5f && d.y < 2f)
                     {
+                        Stats.TurretHit(c, BuildSystem.Instance.OwnerOf(p.Id));
                         c.ServerChangeHp(Mathf.RoundToInt(Catalog.SpikeDamage(p.Level) * DamageMultiplier.Value));
                         Siege.Instance.Slow(c, 0.3f, 0.6f);
                         AutoTest.Count("spike_hits");

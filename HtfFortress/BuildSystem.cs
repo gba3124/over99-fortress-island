@@ -328,10 +328,18 @@ namespace HtfFortress
             Log.LogInfo("Build system registered on NetworkManager.");
         }
 
-        private void OnPlaceRequest(NetworkConnection conn, PiecePlaceRequest req, Channel ch) => ServerPlace(req.Type, req.Pos, req.RotY);
+        private void OnPlaceRequest(NetworkConnection conn, PiecePlaceRequest req, Channel ch)
+        {
+            var who = PlayerManager.Players.FirstOrDefault(p => p && p.Owner == conn);
+            ServerPlace(req.Type, req.Pos, req.RotY, who ? who.ObjectId : -1);
+        }
+
+        // Who built each piece (turret kills are credited to them).
+        private readonly Dictionary<int, int> _owner = new Dictionary<int, int>();
+        public int OwnerOf(int pieceId) => _owner.TryGetValue(pieceId, out int o) ? o : -1;
 
         // Host only. Returns false if the slot is taken or the team can't afford it.
-        public bool ServerPlace(PieceType type, Vector3 pos, float rotY)
+        public bool ServerPlace(PieceType type, Vector3 pos, float rotY, int ownerId = -1)
         {
             if (_serverPieces.Values.Any(p => Clashes(p.Type, type) && (p.Pos - pos).sqrMagnitude < 0.01f)) return false;
             if (!Siege.Instance.ServerActive || !AllowedAt(pos)) return false;
@@ -343,6 +351,9 @@ namespace HtfFortress
             _spent[state.Id] = Siege.Instance.ServerActive ? cost : 0;
             InstanceFinder.ServerManager.Broadcast(state);
             RoundBuilt++;
+            if (ownerId < 0 && Player.LocalPlayer) ownerId = Player.LocalPlayer.ObjectId;
+            _owner[state.Id] = ownerId;
+            Stats.Built(ownerId);
             AutoTest.Count("placed_" + type);
             return true;
         }

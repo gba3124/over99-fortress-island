@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using BepInEx.Configuration;
 using FishNet;
 using FishNet.Broadcast;
@@ -167,13 +168,28 @@ namespace HtfFortress
                 AutoTest.Count("unstuck");
                 return true;
             }
-            Vector3 to = _server.CorePos - pos; to.y = 0f;
+            // Players who come close get chased and bitten (bombers just blow up on them).
+            Player prey = Prey(pos, tag.Kind);
+            if (prey && tag.Kind == EnemyKind.Bomber && (prey.Transform.position - pos).sqrMagnitude < 1.8f * 1.8f)
+            {
+                Explode(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage));
+                return true;
+            }
+            Vector3 target = prey && tag.Kind != EnemyKind.Bomber ? prey.Transform.position : _server.CorePos;
+            Vector3 to = target - pos; to.y = 0f;
             float dist = to.magnitude;
             Vector3 dir = dist > 0.01f ? to / dist : fish.transform.forward;
             fish.transform.forward = dir;
 
-            float reach = CoreHitRange + 0.4f * (stats.Scale - 1f);
-            if (dist <= reach) { Halt(rig); TryAttack(fish, null, tag, stats); return true; }
+            if (prey && tag.Kind != EnemyKind.Bomber)
+            {
+                if (dist <= 1.3f + 0.5f * (stats.Scale - 1f)) { Halt(rig); Bite(fish, prey, stats); return true; }
+            }
+            else
+            {
+                float reach = CoreHitRange + 0.4f * (stats.Scale - 1f);
+                if (dist <= reach) { Halt(rig); TryAttack(fish, null, tag, stats); return true; }
+            }
 
             // Flanking: after being held at a wall for 3 s, walk sideways along it for a while looking for a way round.
             bool flanking = _flank.TryGetValue(fish, out var fl) && Time.time < fl.until;
@@ -250,6 +266,47 @@ namespace HtfFortress
             else { DamageCore(Mathf.Max(1, dmg / 2)); AutoTest.Count("walker_hit_core"); } // the lighthouse is sturdier than a wall
         }
 
+        // ---------- going after players ----------
+
+        private static float AggroRange(EnemyKind k) => k == EnemyKind.Charger || k == EnemyKind.Boss ? 7f : k == EnemyKind.Tank ? 4f : 5f;
+
+        private static Player Prey(Vector3 pos, EnemyKind kind)
+        {
+            float r = AggroRange(kind), best = r * r;
+            Player prey = null;
+            foreach (var p in PlayerManager.AlivePlayers)
+            {
+                if (!p || !p.Transform) continue;
+                float d = (p.Transform.position - pos).sqrMagnitude;
+                if (d < best && Mathf.Abs(p.Transform.position.y - pos.y) < 3f) { best = d; prey = p; }
+            }
+            return prey;
+        }
+
+        private void Bite(RunningFish fish, Player prey, EnemyStats stats)
+        {
+            _nextAttack.TryGetValue(fish, out float next);
+            if (Time.time < next) return;
+            _nextAttack[fish] = Time.time + 1.2f;
+            _progress[fish] = (fish.transform.position, Time.time);
+            int dmg = Mathf.Min(60, Mathf.RoundToInt(12f * stats.Damage * (1f + 0.05f * Mathf.Max(0, _server.Wave - 1))));
+            HurtPlayer(prey, dmg, fish.transform.forward * 4f + Vector3.up * 2f);
+        }
+
+        public static void HurtPlayer(Player p, int dmg, Vector3 force)
+        {
+            if (!p || !Server.Instance) return;
+            Server.Instance.HitPlayer(p, dmg, force, p.Transform.position, 3);
+            AutoTest.Count("player_hits");
+        }
+
+        private static void HurtPlayersAround(Vector3 at, float radius, int dmg)
+        {
+            foreach (var p in PlayerManager.AlivePlayers.ToList())
+                if (p && p.Transform && (p.Transform.position - at).sqrMagnitude <= radius * radius)
+                    HurtPlayer(p, dmg, (p.Transform.position - at).normalized * 6f + Vector3.up * 3f);
+        }
+
         public void DamageCore(int dmg) => _server.CoreHp = Mathf.Clamp(_server.CoreHp - dmg, 0, _server.CoreMax);
 
         // Bomber: blows up on whatever stopped it, hurting every piece (and the core) around.
@@ -258,6 +315,7 @@ namespace HtfFortress
             Vector3 at = fish.transform.position + Vector3.up * 0.5f;
             BuildSystem.Instance.ServerDamageArea(at, 3.5f, dmg);
             if ((at - _server.CorePos).sqrMagnitude < 4.5f * 4.5f) DamageCore(dmg / 2);
+            HurtPlayersAround(at, 3.5f, 35);
             Fx.Send(FxKind.Blast, at, at);
             fish.ServerChangeHp(100000);
             AutoTest.Count("bomber_exploded");
@@ -294,6 +352,9 @@ namespace HtfFortress
                 float d = (p.Pos - pos).sqrMagnitude;
                 if (d < best && d < 30f * 30f) { best = d; target = p.Pos; }
             }
+            // Sometimes it aims at a player in range instead of a building.
+            var mark = PlayerManager.AlivePlayers.Where(p => p && p.Transform && (p.Transform.position - pos).sqrMagnitude < 25f * 25f).OrderBy(_ => Random.value).FirstOrDefault();
+            if (mark && Random.value < 0.4f) target = mark.Transform.position;
             Vector3 face = target - pos; face.y = 0f;
             if (face.sqrMagnitude > 0.01f) fish.transform.rotation = Quaternion.LookRotation(face);
 
@@ -313,6 +374,7 @@ namespace HtfFortress
             if (!_server.Active) yield break;
             BuildSystem.Instance.ServerDamageArea(at, 1.6f, dmg);
             if ((at - _server.CorePos).sqrMagnitude < 2.5f * 2.5f) DamageCore(dmg);
+            HurtPlayersAround(at, 2f, 15);
         }
 
         // ---------- per frame ----------

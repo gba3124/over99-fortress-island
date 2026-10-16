@@ -100,6 +100,7 @@ namespace HtfFortress
                 case "build": yield return BuildScenario(); break;
                 case "balance": yield return BalanceScenario(); break;
                 case "boss": yield return BossScenario(); break;
+                case "coop": yield return CoopScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -454,6 +455,43 @@ namespace HtfFortress
                 yield return new WaitForSecondsRealtime(1f);
             }
             Note($"boss test end: wave {plugin.Wave}, building {plugin.InBuildTime}, core {Siege.Instance.CoreHp}");
+        }
+
+        // No god mode: stand outside the north wall, net corpses, see the fish bite, and read the per-player results.
+        private IEnumerator CoopScenario()
+        {
+            var island = FortressIsland.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            Vector3 center = island.Center;
+            Player.LocalPlayer.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => FortressPlugin.Instance.Running, 15f, "round start");
+            if (!FortressPlugin.Instance.Running) yield break;
+            Siege.Instance.ServerAddCoins(250);
+            SpendLikeAPlayer(center);
+            var plugin = FortressPlugin.Instance;
+            plugin.SkipBuildTime();
+            float g = FortressIsland.GapAngles[0] * Mathf.Deg2Rad;
+            Vector3 gapDir = new Vector3(Mathf.Cos(g), 0f, Mathf.Sin(g));
+            float end = Time.realtimeSinceStartup + 240f;
+            bool shotBite = false;
+            while (Time.realtimeSinceStartup < end && plugin.Running)
+            {
+                if (plugin.InBuildTime) { SpendLikeAPlayer(center); plugin.SkipBuildTime(); }
+                var me = Player.LocalPlayer;
+                if (PlayerManager.AlivePlayers.Contains(me))
+                {
+                    var corpse = FortressNet.Instance.ServerCorpsePositions().Where(q => island.OnIsland(q, 26f)).Cast<Vector3?>().FirstOrDefault();
+                    if (FortressNet.Instance.ServerNetCount(me.ObjectId) >= 5) me.LocalTeleport(island.CratePos + new Vector3(-1.2f, 0.3f, 0f), 0f, true);
+                    else if (corpse != null && Random.value < 0.5f) me.LocalTeleport(corpse.Value + Vector3.up * 0.5f, 0f, true);
+                    else { Vector3 stand = center + gapDir * 18f; me.LocalTeleport(stand, YawTo(stand, center + gapDir * 26f), true); }
+                }
+                if (!shotBite && AutoTest.Counters.TryGetValue("player_hits", out int hits) && hits > 0) { shotBite = true; FortressPlugin.Shot("coop_bitten"); }
+                yield return new WaitForSecondsRealtime(1.5f);
+            }
+            Note($"coop end: wave {plugin.Wave}, running {plugin.Running}, my hp {Player.LocalPlayer.Vitals.Health}, alive {PlayerManager.AlivePlayers.Count}");
+            yield return new WaitForSecondsRealtime(2f);
+            FortressPlugin.Shot("coop_results");
+            yield return new WaitForSecondsRealtime(1f);
         }
 
         private static string BuildPoolProbe()
