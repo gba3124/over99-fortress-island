@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>HtfFortress</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <!-- Pixel Port install of How to Fish -->
+    <GameDir>$(HOME)/Library/Application Support/PixelPort/GameData/prefixes/free-steam/drive_c/Program Files (x86)/Steam/steamapps/common/How to Fish/How to Fish</GameDir>
+    <Managed>$(GameDir)/How to Fish_Data/Managed</Managed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx" HintPath="$(GameDir)/BepInEx/core/BepInEx.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(GameDir)/BepInEx/core/0Harmony.dll" Private="false" />
+    <Reference Include="Assembly-CSharp" HintPath="$(Managed)/Assembly-CSharp.dll" Private="false" />
+    <Reference Include="FishNet.Runtime" HintPath="$(Managed)/FishNet.Runtime.dll" Private="false" />
+    <Reference Include="Unity.InputSystem" HintPath="$(Managed)/Unity.InputSystem.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(Managed)/UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(Managed)/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.PhysicsModule" HintPath="$(Managed)/UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="UnityEngine.IMGUIModule" HintPath="$(Managed)/UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="UnityEngine.TextRenderingModule" HintPath="$(Managed)/UnityEngine.TextRenderingModule.dll" Private="false" />
+    <Reference Include="UnityEngine.UIModule" HintPath="$(Managed)/UnityEngine.UIModule.dll" Private="false" />
+    <Reference Include="UnityEngine.UI" HintPath="$(Managed)/UnityEngine.UI.dll" Private="false" />
+    <Reference Include="Unity.TextMeshPro" HintPath="$(Managed)/Unity.TextMeshPro.dll" Private="false" />
+    <Reference Include="Unity.Localization" HintPath="$(Managed)/Unity.Localization.dll" Private="false" />
+    <Reference Include="Unity.ResourceManager" HintPath="$(Managed)/Unity.ResourceManager.dll" Private="false" />
+  </ItemGroup>
+
+  <!-- Copy the built plugin straight into the game's BepInEx/plugins -->
+  <Target Name="Deploy" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins/HtfFortress" />
+  </Target>
+
+</Project>
