@@ -40,12 +40,16 @@ namespace HtfFortress
         {
             Stats.TurretHit(c, _owner);
             float d = baseDmg * DamageMultiplier.Value * (1f + Perks.Team(Gear.Gunpowder));
-            if (Perks.TeamLegend(Gear.Scope) && Random.value < 0.1f) { d *= 3f; AutoTest.Count("legend_crits"); } // legendary: 10% crits
-            if (Perks.TeamLegend(Gear.FrostCore) && Random.value < 0.06f) { Siege.Instance.Slow(c, 1f, 1.5f); AutoTest.Count("legend_freezes"); } // legendary: freeze
-            if (!Perks.TeamLegend(Gear.ApRounds) && Enemies.Instance.TryGet(c, out var st) && st.Kind == EnemyKind.Shield) // legendary AP ignores shields
+            if (Perks.TeamLegend(Gear.Scope) && Random.value < 0.1f) { d *= 3f; AutoTest.Count("legend_crits"); Perks.Proc(Gear.Scope, c.transform.position); } // legendary: 10% crits
+            if (Perks.TeamLegend(Gear.FrostCore) && Random.value < 0.06f) { Siege.Instance.Slow(c, 1f, 1.5f); AutoTest.Count("legend_freezes"); Perks.Proc(Gear.FrostCore, c.transform.position); } // legendary: freeze
+            if (Enemies.Instance.TryGet(c, out var st) && st.Kind == EnemyKind.Shield)
             {
                 Vector3 toTurret = _from - c.transform.position; toTurret.y = 0f;
-                if (toTurret.sqrMagnitude > 0.01f && Vector3.Angle(c.transform.forward, toTurret) < 70f) { d *= 0.2f; AutoTest.Count("shield_blocks"); }
+                if (toTurret.sqrMagnitude > 0.01f && Vector3.Angle(c.transform.forward, toTurret) < 70f)
+                {
+                    if (Perks.TeamLegend(Gear.ApRounds)) Perks.Proc(Gear.ApRounds, c.transform.position); // legendary AP goes straight through
+                    else { d *= 0.2f; AutoTest.Count("shield_blocks"); }
+                }
             }
             if (Enemies.Instance.TryGet(c, out var tag) && (tag.Kind == EnemyKind.Tank || EnemyCatalog.IsBoss(tag.Kind))) d *= s.BossMult * (1f + Perks.Team(Gear.ApRounds));
             Siege.Instance.Slow(c, Perks.Team(Gear.FrostCore), 1.5f);
@@ -161,7 +165,7 @@ namespace HtfFortress
                         hitSet.Add(cur);
                         int zd = Dmg(s.Damage, cur, s);
                         Hit(cur, zd);
-                        if (Perks.TeamLegend(Gear.TeslaCoil)) Siege.Instance.Slow(cur, 1f, 0.35f); // legendary: every zap stuns
+                        if (Perks.TeamLegend(Gear.TeslaCoil)) { Siege.Instance.Slow(cur, 1f, 0.35f); Perks.Proc(Gear.TeslaCoil, cur.transform.position); } // legendary: every zap stuns
                         Vector3 to = cur.transform.position + Vector3.up * 0.4f;
                         Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0, zd);
                         from = to;
@@ -199,7 +203,7 @@ namespace HtfFortress
             if (spread && Perks.TeamLegend(Gear.Incendiary))
             {
                 var next = FortressPlugin.Alive.Where(x => x != c && Alive(x) && !_burning.ContainsKey(x) && (x.transform.position - c.transform.position).sqrMagnitude < 2.5f * 2.5f).FirstOrDefault();
-                if (next) Ignite(next, false);
+                if (next) { Ignite(next, false); Perks.Proc(Gear.Incendiary, next.transform.position); }
             }
         }
 
@@ -235,6 +239,7 @@ namespace HtfFortress
             foreach (var x in FortressPlugin.Alive.Where(x => x != c && Alive(x) && (x.transform.position - at).sqrMagnitude < 2.5f * 2.5f).ToList())
                 x.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(dmg * 0.3f)));
             Fx.Send(FxKind.Blast, at, at);
+            Perks.Proc(Gear.Gunpowder, at);
             AutoTest.Count("legend_bursts");
             _bursting = false;
         }

@@ -77,7 +77,7 @@ namespace HtfFortress
             var (g, r) = eq.Value;
             ulong key = Loot.KeyOf(who);
             if (_readyAt.TryGetValue(key, out float at) && Time.time < at) return false;
-            float v = GearCatalog.Value(g, r);
+            float v = Loot.Instance.Vault.ValueOf(g, r); // enhanced legendaries hit harder
             Vector3 pos = who.Transform.position, fwd = who.Transform.forward; fwd.y = 0f;
             switch (g)
             {
@@ -117,7 +117,7 @@ namespace HtfFortress
             if (!show) { if (_panel) _panel.gameObject.SetActive(false); return; }
             if (!_panel)
             {
-                _panel = Hud.Box(Hud.Root, new Vector2(1f, 0f), new Vector2(-24f, 236f), new Vector2(320f, 62f), Hud.Panel, 16f);
+                _panel = Hud.Box(Hud.Root, new Vector2(1f, 0f), new Vector2(-24f, 264f), new Vector2(320f, 62f), Hud.Panel, 16f); // above the net and its hint line
                 _label = Hud.Label(_panel.transform, "", 21f, new Vector2(0f, 1f), new Vector2(14f, -8f), new Vector2(300f, 30f), TextAlignmentOptions.TopLeft, pivot: new Vector2(0f, 1f));
                 _bar = Hud.Bar.Make(_panel.transform, new Vector2(0f, 0f), new Vector2(14f, 12f), new Vector2(292f, 10f), Hud.Accent);
             }

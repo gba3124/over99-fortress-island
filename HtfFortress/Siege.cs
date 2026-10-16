@@ -524,7 +524,7 @@ namespace HtfFortress
             {
                 BuildSystem.Instance.ServerDamage(wall, Mathf.RoundToInt(dmg * stats.WallMult));
                 AutoTest.Count("walker_hit_piece");
-                if (Perks.TeamLegend(Gear.Rebar)) { fish.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(dmg * stats.WallMult * 0.3f))); AutoTest.Count("legend_thorns"); } // legendary: walls bite back
+                if (Perks.TeamLegend(Gear.Rebar)) { fish.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(dmg * stats.WallMult * 0.3f))); AutoTest.Count("legend_thorns"); Perks.Proc(Gear.Rebar, fish.transform.position); } // legendary: walls bite back
             }
             else { DamageCore(Mathf.Max(1, dmg / 2)); AutoTest.Count("walker_hit_core"); } // the lighthouse is sturdier than a wall
         }
@@ -557,7 +557,7 @@ namespace HtfFortress
             _progress[fish] = (fish.transform.position, Time.time);
             int dmg = Mathf.Min(60, Mathf.RoundToInt(12f * stats.Damage * (1f + 0.05f * Mathf.Max(0, _server.Wave - 1))));
             HurtPlayer(prey, dmg, fish.transform.forward * 4f + Vector3.up * 2f);
-            if (Perks.Legend(prey, Gear.SharkArmor)) { fish.ServerChangeHp(25); AutoTest.Count("legend_biteback"); } // legendary: bite back
+            if (Perks.Legend(prey, Gear.SharkArmor)) { fish.ServerChangeHp(25); AutoTest.Count("legend_biteback"); Perks.Proc(Gear.SharkArmor, fish.transform.position); } // legendary: bite back
         }
 
         public static void HurtPlayer(Player p, int dmg, Vector3 force)
@@ -587,6 +587,7 @@ namespace HtfFortress
             _nextRegen = Time.time + 1f;
             _server.CoreHp = Mathf.Min(_server.CoreMax, _server.CoreHp + Mathf.CeilToInt(_server.CoreMax * 0.01f));
             AutoTest.Count("legend_regen");
+            Perks.Proc(Gear.CoreShield, _server.CorePos + Vector3.up * 4f);
         }
 
         // Bomber: blows up on whatever stopped it, hurting every piece (and the core) around.

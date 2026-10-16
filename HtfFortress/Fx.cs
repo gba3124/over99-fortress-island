@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace HtfFortress
 {
-    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce, Harpoon, Mortar, Zap, Burn, Scoop, Sell, Heal, Dust, Wave, Decoy, Snipe, Flame }
+    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce, Harpoon, Mortar, Zap, Burn, Scoop, Sell, Heal, Dust, Wave, Decoy, Snipe, Flame, Proc }
 
     // Host -> everyone: a visual effect (and for Announce, a banner: Key = string key, Arg = number).
     public struct FxEvent : IBroadcast { public FxKind Kind; public Vector3 From; public Vector3 To; public int PieceId; public string Key; public int Arg; }
@@ -74,7 +74,7 @@ namespace HtfFortress
                 }
                 return;
             }
-            if (e.Arg > 0) { try { PlayerUI.AddDamageNumber(e.To + Vector3.up * 0.8f, e.Arg, false); } catch { } }
+            if (e.Arg > 0 && e.Kind != FxKind.Proc && e.Kind != FxKind.Decoy) { try { PlayerUI.AddDamageNumber(e.To + Vector3.up * 0.8f, e.Arg, false); } catch { } }
             if (!_tracer)
             {
                 _tracer = Models.Make(new Color(1f, 0.85f, 0.4f), new Color(1f, 0.7f, 0.2f));
@@ -105,6 +105,7 @@ namespace HtfFortress
                 case FxKind.Dust: StartCoroutine(Blast(e.To, 2.2f, _dust)); SoundRandom("ItemImpactHeavy_V", 1, 3, e.To, 0.8f); break;
                 case FxKind.Wave: StartCoroutine(Blast(e.To, 6f, _water)); SoundRandom("WhaleLanding_0", 1, 3, e.To, 1f, AudioDistance.Long); break;
                 case FxKind.Decoy: StartCoroutine(Duck(e.To, e.Arg)); break;
+                case FxKind.Proc: GearCards.Instance.Proc((Gear)e.Arg, e.To); break;
                 case FxKind.Snipe: StartCoroutine(Tracer(e.From, e.To)); SoundRandom("SniperrifleFireOutside_V", 1, 4, e.From, 0.9f, AudioDistance.Long); break;
                 case FxKind.Flame:
                     for (int i = 1; i <= 3; i++) StartCoroutine(Blast(Vector3.Lerp(e.From, e.To, i / 3f), 0.6f + 0.35f * i, _fire));

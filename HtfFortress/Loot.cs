@@ -15,7 +15,7 @@ namespace HtfFortress
     // Host -> everyone: the whole vault (VaultData text).
     public struct VaultState : IBroadcast { public string Data; }
 
-    public enum VaultAction : byte { Merge, EquipFortress, EquipPersonal, UnequipFortress, UnequipPersonal }
+    public enum VaultAction : byte { Merge, EquipFortress, EquipPersonal, UnequipFortress, UnequipPersonal, Salvage, Ascend, Enhance }
     // Client -> host: one vault action.
     public struct VaultRequest : IBroadcast { public VaultAction Action; public Gear Gear; public Rarity Rarity; public byte Slot; }
 
@@ -137,16 +137,22 @@ namespace HtfFortress
         // ---------- host: drops and chests ----------
 
         // An enemy died: maybe it leaves a piece of gear where it fell (the killer's lucky charm raises the odds).
+        // From wave 2 on, the first kill of a round that hasn't dropped anything yet always does.
+        private int _roundDrops;
+        public void ServerNewRound() => _roundDrops = 0;
+
         public void ServerOnKill(Vector3 pos, EnemyKind kind, bool elite, int killerId, int wave)
         {
-            float chance = EnemyCatalog.IsBoss(kind) ? 1f : elite ? 0.25f : 0.03f;
+            float chance = EnemyCatalog.IsBoss(kind) ? 1f : elite ? 0.35f : 0.06f;
+            if (_roundDrops == 0 && wave >= 2) chance = 1f;
             var killer = PlayerManager.Players.FirstOrDefault(p => p && p.ObjectId == killerId);
             if (killer) chance *= Mathf.Max(1f, Vault.PersonalValue(KeyOf(killer), Gear.LuckyCharm));
             if (EnemyCatalog.IsBoss(kind)) ServerUnlockRandom(killer); // every boss leaves a blueprint while any are left
             if (Random.value >= chance) return;
             Rarity r = GearCatalog.Roll(wave, EnemyCatalog.IsBoss(kind) ? Rarity.Epic : Rarity.Common);
-            if (killer && Perks.Legend(killer, Gear.LuckyCharm) && r < Rarity.Legendary) r++; // legendary: one rarity better
+            if (killer && Perks.Legend(killer, Gear.LuckyCharm) && r < Rarity.Legendary) { r++; Perks.Proc(Gear.LuckyCharm, pos); } // legendary: one rarity better
             Drop(GearCatalog.RandomGear(), r, pos);
+            _roundDrops++;
         }
 
         private void Drop(Gear g, Rarity r, Vector3 pos)
@@ -299,6 +305,27 @@ namespace HtfFortress
                     slots.Add((g, r));
                     Vault.Names[key] = NameOf(who);
                     break;
+                case VaultAction.Salvage:
+                    if (Vault.Count(g, r) < 1) return;
+                    Vault.Add(g, r, -1);
+                    Vault.Scales += GearCatalog.SalvageScales[(int)r];
+                    AutoTest.Count("salvaged");
+                    break;
+                case VaultAction.Ascend:
+                    int cost = GearCatalog.AscendCost(r);
+                    if (cost < 0 || Vault.Count(g, r) < 1 || Vault.Scales < cost) return;
+                    Vault.Add(g, r, -1);
+                    Vault.Add(g, r + 1);
+                    Vault.Scales -= cost;
+                    AutoTest.Count("ascended");
+                    break;
+                case VaultAction.Enhance:
+                    int lvl = Vault.EnhanceOf(g);
+                    if (!Vault.OwnsLegendary(g) || lvl >= GearCatalog.MaxEnhance || Vault.Scales < GearCatalog.EnhanceCosts[lvl]) return;
+                    Vault.Scales -= GearCatalog.EnhanceCosts[lvl];
+                    Vault.Enhance[g] = lvl + 1;
+                    AutoTest.Count("enhanced");
+                    break;
                 case VaultAction.UnequipFortress:
                     if (req.Slot >= Vault.Fortress.Count) return;
                     var f0 = Vault.Fortress[req.Slot];
@@ -326,6 +353,9 @@ namespace HtfFortress
         }
 
         public string ServerVaultFile => string.IsNullOrEmpty(_loadedFor) ? null : FilePath(_loadedFor);
+
+        // Auto-test: a drop right here.
+        public void DebugDrop(Gear g, Rarity r, Vector3 pos) => Drop(g, r, pos);
 
         // Auto-test: put a piece of gear on a player even mid-round (the real menu refuses that).
         public void DebugEquip(Player who, Gear g, Rarity r)
@@ -355,6 +385,7 @@ namespace HtfFortress
                     {
                         ChatManager.ChatMessage(L10n.T("lootPicked", e.Who, GearCatalog.Label(e.Gear, e.Rarity)));
                         Fx.Sound(e.Rarity >= Rarity.Epic ? "QuestReceived" : "PickupGrab", e.Pos);
+                        if (Player.LocalPlayer && e.Who == NameOf(Player.LocalPlayer)) GearCards.Instance.ShowGear(e.Gear, e.Rarity);
                     }
                     break;
                 case LootWhat.Chest:
@@ -368,6 +399,7 @@ namespace HtfFortress
                     if (f.Length == 2 && int.TryParse(f[1], out int ir))
                         ChatManager.ChatMessage(L10n.T("chestGameItem", $"<color=#{GearCatalog.Hex((Rarity)ir)}>[{GearCatalog.RarityName((Rarity)ir)}] {L10n.T("item_" + f[0])}</color>"));
                     Fx.Sound("CasinoWinEpic", e.Pos, 1f, AudioDistance.Long);
+                    GearCards.Instance.ShowChest(Unpack(e.Data).ToList(), f.Length == 2 && int.TryParse(f[1], out int gr) ? L10n.T("item_" + f[0]) + "|" + gr : null);
                     break;
                 case LootWhat.Blueprint:
                     if (System.Enum.TryParse(e.Data, out PieceType bp))

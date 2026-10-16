@@ -58,18 +58,27 @@ namespace HtfFortress
 
         public static float Value(Gear g, Rarity r) => Values[(int)g][(int)r];
 
+        // Fish scales: what dismantling gives, what ranking up costs (never into legendary: those you find or merge),
+        // and what enhancing a legendary costs (+1..+5, 10% stronger per level).
+        public static readonly int[] SalvageScales = { 1, 3, 8, 20 };
+        public static int AscendCost(Rarity r) => r == Rarity.Common ? 4 : r == Rarity.Rare ? 10 : -1;
+        public static readonly int[] EnhanceCosts = { 15, 25, 40, 60, 90 };
+        public const int MaxEnhance = 5;
+        public const float EnhanceStep = 0.1f;
+
         private static bool IsPercent(Gear g) => !(g == Gear.Incendiary || g == Gear.TeslaCoil || g == Gear.WarChest || g == Gear.BigNet || g == Gear.LuckyCharm)
                                                  && (!IsActive(g) || g == Gear.FieldRepair);
 
-        public static string FormatValue(Gear g, Rarity r)
+        public static string FormatValue(Gear g, Rarity r) => FormatValue(g, Value(g, r));
+        public static string FormatValue(Gear g, float v)
         {
-            float v = Value(g, r);
             return IsPercent(g) ? Mathf.RoundToInt(v * 100f) + "%" : g == Gear.LuckyCharm ? "×" + v.ToString("0.##") : v.ToString("0");
         }
 
         public static string Name(Gear g) => L10n.T("gear" + g);
-        public static string Effect(Gear g, Rarity r) =>
-            L10n.T("gearFx" + g, FormatValue(g, r)) + (IsActive(g) ? "<size=85%><color=#9aa4b0>　" + L10n.T("cooldown", Cooldown(g, r).ToString("0")) + "</color></size>" : "");
+        public static string Effect(Gear g, Rarity r) => Effect(g, r, Value(g, r));
+        public static string Effect(Gear g, Rarity r, float v) =>
+            L10n.T("gearFx" + g, FormatValue(g, v)) + (IsActive(g) ? "<size=85%><color=#9aa4b0>　" + L10n.T("cooldown", Cooldown(g, r).ToString("0")) + "</color></size>" : "");
         public static string RarityName(Rarity r) => L10n.T("rarity" + r);
         public static Color Color(Rarity r) => r == Rarity.Legendary ? new Color(1f, 0.71f, 0.18f) : r == Rarity.Epic ? new Color(0.71f, 0.36f, 1f) : r == Rarity.Rare ? new Color(0.29f, 0.64f, 1f) : new Color(0.91f, 0.91f, 0.91f);
         public static string Hex(Rarity r) => ColorUtility.ToHtmlStringRGB(Color(r));
@@ -98,6 +107,15 @@ namespace HtfFortress
         public readonly Dictionary<ulong, List<(Gear, Rarity)>> Personal = new Dictionary<ulong, List<(Gear, Rarity)>>();
         public readonly Dictionary<ulong, string> Names = new Dictionary<ulong, string>();
         public readonly HashSet<PieceType> Unlocked = new HashSet<PieceType>(); // blueprint turrets the team has found
+        public int Scales;                                                      // fish scales, the team's crafting currency
+        public readonly Dictionary<Gear, int> Enhance = new Dictionary<Gear, int>(); // +levels on a kind's legendaries
+
+        public int EnhanceOf(Gear g) => Enhance.TryGetValue(g, out int n) ? n : 0;
+        // A piece's number with its enhancement (only legendaries are enhanced).
+        public float ValueOf(Gear g, Rarity r) => GearCatalog.Value(g, r) * (r == Rarity.Legendary ? 1f + GearCatalog.EnhanceStep * EnhanceOf(g) : 1f);
+        public string LabelOf(Gear g, Rarity r) => GearCatalog.Label(g, r) + (r == Rarity.Legendary && EnhanceOf(g) > 0 ? $"<color=#{GearCatalog.Hex(r)}> +{EnhanceOf(g)}</color>" : "");
+        public bool OwnsLegendary(Gear g) =>
+            Count(g, Rarity.Legendary) > 0 || Fortress.Any(f => f.Item1 == g && f.Item2 == Rarity.Legendary) || Personal.Values.Any(l => l.Any(x => x.Item1 == g && x.Item2 == Rarity.Legendary));
 
         public bool CanBuild(PieceType t) => !Catalog.NeedsBlueprint(t) || Unlocked.Contains(t);
 
@@ -111,9 +129,9 @@ namespace HtfFortress
         public List<(Gear, Rarity)> Slots(ulong player) => Personal.TryGetValue(player, out var l) ? l : (Personal[player] = new List<(Gear, Rarity)>());
 
         // Best equipped rarity of one kind of gear: fortress loadout, or one player's slots (0 if none).
-        public float FortressValue(Gear g) => Fortress.Where(x => x.Item1 == g).Select(x => GearCatalog.Value(g, x.Item2)).DefaultIfEmpty(0f).Max();
+        public float FortressValue(Gear g) => Fortress.Where(x => x.Item1 == g).Select(x => ValueOf(g, x.Item2)).DefaultIfEmpty(0f).Max();
         public float PersonalValue(ulong player, Gear g) =>
-            Personal.TryGetValue(player, out var l) ? l.Where(x => x.Item1 == g).Select(x => GearCatalog.Value(g, x.Item2)).DefaultIfEmpty(0f).Max() : 0f;
+            Personal.TryGetValue(player, out var l) ? l.Where(x => x.Item1 == g).Select(x => ValueOf(g, x.Item2)).DefaultIfEmpty(0f).Max() : 0f;
 
         public string Write()
         {
@@ -123,6 +141,8 @@ namespace HtfFortress
             foreach (var kv in Personal) foreach (var s in kv.Value) lines.Add($"pers {kv.Key} {s.Item1} {s.Item2}");
             foreach (var kv in Names) lines.Add($"name {kv.Key} {kv.Value.Replace("\n", " ")}");
             foreach (var t in Unlocked) lines.Add($"unlock {t} 1");
+            lines.Add($"scales {Scales} 0");
+            foreach (var kv in Enhance) lines.Add($"enh {kv.Key} {kv.Value}");
             return string.Join("\n", lines);
         }
 
@@ -142,6 +162,8 @@ namespace HtfFortress
                         case "pers": v.Slots(ulong.Parse(f[1])).Add((P<Gear>(f[2]), P<Rarity>(f[3]))); break;
                         case "name": v.Names[ulong.Parse(f[1])] = f.Length > 3 ? f[2] + " " + f[3] : f[2]; break;
                         case "unlock": v.Unlocked.Add(P<PieceType>(f[1])); break;
+                        case "scales": v.Scales = int.Parse(f[1]); break;
+                        case "enh": v.Enhance[P<Gear>(f[1])] = int.Parse(f[2]); break;
                     }
                 }
                 catch (Exception) { } // one bad line never loses the rest of the vault
@@ -167,6 +189,15 @@ namespace HtfFortress
         public static bool Legend(Player p, Gear g) =>
             p && V != null && V.Personal.TryGetValue(Loot.KeyOf(p), out var l) && l.Any(x => x.Item1 == g && x.Item2 == Rarity.Legendary);
         public static bool Legend(int playerObjectId, Gear g) => Legend(PlayerManager.Players.FirstOrDefault(x => x && x.ObjectId == playerObjectId), g);
+
+        // Host: a legendary special just went off (shown to everyone as "★ name" and a flash in the loadout). Max once per second per kind.
+        private static readonly Dictionary<Gear, float> LastProc = new Dictionary<Gear, float>();
+        public static void Proc(Gear g, Vector3 at)
+        {
+            if (LastProc.TryGetValue(g, out float t) && Time.time - t < 1f) return;
+            LastProc[g] = Time.time;
+            Fx.Send(FxKind.Proc, at, at, 0, (int)g);
+        }
 
         public static int Cost(int baseCost, Player builder) => Discount(baseCost, Of(builder, Gear.ToolBelt));
         public static int MyCost(int baseCost) =>

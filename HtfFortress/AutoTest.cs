@@ -112,6 +112,7 @@ namespace HtfFortress
                 case "newfoes": yield return NewFoesScenario(); break;
                 case "gear2": yield return Gear2Scenario(); break;
                 case "tips": yield return TipsScenario(); break;
+                case "gear3": yield return Gear3Scenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -536,6 +537,99 @@ namespace HtfFortress
             Note($"respawn: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.DockPos):F1} m from dock, boat {boat:F1} m from dock");
             FortressPlugin.Shot("coop_results");
             yield return new WaitForSecondsRealtime(1f);
+        }
+
+        // Fish scales (dismantle, rank up, enhance), pickup and chest cards, the loadout panel and its flashes, drop pacing.
+        private IEnumerator Gear3Scenario()
+        {
+            var island = FortressIsland.Instance;
+            var plugin = FortressPlugin.Instance;
+            var loot = Loot.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            loot.ServerWipeVaultForTest();
+            Tips.Show.Value = false; // keep tip cards out of these shots
+            PlayerManager.ToggleGodMode();
+            IgnorePlayers = true;
+            var me = Player.LocalPlayer;
+            Vector3 center = island.Center;
+            int C(string k) => Counters.TryGetValue(k, out int v) ? v : 0;
+            var V = loot.Vault;
+            void Do(VaultAction a, Gear g, Rarity r) => loot.ServerRequest(me, new VaultRequest { Action = a, Gear = g, Rarity = r });
+
+            // Scales.
+            loot.ServerGive(Gear.SharkArmor, Rarity.Legendary); loot.ServerGive(Gear.BigNet, Rarity.Common, 5);
+            loot.ServerGive(Gear.Gunpowder, Rarity.Common); loot.ServerGive(Gear.Scope, Rarity.Epic); loot.ServerGive(Gear.Rebar, Rarity.Legendary);
+            Do(VaultAction.Salvage, Gear.SharkArmor, Rarity.Legendary);
+            for (int i = 0; i < 5; i++) Do(VaultAction.Salvage, Gear.BigNet, Rarity.Common);
+            Note($"salvage: scales {V.Scales} (expect 25), big nets left {V.Count(Gear.BigNet, Rarity.Common)}");
+            Do(VaultAction.Ascend, Gear.Gunpowder, Rarity.Common);
+            Note($"rank up: gunpowder common {V.Count(Gear.Gunpowder, Rarity.Common)} rare {V.Count(Gear.Gunpowder, Rarity.Rare)}, scales {V.Scales} (expect 21)");
+            Do(VaultAction.Ascend, Gear.Scope, Rarity.Epic);
+            Note($"epic -> legendary by scales refused: scope epic {V.Count(Gear.Scope, Rarity.Epic)} legendary {V.Count(Gear.Scope, Rarity.Legendary)}");
+            float before = V.ValueOf(Gear.Rebar, Rarity.Legendary);
+            Do(VaultAction.Enhance, Gear.Rebar, Rarity.Legendary);
+            Note($"enhance: rebar +{V.EnhanceOf(Gear.Rebar)}, value {before:F2} -> {V.ValueOf(Gear.Rebar, Rarity.Legendary):F2}, scales {V.Scales} (expect 6)");
+
+            // The vault with scales.
+            Vector3 door = island.VaultPos + Quaternion.Euler(0f, -20f, 0f) * new Vector3(0f, 0f, 2.6f);
+            me.LocalTeleport(door + Vector3.up * 0.5f, YawTo(door, island.VaultPos), true);
+            yield return new WaitForSecondsRealtime(1f);
+            VaultUI.Instance.Open();
+            VaultUI.Instance.DebugSelect(Gear.Rebar, Rarity.Legendary);
+            yield return new WaitForSecondsRealtime(1f);
+            FortressPlugin.Shot("gear3_vault");
+            yield return new WaitForSecondsRealtime(0.5f);
+            VaultUI.Instance.Close();
+
+            // A round with legendary gear on; the loadout panel; flashes.
+            foreach (var g in new[] { Gear.Gunpowder, Gear.Scope, Gear.Rebar }) loot.DebugEquip(me, g, Rarity.Legendary);
+            loot.DebugEquip(me, Gear.SharkArmor, Rarity.Epic);
+            me.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => plugin.Running, 15f, "round start");
+            yield return Until(() => plugin.InBuildTime, 5f, "build time");
+            plugin.DebugExtendBuild(300f);
+            Siege.Instance.ServerAddCoins(2000);
+            SpendLikeAPlayer(center);
+            float g0 = FortressIsland.GapAngles[0] * Mathf.Deg2Rad;
+            Vector3 gd = new Vector3(Mathf.Cos(g0), 0f, Mathf.Sin(g0)), side = Vector3.Cross(Vector3.up, gd);
+            Vector3 Ground(Vector3 w) { if (Physics.Raycast(w + Vector3.up * 10f, Vector3.down, out var rh, 30f, GameInfo.LevelLayer)) return rh.point; return w; }
+            Vector3 eye = Ground(center + gd * 6f - side * 4f) + Vector3.up * 1.8f;
+            me.LocalTeleport(eye, YawTo(eye, center + gd * 15f), true);
+            for (int i = 0; i < 8; i++) plugin.ServerSpawnMinion(EnemyKind.Runner, center + gd * 21f + side * (i - 3.5f) * 1.2f + Vector3.up * 3f);
+            yield return Until(() => C("proc_Gunpowder") > 0 || C("proc_Scope") > 0, 25f, "a legendary flash");
+            FortressPlugin.Shot("gear3_proc");
+            yield return new WaitForSecondsRealtime(0.5f);
+            Note("flashes: " + string.Join(", ", Counters.Where(kv => kv.Key.StartsWith("proc_")).Select(kv => kv.Key.Substring(5) + " " + kv.Value)));
+            plugin.DebugKillAll();
+            yield return new WaitForSecondsRealtime(1f);
+
+            // Pickup card, then a chest card.
+            Vector3 here = me.Transform.position;
+            loot.DebugDrop(Gear.Incendiary, Rarity.Epic, here + gd * 1.5f);
+            yield return new WaitForSecondsRealtime(0.4f);
+            me.LocalTeleport(here + gd * 1.5f + Vector3.up * 0.3f, YawTo(here, center + gd * 15f), true);
+            yield return new WaitForSecondsRealtime(1.2f);
+            loot.ServerSpawnChest(10);
+            var chest = loot.ServerChestPos ?? center;
+            yield return new WaitForSecondsRealtime(0.5f);
+            me.LocalTeleport(chest + Vector3.up * 0.5f, 0f, true);
+            yield return new WaitForSecondsRealtime(1.5f);
+            FortressPlugin.Shot("gear3_cards");
+            yield return new WaitForSecondsRealtime(0.5f);
+
+            // Drop pacing: the first kill from wave 2 always drops.
+            int drops = C("loot_dropped");
+            loot.ServerNewRound();
+            plugin.DebugJumpToWave(2);
+            yield return Until(() => plugin.Wave == 2, 5f, "wave 2");
+            plugin.DebugKillAll();
+            yield return new WaitForSecondsRealtime(0.5f);
+            var one = plugin.ServerSpawnMinion(EnemyKind.Runner, center + gd * 10f + Vector3.up * 3f);
+            yield return new WaitForSecondsRealtime(0.5f);
+            if (one) one.ServerChangeHp(100000);
+            yield return new WaitForSecondsRealtime(1f);
+            Note($"first kill of wave 2 dropped: {C("loot_dropped") - drops >= 1}");
+            Tips.Show.Value = true;
         }
 
         // Tip cards, markers and the help panel, with screenshots. Leaves the tips unseen for the real player.

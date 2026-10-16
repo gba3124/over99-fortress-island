@@ -150,6 +150,7 @@ namespace HtfFortress
                     continue;
                 }
                 bool fast = s.Work.Any(kv => now - kv.Value < WorkGap && Perks.Legend(kv.Key, Gear.ToolBelt)); // legendary tool belt: twice as fast
+                if (fast) Perks.Proc(Gear.ToolBelt, s.Pos);
                 s.Progress += Time.deltaTime * (1f + TeamBonus * (workers - 1)) * (fast ? 2f : 1f) / BuildTime(s.Type);
                 if (s.Progress >= 1f)
                 {

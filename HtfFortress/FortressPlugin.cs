@@ -90,6 +90,7 @@ namespace HtfFortress
             gameObject.AddComponent<Construction>();
             gameObject.AddComponent<PieceMenu>();
             gameObject.AddComponent<Actives>();
+            gameObject.AddComponent<GearCards>();
             Tips.Show = Config.Bind("Tips", "ShowTips", true, "Show a short tip card the first time something new happens.");
             Tips.Reset = Config.Bind("Tips", "ResetTips", false, "Set to true to see every tip card again.");
             gameObject.AddComponent<Tips>();
@@ -260,7 +261,7 @@ namespace HtfFortress
                 {
                     _cleared = _wave;
                     int bonus = _waveBonus.Value + 6 * _wave;
-                    if (Perks.TeamLegend(Gear.WarChest)) bonus += Mathf.Min(100, Siege.Instance.ServerCoins / 10); // legendary: 10% interest
+                    if (Perks.TeamLegend(Gear.WarChest)) { bonus += Mathf.Min(100, Siege.Instance.ServerCoins / 10); Perks.Proc(Gear.WarChest, Siege.Instance.CorePos + Vector3.up * 4f); } // legendary: 10% interest
                     Siege.Instance.ServerAddCoins(bonus);
                     Say(L10n.T("cleared", _wave, bonus, _breakSeconds.Value.ToString("0"), _readyKey.Value));
                     Fx.Announce("clearedBanner", _wave);
@@ -280,6 +281,7 @@ namespace HtfFortress
 
         public void StartRound(Vector3 corePos)
         {
+            Loot.Instance.ServerNewRound();
             if (!IsHost) { ChatManager.ChatMessage(L10n.T("prefix") + " " + L10n.T("onlyHost")); return; }
             var pool = BuildPool();
             _walkerPrefabs = pool.Where(p => p.GetComponent<Creature>() is RunningFish).ToList();

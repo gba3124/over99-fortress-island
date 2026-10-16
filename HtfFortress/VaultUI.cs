@@ -24,7 +24,8 @@ namespace HtfFortress
         private TextMeshProUGUI _detail, _team;
         private Transform _grid, _fortRow, _mineRow;
         private Button _merge, _equip;
-        private TextMeshProUGUI _mergeText, _equipText;
+        private TextMeshProUGUI _mergeText, _equipText, _craftText, _salvageText, _scales;
+        private Button _craft, _salvage;
         private (Gear g, Rarity r)? _sel;
         private VaultData _drawn;
 
@@ -124,12 +125,22 @@ namespace HtfFortress
             _grid.SetParent(panel, false);
 
             Box(panel, new Vector2(500f, 470f), new Vector2(440f, -110f), Hud.Raised, 18f);
-            _detail = Text(panel, "", 24f, new Vector2(460f, 330f), new Vector2(440f, -30f), TextAlignmentOptions.TopLeft);
-            _merge = Btn(panel, new Vector2(220f, 60f), new Vector2(320f, -300f), new Color(0.26f, 0.42f, 0.78f), () =>
+            _detail = Text(panel, "", 21f, new Vector2(460f, 330f), new Vector2(440f, -30f), TextAlignmentOptions.TopLeft);
+            _scales = Text(panel, "", 24f, new Vector2(300f, 40f), new Vector2(560f, 385f), TextAlignmentOptions.Right);
+            _craft = Btn(panel, new Vector2(220f, 56f), new Vector2(320f, -318f), new Color(0.52f, 0.36f, 0.12f), () =>
+            {
+                if (!(_sel is (Gear g, Rarity r))) return;
+                Send(r == Rarity.Legendary ? VaultAction.Enhance : VaultAction.Ascend, g, r);
+            }, out _craftText);
+            _salvage = Btn(panel, new Vector2(220f, 56f), new Vector2(560f, -318f), new Color(0.36f, 0.3f, 0.3f), () =>
+            {
+                if (_sel is (Gear g, Rarity r)) Send(VaultAction.Salvage, g, r);
+            }, out _salvageText);
+            _merge = Btn(panel, new Vector2(220f, 56f), new Vector2(320f, -252f), new Color(0.26f, 0.42f, 0.78f), () =>
             {
                 if (_sel is (Gear g, Rarity r)) Send(VaultAction.Merge, g, r);
             }, out _mergeText);
-            _equip = Btn(panel, new Vector2(220f, 60f), new Vector2(560f, -300f), new Color(0.22f, 0.58f, 0.38f), () =>
+            _equip = Btn(panel, new Vector2(220f, 56f), new Vector2(560f, -252f), new Color(0.22f, 0.58f, 0.38f), () =>
             {
                 if (_sel is (Gear g, Rarity r)) Send(GearCatalog.IsFortress(g) ? VaultAction.EquipFortress : VaultAction.EquipPersonal, g, r);
             }, out _equipText);
@@ -179,16 +190,16 @@ namespace HtfFortress
                 bool picked = _sel == (g, r);
                 var b = Btn(_grid, new Vector2(154f, 58f), pos, picked ? Darken(GearCatalog.Color(r), 0.5f) : new Color(0.13f, 0.15f, 0.19f, 1f), () => { _sel = (g, r); Redraw(); }, out var t);
                 Ring(b.transform, new Vector2(154f, 58f), GearCatalog.Color(r) * new Color(1f, 1f, 1f, picked ? 1f : 0.7f));
-                t.text = $"{GearCatalog.Name(g)}\n<size=78%>{GearCatalog.RarityName(r)} ×{n}</size>";
+                t.text = $"{GearCatalog.Name(g)}{(r == Rarity.Legendary && v.EnhanceOf(g) > 0 ? " +" + v.EnhanceOf(g) : "")}\n<size=78%>{GearCatalog.RarityName(r)} ×{n}</size>";
                 t.fontSize = 19f;
             }
 
             // Selected item.
             if (_sel is (Gear sg, Rarity sr) && v.Count(sg, sr) > 0)
             {
-                var lines = new List<string> { $"<size=120%>{GearCatalog.Label(sg, sr)}</size>", L10n.T(GearCatalog.IsFortress(sg) ? "vaultKindFortress" : GearCatalog.IsActive(sg) ? "vaultKindActive" : "vaultKindPersonal"), "" };
+                var lines = new List<string> { $"<size=120%>{v.LabelOf(sg, sr)}</size>", L10n.T(GearCatalog.IsFortress(sg) ? "vaultKindFortress" : GearCatalog.IsActive(sg) ? "vaultKindActive" : "vaultKindPersonal"), "" };
                 foreach (Rarity rr in Enum.GetValues(typeof(Rarity)))
-                    lines.Add((rr == sr ? "▶ " : "　") + $"<color=#{GearCatalog.Hex(rr)}>{GearCatalog.RarityName(rr)}</color>　{GearCatalog.Effect(sg, rr)}");
+                    lines.Add((rr == sr ? "▶ " : "　") + $"<color=#{GearCatalog.Hex(rr)}>{GearCatalog.RarityName(rr)}</color>　{GearCatalog.Effect(sg, rr, v.ValueOf(sg, rr))}");
                 bool isLegend = sr == Rarity.Legendary;
                 if (!GearCatalog.IsActive(sg))
                 {
@@ -196,6 +207,7 @@ namespace HtfFortress
                     lines.Add($"<color=#{GearCatalog.Hex(Rarity.Legendary)}>{(isLegend ? "★" : "☆")} {L10n.T("legendTitle")}</color>" + (isLegend ? "" : $"<size=80%><color=#888888>{L10n.T("legendOnly")}</color></size>"));
                     lines.Add($"<size=90%>{(isLegend ? legend : $"<color=#999999>{legend}</color>")}</size>");
                 }
+                if (v.OwnsLegendary(sg)) lines.Add($"<color=#{GearCatalog.Hex(Rarity.Legendary)}>{L10n.T("vaultEnhanceLevel", v.EnhanceOf(sg), GearCatalog.MaxEnhance)}</color>");
                 lines.Add("");
                 lines.Add(L10n.T("vaultOwned", v.Count(sg, sr)));
                 _detail.text = string.Join("\n", lines);
@@ -211,6 +223,29 @@ namespace HtfFortress
                 _equipText.text = dup ? L10n.T("vaultAlready") : full ? L10n.T("vaultFull") : L10n.T(fortress ? "vaultEquipFortress" : "vaultEquipMine");
                 _merge.gameObject.SetActive(true);
                 _equip.gameObject.SetActive(true);
+                // Fish scales: rank up (common, rare), enhance (legendary), never epic -> legendary.
+                int lvl = v.EnhanceOf(sg);
+                if (sr == Rarity.Legendary)
+                {
+                    bool can = lvl < GearCatalog.MaxEnhance && v.Scales >= GearCatalog.EnhanceCosts[Mathf.Min(lvl, GearCatalog.MaxEnhance - 1)];
+                    _craft.interactable = can;
+                    _craftText.text = lvl >= GearCatalog.MaxEnhance ? L10n.T("vaultEnhanceMax") : L10n.T("vaultEnhance", lvl + 1, GearCatalog.EnhanceCosts[lvl]);
+                }
+                else if (sr == Rarity.Epic)
+                {
+                    _craft.interactable = false;
+                    _craftText.text = L10n.T("vaultNoAscend");
+                }
+                else
+                {
+                    int cost = GearCatalog.AscendCost(sr);
+                    _craft.interactable = v.Scales >= cost;
+                    _craftText.text = L10n.T("vaultAscend", cost);
+                }
+                _salvageText.text = L10n.T("vaultSalvage", GearCatalog.SalvageScales[(int)sr]);
+                _craftText.fontSize = _salvageText.fontSize = 19f;
+                _craft.gameObject.SetActive(true);
+                _salvage.gameObject.SetActive(true);
             }
             else
             {
@@ -218,7 +253,10 @@ namespace HtfFortress
                 _detail.text = L10n.T("vaultPick");
                 _merge.gameObject.SetActive(false);
                 _equip.gameObject.SetActive(false);
+                _craft.gameObject.SetActive(false);
+                _salvage.gameObject.SetActive(false);
             }
+            _scales.text = $"<color=#7fd0ff>◆</color> {L10n.T("vaultScales", v.Scales)}";
         }
 
         private void Slot(Transform parent, (Gear, Rarity)? item, Vector2 pos, Action unequip, string emptyText = null)
@@ -227,7 +265,8 @@ namespace HtfFortress
             {
                 var b = Btn(parent, new Vector2(230f, 70f), pos, Darken(GearCatalog.Color(r), 0.4f), unequip, out var t);
                 Ring(b.transform, new Vector2(230f, 70f), GearCatalog.Color(r));
-                t.text = $"{GearCatalog.Name(g)}\n<size=75%>{GearCatalog.FormatValue(g, r)} · {L10n.T("vaultUnequip")}</size>";
+                var vd = Loot.Instance.ClientVault;
+                t.text = $"{GearCatalog.Name(g)}{(r == Rarity.Legendary && vd.EnhanceOf(g) > 0 ? " +" + vd.EnhanceOf(g) : "")}\n<size=75%>{GearCatalog.FormatValue(g, vd.ValueOf(g, r))} · {L10n.T("vaultUnequip")}</size>";
                 t.fontSize = 20f;
             }
             else

@@ -88,7 +88,7 @@ namespace HtfFortress
             if (__0 && Enemies.Instance && Enemies.Instance.TryGet(__0, out _))
             {
                 __2 = Mathf.RoundToInt(__2 * (1f + Perks.Of(__1, Gear.Gauntlet)));
-                if (Perks.Legend(__1, Gear.Gauntlet)) Siege.Instance.Slow(__0, 1f, 0.6f); // legendary: each punch stuns
+                if (Perks.Legend(__1, Gear.Gauntlet)) { Siege.Instance.Slow(__0, 1f, 0.6f); Perks.Proc(Gear.Gauntlet, __0.transform.position); } // legendary: each punch stuns
             }
         }
     }

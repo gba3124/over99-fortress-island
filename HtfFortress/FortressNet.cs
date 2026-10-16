@@ -146,7 +146,7 @@ namespace HtfFortress
                     {
                         if (net.count >= cap) break;
                         net.count++; net.value += kv.Value.value; changed = true;
-                        if (Perks.Legend(p, Gear.FishGloves)) { Siege.Instance.ServerAddCoins(1); Stats.Fished(p.ObjectId, 1); } // legendary: paid on the spot
+                        if (Perks.Legend(p, Gear.FishGloves)) { Siege.Instance.ServerAddCoins(1); Stats.Fished(p.ObjectId, 1); Perks.Proc(Gear.FishGloves, pos); } // legendary: paid on the spot
                         Fx.Send(FxKind.Scoop, kv.Key.transform.position, pos);
                         kv.Key.DestroyItem();
                         _corpses.Remove(kv.Key);
@@ -160,6 +160,7 @@ namespace HtfFortress
                     Stats.Fished(p.ObjectId, value);
                     Fx.Send(FxKind.Sell, pos, pos, 0, value);
                     AutoTest.Count("legend_autosell");
+                    Perks.Proc(Gear.BigNet, pos);
                     net = default; changed = true;
                 }
                 // Sell at the crate.
