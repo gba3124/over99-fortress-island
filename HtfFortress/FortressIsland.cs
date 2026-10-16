@@ -85,7 +85,9 @@ namespace HtfFortress
                 nm.ClientManager.OnClientConnectionState += a => { if (a.ConnectionState == FishNet.Transporting.LocalConnectionState.Stopped) Despawn(); };
             }
 
-            bool inWorld = InstanceFinder.IsClientStarted && Island.CurIsland && !IslandManager.IsLoading;
+            // Don't gate on IslandManager.IsLoading/CurIsland: the game streams mini islands in and out while you move,
+            // and the fortress must not vanish (and drop everyone in the sea) during those loads.
+            bool inWorld = InstanceFinder.IsClientStarted && Player.LocalPlayer && (Island.CurIsland || _root);
             bool unlocked = inWorld && Unlocked;
             if (unlocked && !_wasUnlocked && _wasUnlockedKnown && Unlock.Value == IslandUnlock.AfterFinalBoss) Banner(L10n.T("islandUnlocked"), 8f);
             _wasUnlocked = unlocked; _wasUnlockedKnown = inWorld;

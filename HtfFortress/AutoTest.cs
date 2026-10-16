@@ -165,8 +165,10 @@ namespace HtfFortress
             yield return new WaitForSecondsRealtime(2f);
         }
 
+        // Stand on whatever is under `pos` (never drop the player into the sea) and take a screenshot.
         private IEnumerator Look(Vector3 pos, float yaw, string shot, float settle = 1.5f)
         {
+            if (Physics.Raycast(new Vector3(pos.x, pos.y + 40f, pos.z), Vector3.down, out var rh, 80f, GameInfo.LevelLayer)) pos.y = rh.point.y + 0.2f;
             Player.LocalPlayer.LocalTeleport(pos, yaw, true);
             yield return new WaitForSecondsRealtime(settle);
             if (shot != null) FortressPlugin.Shot(shot);
@@ -200,10 +202,18 @@ namespace HtfFortress
             var island = FortressIsland.Instance;
             yield return Until(() => island.Exists, 30f, "fortress island");
             Note($"fortress island at {island.Center}, core {island.CorePos}");
+            {
+                var rends = GameObject.Find("FortressIsland")?.GetComponentsInChildren<Renderer>();
+                bool ground = Physics.Raycast(island.Center + Vector3.up * 50f, Vector3.down, out var gh, 100f, GameInfo.LevelLayer);
+                Note($"island renderers {rends?.Length ?? -1}, bounds {(rends != null && rends.Length > 0 ? rends[0].bounds.ToString() : "-")}, enabled {(rends != null && rends.Length > 0 && rends[0].enabled)}, layer {GameObject.Find("FortressIsland")?.layer}, ground ray {(ground ? gh.point.ToString() + " on " + gh.collider.name : "MISS")}");
+                var cam = GameInfo.CurCamera;
+                Note($"camera cull mask {(cam ? cam.cullingMask : 0)}, far {(cam ? cam.farClipPlane : 0)}");
+            }
             Vector3 center = island.Center;
+            PlayerManager.ToggleGodMode(); // the visual run shouldn't end because the camera-player got bitten
 
             yield return Look(island.DockPos, YawTo(island.DockPos, center), "isl_dock", 3f);
-            Vector3 high = center + new Vector3(-16f, 8f, -16f);
+            Vector3 high = center + new Vector3(24f, 0f, 0f); // on top of the rocks east of the plaza
             yield return Look(high, YawTo(high, center), "isl_overview", 2f);
 
             // Ready circle -> countdown -> round.
@@ -239,7 +249,7 @@ namespace HtfFortress
                 if (plugin.InBuildTime) plugin.SkipBuildTime();
                 // Watch a gap from behind its wall.
                 float g = FortressIsland.GapAngles[view++ % 3] * Mathf.Deg2Rad;
-                Vector3 eye = center + new Vector3(Mathf.Cos(g), 0f, Mathf.Sin(g)) * 8f + Vector3.up * 3.5f;
+                Vector3 eye = center + new Vector3(Mathf.Cos(g), 0f, Mathf.Sin(g)) * 6f;
                 yield return Look(eye, YawTo(eye, center + new Vector3(Mathf.Cos(g), 0f, Mathf.Sin(g)) * 25f), "isl_fight", 6f);
             }
             Note($"fight over: wave {plugin.Wave}, enemies {FortressPlugin.Alive.Count}, core {Siege.Instance.CoreHp}, running {plugin.Running}");

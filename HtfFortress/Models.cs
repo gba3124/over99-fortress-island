@@ -72,7 +72,9 @@ namespace HtfFortress
             Painted[m] = c;
             if (Swatch.TryGetValue(m, out var tex) && tex)
             {
-                tex.SetPixels(new[] { c, c, c, c });
+                // Model colours are authored in sRGB (Blender); the game's lighting is bright, so feed linear values.
+                var lc = c.linear;
+                tex.SetPixels(new[] { lc, lc, lc, lc });
                 tex.Apply(false);
             }
             if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
