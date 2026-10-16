@@ -154,12 +154,15 @@ namespace HtfFortress
             if (fish.AttachedRod || rig.isKinematic || !Grounded(fish)) return true; // hold still until it lands
 
             Vector3 pos = fish.transform.position;
-            // Stuck on a rock or tree (no progress and no attack for 8 s): send it back to a landing beach.
+            // Stuck on a step, rock or tree (no progress and no attack for 6 s): hop it 2.5 m on toward the lighthouse.
             if (!_progress.TryGetValue(fish, out var prog) || (pos - prog.pos).sqrMagnitude > 0.5f * 0.5f) _progress[fish] = prog = (pos, Time.time);
-            else if (Time.time - prog.time > 8f && FortressIsland.Instance.Exists && FortressIsland.Instance.WalkerSpawn(out var retry))
+            else if (Time.time - prog.time > 6f)
             {
-                rig.position = retry; fish.transform.position = retry;
-                _progress[fish] = (retry, Time.time);
+                Vector3 toCore = (_server.CorePos - pos); toCore.y = 0f;
+                Vector3 hop = pos + toCore.normalized * Mathf.Min(2.5f, toCore.magnitude * 0.5f);
+                if (Physics.Raycast(hop + Vector3.up * 8f, Vector3.down, out var ground, 16f, GameInfo.LevelLayer)) hop = ground.point + Vector3.up * (0.3f + 0.3f * stats.Scale);
+                rig.position = hop; fish.transform.position = hop;
+                _progress[fish] = (hop, Time.time);
                 BuildSystem.Log.LogInfo($"unstuck {tag.Kind} from {pos}");
                 AutoTest.Count("unstuck");
                 return true;

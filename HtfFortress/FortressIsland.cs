@@ -50,6 +50,7 @@ namespace HtfFortress
 
         // host: ready countdown
         private float _readySince = -1f;
+        private float _nextReadyLog;
 
         // client: results panel
         private TextMeshProUGUI _results;
@@ -200,6 +201,11 @@ namespace HtfFortress
             if (plugin == null || plugin.Running || !_root) { _readySince = -1f; Siege.Instance.ServerReady(0, 0, 0); return; }
             var onIsland = PlayerManager.AlivePlayers.Where(p => p && p.Transform && OnIsland(p.Transform.position)).ToList();
             int inCircle = onIsland.Count(p => InCircle(p.Transform.position));
+            if (AutoTest.Running && Time.time >= _nextReadyLog)
+            {
+                _nextReadyLog = Time.time + 1f;
+                BuildSystem.Log.LogInfo($"ready check: alive {PlayerManager.AlivePlayers.Count}, players {PlayerManager.Players.Count}, on island {onIsland.Count}, in circle {inCircle}, since {_readySince:0.0}, now {Time.time:0.0}, pos {(Player.LocalPlayer ? Player.LocalPlayer.Transform.position.ToString() : "-")}");
+            }
             if (onIsland.Count > 0 && inCircle == onIsland.Count)
             {
                 if (_readySince < 0f) _readySince = Time.time;
