@@ -29,7 +29,9 @@ namespace HtfFortress
             if (Time.time >= _nextSpikeTick) { _nextSpikeTick = Time.time + 0.5f; Spikes(alive); BurnTick(); }
         }
 
-        private static bool Alive(Creature c) => c && c._hp.Value > 0;
+        private static bool Alive(Creature c) => c && c._hp.Value > 0 && !Siege.Instance.IsHidden(c);
+
+        private Vector3 _from; // the turret firing now (shield bearers block hits from their front)
 
         private int _owner = -1;
 
@@ -37,7 +39,12 @@ namespace HtfFortress
         {
             Stats.TurretHit(c, _owner);
             float d = baseDmg * DamageMultiplier.Value * (1f + Perks.Team(Gear.Gunpowder));
-            if (Enemies.Instance.TryGet(c, out var tag) && (tag.Kind == EnemyKind.Tank || tag.Kind == EnemyKind.Boss)) d *= s.BossMult * (1f + Perks.Team(Gear.ApRounds));
+            if (Enemies.Instance.TryGet(c, out var st) && st.Kind == EnemyKind.Shield)
+            {
+                Vector3 toTurret = _from - c.transform.position; toTurret.y = 0f;
+                if (toTurret.sqrMagnitude > 0.01f && Vector3.Angle(c.transform.forward, toTurret) < 70f) { d *= 0.2f; AutoTest.Count("shield_blocks"); }
+            }
+            if (Enemies.Instance.TryGet(c, out var tag) && (tag.Kind == EnemyKind.Tank || EnemyCatalog.IsBoss(tag.Kind))) d *= s.BossMult * (1f + Perks.Team(Gear.ApRounds));
             Siege.Instance.Slow(c, Perks.Team(Gear.FrostCore), 1.5f);
             if (s.WaterMult != 1f && c.transform.position.y < WaterManager.GetWaterHeight(c.transform.position) + 0.3f) d *= s.WaterMult;
             return Mathf.Max(1, Mathf.RoundToInt(d));
@@ -51,6 +58,7 @@ namespace HtfFortress
             s.Range *= 1f + Perks.Team(Gear.Scope);
             if (p.Type == PieceType.Tesla) s.Chain += Mathf.RoundToInt(Perks.Team(Gear.TeslaCoil));
             _owner = BuildSystem.Instance.OwnerOf(p.Id);
+            _from = p.Pos;
             Vector3 muzzle = p.Pos + Vector3.up * 1.1f;
 
             Creature target = null;

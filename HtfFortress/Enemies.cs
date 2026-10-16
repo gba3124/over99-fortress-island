@@ -10,7 +10,8 @@ using UnityEngine;
 
 namespace HtfFortress
 {
-    public enum EnemyKind : byte { Runner, Charger, Spitter, Bomber, Tank, Boss }
+    // New kinds go on the end (the byte goes over the wire).
+    public enum EnemyKind : byte { Runner, Charger, Spitter, Bomber, Tank, Boss, Thief, Shield, Digger, Healer, Splitter, Mini, Queen, Tide }
 
     // Host -> everyone: what a spawned walker is, so every client scales it and adds its gear.
     public struct EnemyTag : IBroadcast { public int ObjectId; public EnemyKind Kind; public bool Elite; }
@@ -37,9 +38,29 @@ namespace HtfFortress
                 case EnemyKind.Bomber: return new EnemyStats { BaseHp = 20f, Speed = 1.2f, Hp = 0.6f, Damage = 8f, WallMult = 1f, Scale = 1f, Reward = 4, Gear = "Bomb", FirstWave = 6 };
                 case EnemyKind.Tank: return new EnemyStats { BaseHp = 150f, Speed = 0.5f, Hp = 5f, Damage = 2.5f, WallMult = 2f, Scale = 1.8f, Reward = 10, Gear = "Shell", FirstWave = 8 };
                 case EnemyKind.Boss: return new EnemyStats { BaseHp = 700f, Speed = 0.45f, Hp = 40f, Damage = 6f, WallMult = 2f, Scale = 3.5f, Reward = 120, Gear = "BossShell", FirstWave = 10 };
+                // Grabs a corpse (or coins at the crate), hops walls, runs for the sea: someone has to chase it.
+                case EnemyKind.Thief: return new EnemyStats { BaseHp = 25f, Speed = 2.0f, Hp = 0.8f, Damage = 0.3f, WallMult = 1f, Scale = 0.8f, Reward = 6, Gear = "ThiefSack", FirstWave = 4 };
+                // Its shield takes 80% of turret damage from the front; players and side turrets hit it full.
+                case EnemyKind.Shield: return new EnemyStats { BaseHp = 60f, Speed = 0.8f, Hp = 2f, Damage = 1f, WallMult = 1f, Scale = 1.15f, Reward = 6, Gear = "ShieldBoard", FirstWave = 7 };
+                // Tunnels under the first wall it meets.
+                case EnemyKind.Digger: return new EnemyStats { BaseHp = 35f, Speed = 1.1f, Hp = 1.2f, Damage = 1f, WallMult = 1f, Scale = 0.9f, Reward = 5, Gear = "MinerHat", FirstWave = 9 };
+                // Heals the fish around it.
+                case EnemyKind.Healer: return new EnemyStats { BaseHp = 40f, Speed = 0.85f, Hp = 1.2f, Damage = 0.5f, WallMult = 1f, Scale = 0.95f, Reward = 7, Gear = "HealerStaff", FirstWave = 6 };
+                // Bursts into three minis when it dies.
+                case EnemyKind.Splitter: return new EnemyStats { BaseHp = 45f, Speed = 0.9f, Hp = 1.5f, Damage = 1f, WallMult = 1f, Scale = 1.25f, Reward = 4, Gear = "SplitterBubbles", FirstWave = 5 };
+                case EnemyKind.Mini: return new EnemyStats { BaseHp = 8f, Speed = 1.6f, Hp = 0.3f, Damage = 0.4f, WallMult = 1f, Scale = 0.55f, Reward = 1, Gear = null, FirstWave = 999 };
+                // Wave 20 boss: calls in minions.
+                case EnemyKind.Queen: return new EnemyStats { BaseHp = 900f, Speed = 0.4f, Hp = 40f, Damage = 5f, WallMult = 2f, Scale = 3.0f, Reward = 160, Gear = "QueenCrown", FirstWave = 20 };
+                // Wave 30 boss: sends a breaker crashing over one beach.
+                case EnemyKind.Tide: return new EnemyStats { BaseHp = 1100f, Speed = 0.4f, Hp = 40f, Damage = 6f, WallMult = 2f, Scale = 3.2f, Reward = 200, Gear = "TideHorn", FirstWave = 30 };
                 default: return new EnemyStats { BaseHp = 30f, Speed = 1f, Hp = 1f, Damage = 1f, WallMult = 1f, Scale = 1f, Reward = 3, Gear = null, FirstWave = 1 };
             }
         }
+
+        public static bool IsBoss(EnemyKind k) => k == EnemyKind.Boss || k == EnemyKind.Queen || k == EnemyKind.Tide;
+
+        // Every 10th wave a boss; they take turns: Behemoth, Coral Queen, Tidecaller.
+        public static EnemyKind BossFor(int wave) => (wave / 10 % 3) == 2 ? EnemyKind.Queen : (wave / 10 % 3) == 0 ? EnemyKind.Tide : EnemyKind.Boss;
 
         public const float EliteHp = 3f, EliteDamage = 1.5f, EliteScale = 1.3f;
         public const int EliteReward = 3;

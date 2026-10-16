@@ -109,6 +109,7 @@ namespace HtfFortress
         public int Wave => _wave;
         public bool InBuildTime => _running && _nextWaveAt > 0f;
         public void SkipBuildTime() { if (InBuildTime) _nextWaveAt = Time.time; }
+        public void DebugExtendBuild(float seconds) { if (InBuildTime) _nextWaveAt = Time.time + seconds; }
         public void DebugJumpToWave(int wave) { _wave = wave - 1; _nextWaveAt = Time.time; }
         // Test gallery: a frozen, tagged enemy at `pos` facing `yaw` (not part of any wave).
         public Creature DebugShowcase(EnemyKind kind, bool elite, Vector3 pos, float yaw)
@@ -214,6 +215,7 @@ namespace HtfFortress
             // Dead this frame: pay out per enemy type, then forget them.
             var dead = _alive.Where(c => !c || c._hp.Value <= 0).ToList();
             int killed = dead.Count, reward = 0;
+            var splits = new List<Vector3>();
             foreach (var d in dead)
             {
                 if (!d) { killed--; continue; } // despawned (retreated / cleaned up), not killed: no reward
@@ -222,10 +224,13 @@ namespace HtfFortress
                 if (tagged) Loot.Instance.ServerOnKill(d.transform.position, tag.Kind, tag.Elite, killer, _wave);
                 int r = tagged ? Enemies.StatsOf(tag).Reward + _wave / 4 : _killReward.Value;
                 reward += r;
-                FortressNet.Instance.ServerAddCorpse(d, 2 + r); // most of the money is in the bodies: someone has to go fishing
+                FortressNet.Instance.ServerAddCorpse(d, 2 + r + Siege.Instance.ServerTakeCarried(d)); // most of the money is in the bodies (a thief drops what it stole)
+                if (tagged && tag.Kind == EnemyKind.Splitter) splits.Add(d.transform.position);
                 Enemies.Instance.ServerForget(d);
             }
             _alive.RemoveAll(c => !c || c._hp.Value <= 0);
+            foreach (var at in splits)
+                for (int i = 0; i < 3; i++) ServerSpawnMinion(EnemyKind.Mini, at + Quaternion.Euler(0f, i * 120f, 0f) * Vector3.forward * 0.8f);
             _required.RemoveWhere(c => !c || c._hp.Value <= 0);
             // Wave is over when the land attackers are dead (or, if a wave had none, everything), or after 3 minutes for extras.
             bool waveDone = _wave > 0 && _nextWaveAt == 0f && !_spawning && (_requiredSpawned ? _required.Count == 0 : _alive.Count == 0);
@@ -337,7 +342,8 @@ namespace HtfFortress
 
         // Land attackers by wave: new kinds join as waves go up, elites every 5th wave, a boss every 10th.
         private static readonly (EnemyKind kind, float weight)[] Mix =
-            { (EnemyKind.Runner, 5f), (EnemyKind.Charger, 3f), (EnemyKind.Spitter, 2f), (EnemyKind.Bomber, 2f), (EnemyKind.Tank, 1.5f) };
+            { (EnemyKind.Runner, 5f), (EnemyKind.Charger, 3f), (EnemyKind.Spitter, 2f), (EnemyKind.Bomber, 2f), (EnemyKind.Tank, 1.5f),
+              (EnemyKind.Thief, 1.5f), (EnemyKind.Splitter, 1.5f), (EnemyKind.Healer, 1f), (EnemyKind.Shield, 1.5f), (EnemyKind.Digger, 1.2f) };
 
         private static EnemyKind PickKind(int wave)
         {
@@ -357,11 +363,12 @@ namespace HtfFortress
             int land = Mathf.RoundToInt((_baseCount.Value + _countPerWave.Value * (wave - 1) + 2 * Mathf.Max(0, wave - 8)) * crowd);
             // Linear growth plus a gentle square term so late waves really bite.
             float hpMult = 1f + _hpPerWave.Value * (wave - 1) + 0.05f * (wave - 1) * (wave - 1);
+            _hpMult = hpMult;
             bool bossWave = wave % 10 == 0, eliteWave = !bossWave && (wave % 5 == 0 || (wave > 10 && wave % 3 == 0));
             int elites = eliteWave ? 2 + wave / 10 : 0;
 
             var plan = new List<(EnemyKind kind, bool elite)>();
-            if (bossWave) { plan.Add((EnemyKind.Boss, false)); land /= 2; }
+            if (bossWave) { plan.Add((EnemyCatalog.BossFor(wave), false)); land /= 2; }
             for (int i = 0; i < land; i++) plan.Add((PickKind(wave), i < elites));
             int extras = _poolPrefabs.Count > 0 ? 1 + wave / 3 : 0;
 
@@ -377,7 +384,7 @@ namespace HtfFortress
             _requiredSpawned = shuffled.Count > 0;
             StartCoroutine(SpawnBursts(shuffled, gapStart, hpMult, island, core, walkerPrefab, extras, host, wave));
             Say(L10n.T("wave", wave, plan.Count + extras, hpMult.ToString("0.##")));
-            Fx.Announce(bossWave ? "bossBanner" : eliteWave ? "eliteBanner" : "waveBanner", wave);
+            Fx.Announce(bossWave ? "bossBanner" + EnemyCatalog.BossFor(wave) : eliteWave ? "eliteBanner" : "waveBanner", wave);
             Shot("wave" + wave, 4f);
         }
 
@@ -420,8 +427,27 @@ namespace HtfFortress
             Item item = Instantiate(prefab, pos, Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f));
             Creature c = item.Creature;
             c._hp.Value = Mathf.Max(1, Mathf.RoundToInt(hp > 0f ? hp : c.MaxHp * hpMult));
+            MaxHpOf[c] = c._hp.Value;
             Server.Instance.Spawn(item.gameObject);
             _alive.Add(c);
+            return c;
+        }
+
+        // Health each enemy spawned with (healers never top a fish past it).
+        public readonly Dictionary<Creature, int> MaxHpOf = new Dictionary<Creature, int>();
+        private float _hpMult = 1f;
+
+        // Host: an extra walker mid-wave (splitter minis, the Queen's guards). It counts toward clearing the wave.
+        public Creature ServerSpawnMinion(EnemyKind kind, Vector3 pos)
+        {
+            var prefab = _walkerPrefabs.FirstOrDefault();
+            if (!_running || !prefab) return null;
+            if (Physics.Raycast(pos + Vector3.up * 4f, Vector3.down, out var g, 10f, GameInfo.LevelLayer)) pos = g.point + Vector3.up * 0.5f;
+            var c = SpawnCreature(prefab, pos, 0f, EnemyCatalog.Of(kind).BaseHp * _hpMult);
+            Enemies.Instance.ServerTag(c, kind, false);
+            Siege.Instance.RegisterWalker(c);
+            _required.Add(c);
+            AutoTest.Count("spawned_" + kind);
             return c;
         }
 

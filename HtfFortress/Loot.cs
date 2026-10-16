@@ -137,11 +137,11 @@ namespace HtfFortress
         // An enemy died: maybe it leaves a piece of gear where it fell (the killer's lucky charm raises the odds).
         public void ServerOnKill(Vector3 pos, EnemyKind kind, bool elite, int killerId, int wave)
         {
-            float chance = kind == EnemyKind.Boss ? 1f : elite ? 0.25f : 0.03f;
+            float chance = EnemyCatalog.IsBoss(kind) ? 1f : elite ? 0.25f : 0.03f;
             var killer = PlayerManager.Players.FirstOrDefault(p => p && p.ObjectId == killerId);
             if (killer) chance *= Mathf.Max(1f, Vault.PersonalValue(KeyOf(killer), Gear.LuckyCharm));
             if (Random.value >= chance) return;
-            Drop(GearCatalog.RandomGear(), GearCatalog.Roll(wave, kind == EnemyKind.Boss ? Rarity.Epic : Rarity.Common), pos);
+            Drop(GearCatalog.RandomGear(), GearCatalog.Roll(wave, EnemyCatalog.IsBoss(kind) ? Rarity.Epic : Rarity.Common), pos);
         }
 
         private void Drop(Gear g, Rarity r, Vector3 pos)

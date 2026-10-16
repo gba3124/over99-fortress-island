@@ -15,7 +15,7 @@ using UnityEngine.UI;
 namespace HtfFortress
 {
     // Host -> everyone: the core and the wave status shown on the HUD.
-    public struct SiegeState : IBroadcast { public bool Active; public Vector3 CorePos; public int CoreHp; public int CoreMax; public int Wave; public int Remaining; public int Coins; public bool Building; public int Countdown; public int ReadyTotal; public int ReadyIn; public int ReadyCountdown; public int BossHp; public int BossMax; }
+    public struct SiegeState : IBroadcast { public bool Active; public Vector3 CorePos; public int CoreHp; public int CoreMax; public int Wave; public int Remaining; public int Coins; public bool Building; public int Countdown; public int ReadyTotal; public int ReadyIn; public int ReadyCountdown; public int BossHp; public int BossMax; public byte BossKind; }
 
     // The fortress core, and the walkers that charge it and break walls in the way.
     // All decisions run on the host; clients just draw the core and the HUD from SiegeState.
@@ -60,12 +60,12 @@ namespace HtfFortress
             GenericWriter<SiegeState>.SetWrite((w, v) =>
             {
                 w.WriteBoolean(v.Active); w.WriteVector3(v.CorePos); w.WriteInt32(v.CoreHp); w.WriteInt32(v.CoreMax);
-                w.WriteInt32(v.Wave); w.WriteInt32(v.Remaining); w.WriteInt32(v.Coins); w.WriteBoolean(v.Building); w.WriteInt32(v.Countdown); w.WriteInt32(v.ReadyTotal); w.WriteInt32(v.ReadyIn); w.WriteInt32(v.ReadyCountdown); w.WriteInt32(v.BossHp); w.WriteInt32(v.BossMax);
+                w.WriteInt32(v.Wave); w.WriteInt32(v.Remaining); w.WriteInt32(v.Coins); w.WriteBoolean(v.Building); w.WriteInt32(v.Countdown); w.WriteInt32(v.ReadyTotal); w.WriteInt32(v.ReadyIn); w.WriteInt32(v.ReadyCountdown); w.WriteInt32(v.BossHp); w.WriteInt32(v.BossMax); w.WriteByte(v.BossKind);
             });
             GenericReader<SiegeState>.SetRead(r => new SiegeState
             {
                 Active = r.ReadBoolean(), CorePos = r.ReadVector3(), CoreHp = r.ReadInt32(), CoreMax = r.ReadInt32(),
-                Wave = r.ReadInt32(), Remaining = r.ReadInt32(), Coins = r.ReadInt32(), Building = r.ReadBoolean(), Countdown = r.ReadInt32(), ReadyTotal = r.ReadInt32(), ReadyIn = r.ReadInt32(), ReadyCountdown = r.ReadInt32(), BossHp = r.ReadInt32(), BossMax = r.ReadInt32()
+                Wave = r.ReadInt32(), Remaining = r.ReadInt32(), Coins = r.ReadInt32(), Building = r.ReadBoolean(), Countdown = r.ReadInt32(), ReadyTotal = r.ReadInt32(), ReadyIn = r.ReadInt32(), ReadyCountdown = r.ReadInt32(), BossHp = r.ReadInt32(), BossMax = r.ReadInt32(), BossKind = r.ReadByte()
             });
         }
 
@@ -161,7 +161,13 @@ namespace HtfFortress
             var stats = Enemies.StatsOf(tag);
             Rigidbody rig = fish.Rig;
             if (tag.Kind == EnemyKind.Spitter) { SteerSpitter(fish, rig, stats); return true; }
+            if (_hidden.Contains(fish)) return true; // a digger underground
+            // These don't need solid ground under them.
+            if (tag.Kind == EnemyKind.Thief && ThiefEscaped(fish)) return true;
+            if (tag.Kind == EnemyKind.Healer) HealAround(fish);
+            if (EnemyCatalog.IsBoss(tag.Kind)) BossMoves(fish, tag);
             if (fish.AttachedRod || rig.isKinematic || !Grounded(fish)) return true; // hold still until it lands
+            if (tag.Kind == EnemyKind.Thief) { SteerThief(fish, rig, stats); return true; }
 
             Vector3 pos = fish.transform.position;
             // Stuck on a step, rock or tree (no progress and no attack for 6 s): hop it 2.5 m on toward the lighthouse.
@@ -206,13 +212,22 @@ namespace HtfFortress
             fish.transform.forward = dir;
 
             Collider wall = WallAhead(pos, dir, stats);
+            if (wall && tag.Kind == EnemyKind.Digger && !_dug.Contains(fish)) { StartCoroutine(Burrow(fish, rig, dir)); return true; }
+            if (wall && Charging(fish))
+            {
+                // A charging behemoth slams the wall for triple damage and stops.
+                BuildSystem.Instance.ServerDamage(wall, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage * 3f * (1f + 0.08f * Mathf.Max(0, _server.Wave - 1))));
+                _charge.Remove(fish);
+                Fx.Send(FxKind.Dust, pos + dir, pos + dir);
+                AutoTest.Count("boss_charge_hit");
+            }
             if (wall)
             {
                 if (flanking) { _flank.Remove(fish); _blockedSince.Remove(fish); } // flank blocked too: just smash through
                 else
                 {
                     if (!_blockedSince.TryGetValue(fish, out float since)) _blockedSince[fish] = since = Time.time;
-                    if (Time.time - since > 3f && tag.Kind != EnemyKind.Bomber && tag.Kind != EnemyKind.Tank && tag.Kind != EnemyKind.Boss)
+                    if (Time.time - since > 3f && tag.Kind != EnemyKind.Bomber && tag.Kind != EnemyKind.Tank && !EnemyCatalog.IsBoss(tag.Kind))
                     {
                         float side = (fish.ObjectId & 1) == 0 ? 1f : -1f;
                         _flank[fish] = (Quaternion.Euler(0f, 80f * side, 0f) * dir, Time.time + 2.5f);
@@ -227,11 +242,191 @@ namespace HtfFortress
             }
             if (!flanking) _blockedSince.Remove(fish);
 
-            Vector3 v = dir * RunSpeed(fish) * stats.Speed * SlowFactor(fish);
+            Vector3 v = dir * RunSpeed(fish) * stats.Speed * SlowFactor(fish) * (Charging(fish) ? 3f : 1f);
             v.y = rig.linearVelocity.y;
             rig.linearVelocity = v;
             rig.angularVelocity = Vector3.zero;
             return true;
+        }
+
+        // ---------- the newer kinds ----------
+
+        // Thief: no fighting. Grab the nearest corpse (or coins from the crate if there are none), then run for the sea.
+        // Walls don't stop it, it hops them. Killed on the way, it drops what it carried.
+        private readonly Dictionary<Creature, int> _carry = new Dictionary<Creature, int>();
+        private readonly Dictionary<RunningFish, float> _nextHop = new Dictionary<RunningFish, float>();
+
+        // Off the beach or in the water with its loot: gone, loot and all.
+        private bool ThiefEscaped(RunningFish fish)
+        {
+            if (!_carry.TryGetValue(fish, out int lost)) return false;
+            Vector3 pos = fish.transform.position, outward = pos - FortressIsland.Instance.Center; outward.y = 0f;
+            if (outward.magnitude < 26f && pos.y > WaterManager.GetWaterHeight(pos) + 0.05f) return false;
+            _carry.Remove(fish);
+            _walkers.Remove(fish);
+            fish.DestroyItem();
+            Fx.Announce("thiefEscaped", lost);
+            AutoTest.Count("thief_escaped");
+            return true;
+        }
+
+        public int ServerTakeCarried(Creature c) { if (!c || !_carry.TryGetValue(c, out int v)) return 0; _carry.Remove(c); return v; }
+
+        private void SteerThief(RunningFish fish, Rigidbody rig, EnemyStats stats)
+        {
+            var island = FortressIsland.Instance;
+            Vector3 pos = fish.transform.position, target;
+            if (_carry.ContainsKey(fish))
+            {
+                // Out through the nearest beach gap (the way they came in), not over the rocks.
+                Vector3 outward = pos - island.Center; outward.y = 0f;
+                float best = float.MaxValue; Vector3 exit = outward.normalized;
+                foreach (float g in FortressIsland.GapAngles)
+                {
+                    Vector3 d = new Vector3(Mathf.Cos(g * Mathf.Deg2Rad), 0f, Mathf.Sin(g * Mathf.Deg2Rad));
+                    float ang = Vector3.Angle(d, outward);
+                    if (ang < best) { best = ang; exit = d; }
+                }
+                // Head for the gap's mouth first, then straight out to sea.
+                Vector3 mouth = island.Center + exit * 17f;
+                target = Vector3.Dot(outward, exit) > 16f && Vector3.Angle(outward, exit) < 20f ? island.Center + exit * 34f : mouth;
+            }
+            else
+            {
+                var corpse = FortressNet.Instance.ServerNearestCorpse(pos, 45f);
+                target = corpse ? corpse.transform.position : island.CratePos;
+                if (corpse && (target - pos).sqrMagnitude < 1.5f * 1.5f)
+                {
+                    _carry[fish] = FortressNet.Instance.ServerTakeCorpse(corpse);
+                    Fx.Send(FxKind.Scoop, target, pos);
+                    Fx.Announce("thiefStole", _carry[fish]);
+                    AutoTest.Count("thief_stole");
+                    return;
+                }
+                if (!corpse && (target - pos).sqrMagnitude < 2.4f * 2.4f)
+                {
+                    int steal = Mathf.Min(_server.Coins, 20 + 2 * _server.Wave);
+                    _carry[fish] = steal > 0 && ServerTrySpend(steal) ? steal : 0;
+                    if (_carry[fish] > 0) { Fx.Announce("thiefCoins", steal); AutoTest.Count("thief_stole"); }
+                    return;
+                }
+            }
+            Vector3 to = target - pos; to.y = 0f;
+            Vector3 dir = to.sqrMagnitude > 0.01f ? to.normalized : fish.transform.forward;
+            fish.transform.forward = dir;
+            _nextHop.TryGetValue(fish, out float hopAt);
+            if (Time.time >= hopAt && WallAhead(pos, dir, stats))
+            {
+                _nextHop[fish] = Time.time + 1.2f;
+                Vector3 over = pos + dir * 2.6f;
+                if (Physics.Raycast(over + Vector3.up * 6f, Vector3.down, out var g, 12f, GameInfo.LevelLayer)) over = g.point + Vector3.up * 0.4f;
+                rig.position = over; fish.transform.position = over;
+                Fx.Send(FxKind.Dust, pos, pos);
+                AutoTest.Count("thief_hops");
+                return;
+            }
+            float load = _carry.ContainsKey(fish) ? 0.6f : 1f; // weighed down by the loot: catchable
+            Vector3 v = dir * RunSpeed(fish) * stats.Speed * SlowFactor(fish) * load;
+            v.y = rig.linearVelocity.y;
+            rig.linearVelocity = v;
+            rig.angularVelocity = Vector3.zero;
+        }
+
+        // Healer: every 2.5 s, every hurt fish within 6 m gets 12% of its health back.
+        private readonly Dictionary<RunningFish, float> _nextHeal = new Dictionary<RunningFish, float>();
+
+        private void HealAround(RunningFish fish)
+        {
+            _nextHeal.TryGetValue(fish, out float next);
+            if (Time.time < next) return;
+            _nextHeal[fish] = Time.time + 2.5f;
+            Vector3 at = fish.transform.position;
+            foreach (var c in FortressPlugin.Alive)
+            {
+                if (!c || c == fish || c._hp.Value <= 0 || (c.transform.position - at).sqrMagnitude > 6f * 6f) continue;
+                if (!FortressPlugin.Instance.MaxHpOf.TryGetValue(c, out int max) || c._hp.Value >= max) continue;
+                c.ServerChangeHp(-Mathf.Min(max - c._hp.Value, Mathf.CeilToInt(max * 0.12f)));
+                Fx.Send(FxKind.Heal, at + Vector3.up * 0.8f, c.transform.position + Vector3.up * 0.6f);
+                AutoTest.Count("healed");
+            }
+        }
+
+        // Digger: meets a wall, goes under it (turrets can't see it down there) and comes up on the other side.
+        private readonly HashSet<Creature> _hidden = new HashSet<Creature>();
+        private readonly HashSet<RunningFish> _dug = new HashSet<RunningFish>();
+        public bool IsHidden(Creature c) => _hidden.Contains(c);
+
+        private System.Collections.IEnumerator Burrow(RunningFish fish, Rigidbody rig, Vector3 dir)
+        {
+            _dug.Add(fish);
+            _hidden.Add(fish);
+            rig.isKinematic = true;
+            Vector3 start = fish.transform.position;
+            Fx.Send(FxKind.Dust, start, start);
+            AutoTest.Count("digger_burrowed");
+            Vector3 down = start + Vector3.down * 1.8f, end = start + dir * 5.5f;
+            if (Physics.Raycast(end + Vector3.up * 6f, Vector3.down, out var g, 12f, GameInfo.LevelLayer)) end = g.point + Vector3.up * 0.4f;
+            for (float t = 0f; t < 2.4f && fish && !fish.IsDead; t += Time.deltaTime)
+            {
+                float k = t / 2.4f;
+                Vector3 p = k < 0.2f ? Vector3.Lerp(start, down, k / 0.2f) : k < 0.85f ? Vector3.Lerp(down, end + Vector3.down * 1.8f, (k - 0.2f) / 0.65f) : Vector3.Lerp(end + Vector3.down * 1.8f, end, (k - 0.85f) / 0.15f);
+                rig.MovePosition(p);
+                yield return null;
+            }
+            _hidden.Remove(fish);
+            if (!fish || fish.IsDead) yield break;
+            Fx.Send(FxKind.Dust, end, end);
+            rig.isKinematic = false;
+        }
+
+        // Bosses: the Behemoth charges, the Coral Queen calls guards, the Tidecaller sends a breaker over a beach.
+        private readonly Dictionary<RunningFish, float> _nextMove2 = new Dictionary<RunningFish, float>();
+        private readonly Dictionary<RunningFish, float> _charge = new Dictionary<RunningFish, float>();
+        private bool Charging(RunningFish fish) => _charge.TryGetValue(fish, out float until) && Time.time < until;
+
+        private void BossMoves(RunningFish fish, EnemyTag tag)
+        {
+            if (!_nextMove2.TryGetValue(fish, out float next)) { _nextMove2[fish] = Time.time + 6f; return; }
+            if (Time.time < next) return;
+            Vector3 at = fish.transform.position;
+            switch (tag.Kind)
+            {
+                case EnemyKind.Boss:
+                    _nextMove2[fish] = Time.time + 10f;
+                    _charge[fish] = Time.time + 1.6f;
+                    Fx.Announce("bossCharge");
+                    AutoTest.Count("boss_charges");
+                    break;
+                case EnemyKind.Queen:
+                    _nextMove2[fish] = Time.time + 12f;
+                    for (int i = 0; i < 3; i++)
+                        FortressPlugin.Instance.ServerSpawnMinion(i == 0 ? EnemyKind.Charger : EnemyKind.Runner, at + Quaternion.Euler(0f, i * 120f, 0f) * Vector3.forward * 2.5f);
+                    Fx.Send(FxKind.Heal, at + Vector3.up * 2f, at + Vector3.up * 4f);
+                    Fx.Announce("queenSummon");
+                    AutoTest.Count("queen_summons");
+                    break;
+                case EnemyKind.Tide:
+                    _nextMove2[fish] = Time.time + 15f;
+                    StartCoroutine(Breaker(Random.Range(0, FortressIsland.GapAngles.Length)));
+                    break;
+            }
+        }
+
+        // A breaker: a 2 s warning, then everything near that beach takes a hit and players there are thrown.
+        private System.Collections.IEnumerator Breaker(int gap)
+        {
+            var island = FortressIsland.Instance;
+            float a = FortressIsland.GapAngles[gap] * Mathf.Deg2Rad;
+            Vector3 dir = new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a));
+            Vector3 beach = island.Center + dir * 21f;
+            Fx.Announce("tideBanner");
+            Fx.Send(FxKind.Wave, island.Center + dir * 34f, island.Center + dir * 34f);
+            yield return new WaitForSeconds(2f);
+            if (!_server.Active) yield break;
+            for (int i = 0; i < 3; i++) Fx.Send(FxKind.Wave, beach + dir * (6f - i * 4f), beach + dir * (6f - i * 4f));
+            BuildSystem.Instance.ServerDamageArea(beach, 9f, 60 + 6 * _server.Wave);
+            HurtPlayersAround(beach, 9f, 25);
+            AutoTest.Count("tide_breakers");
         }
 
         // Harpoons / spikes slow walkers for a while (strongest slow wins).
@@ -277,7 +472,7 @@ namespace HtfFortress
 
         // ---------- going after players ----------
 
-        private static float AggroRange(EnemyKind k) => k == EnemyKind.Charger || k == EnemyKind.Boss ? 7f : k == EnemyKind.Tank ? 4f : 5f;
+        private static float AggroRange(EnemyKind k) => k == EnemyKind.Charger || EnemyCatalog.IsBoss(k) ? 7f : k == EnemyKind.Tank ? 4f : 5f;
 
         // Players enemies can go after (the balance test turns this off to measure turrets against the core alone).
         private static IEnumerable<Player> Targets => AutoTest.IgnorePlayers ? Enumerable.Empty<Player>() : PlayerManager.AlivePlayers;
@@ -403,7 +598,7 @@ namespace HtfFortress
                 _server.BossHp = 0; _server.BossMax = 0;
                 if (_server.Active)
                     foreach (var kv in Enemies.Instance.ServerAll)
-                        if (kv.Value.Kind == EnemyKind.Boss && kv.Key._hp.Value > 0) { _server.BossHp = kv.Key._hp.Value; _server.BossMax = Mathf.Max(_bossMax, kv.Key._hp.Value); _bossMax = _server.BossMax; }
+                        if (EnemyCatalog.IsBoss(kv.Value.Kind) && kv.Key._hp.Value > 0) { _server.BossKind = (byte)kv.Value.Kind; _server.BossHp = kv.Key._hp.Value; _server.BossMax = Mathf.Max(_bossMax, kv.Key._hp.Value); _bossMax = _server.BossMax; }
                 if (_server.BossMax == 0) _bossMax = 0;
                 Send(false);
             }
@@ -466,7 +661,7 @@ namespace HtfFortress
             _bossBox.gameObject.SetActive(boss);
             if (boss)
             {
-                _bossText.text = L10n.T("bossName");
+                _bossText.text = L10n.T("bossName" + (EnemyKind)_view.BossKind);
                 _bossBar.Set((float)_view.BossHp / _view.BossMax);
             }
         }

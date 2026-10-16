@@ -109,6 +109,7 @@ namespace HtfFortress
                 case "gear": yield return GearScenario(); break;
                 case "ui": yield return UiScenario(); break;
                 case "construct": yield return ConstructScenario(); break;
+                case "newfoes": yield return NewFoesScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -464,7 +465,7 @@ namespace HtfFortress
             int shots = 0;
             while (Time.realtimeSinceStartup - start < 260f && plugin.Running)
             {
-                var boss = Enemies.Instance.ServerAll.FirstOrDefault(kv => kv.Value.Kind == EnemyKind.Boss).Key;
+                var boss = Enemies.Instance.ServerAll.FirstOrDefault(kv => EnemyCatalog.IsBoss(kv.Value.Kind)).Key;
                 if (Time.realtimeSinceStartup - start > 6f && !boss) { Note($"boss dead after {Time.realtimeSinceStartup - start:0}s, core {Siege.Instance.CoreHp}"); break; }
                 if (boss && shots < 4 && (int)(Time.realtimeSinceStartup - start) % 20 == 0)
                 {
@@ -520,6 +521,84 @@ namespace HtfFortress
             float boat = BoatManager.Boat ? Vector3.Distance(BoatManager.Boat.HiddenPhysicsRig.position, island.DockPos) : -1f;
             Note($"respawn: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.DockPos):F1} m from dock, boat {boat:F1} m from dock");
             FortressPlugin.Shot("coop_results");
+            yield return new WaitForSecondsRealtime(1f);
+        }
+
+        // The newer enemies, one behaviour at a time, during a long build phase (no waves get in the way).
+        private IEnumerator NewFoesScenario()
+        {
+            var island = FortressIsland.Instance;
+            var plugin = FortressPlugin.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            PlayerManager.ToggleGodMode();
+            IgnorePlayers = true;
+            var me = Player.LocalPlayer;
+            Vector3 center = island.Center;
+            me.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => plugin.Running, 15f, "round start");
+            yield return Until(() => plugin.InBuildTime, 5f, "build time");
+            plugin.DebugExtendBuild(300f);
+            Siege.Instance.ServerAddCoins(500);
+            int C(string k) => Counters.TryGetValue(k, out int v) ? v : 0;
+            Vector3 Gap(int i, float r) { float a = FortressIsland.GapAngles[i] * Mathf.Deg2Rad; var p = center + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * r + Vector3.up * 3f; return p; }
+
+            // Gallery: the new kinds, frozen in a row.
+            Vector3 row = center + new Vector3(0f, FortressIsland.CoreLocal.y + 0.3f, 4.5f);
+            var kinds = new[] { EnemyKind.Thief, EnemyKind.Shield, EnemyKind.Digger, EnemyKind.Healer, EnemyKind.Splitter, EnemyKind.Mini };
+            var shown = new List<Creature>();
+            for (int i = 0; i < kinds.Length; i++) shown.Add(plugin.DebugShowcase(kinds[i], false, row + new Vector3((i - 2.5f) * 1.6f, 0f, 0f), 180f));
+            yield return new WaitForSecondsRealtime(0.8f);
+            yield return Look(row + new Vector3(0f, 0.3f, 3.8f), 180f, "foes_gallery", 0.6f);
+            foreach (var c in shown) if (c) c.ServerChangeHp(1000000);
+            me.LocalTeleport(center + new Vector3(0f, 2f, 0f), 0f, true);
+
+            // Thief, no corpses around: it goes for the crate's coins, then runs for the sea.
+            int coins0 = Siege.Instance.ServerCoins;
+            plugin.ServerSpawnMinion(EnemyKind.Thief, island.CratePos + new Vector3(4f, 2f, 3f));
+            yield return Until(() => C("thief_stole") > 0, 15f, "thief steals");
+            Note($"thief stole: coins {coins0} -> {Siege.Instance.ServerCoins}");
+            yield return Until(() => C("thief_escaped") > 0, 25f, "thief escapes");
+            Note($"thief escaped {C("thief_escaped")}");
+
+            // Healer next to a hurt runner.
+            var runner = plugin.ServerSpawnMinion(EnemyKind.Runner, Gap(1, 12f));
+            plugin.ServerSpawnMinion(EnemyKind.Healer, Gap(1, 12f) + Vector3.right * 1.5f);
+            yield return new WaitForSecondsRealtime(0.5f);
+            if (runner) runner.ServerChangeHp(runner._hp.Value * 7 / 10);
+            int hurt = runner ? runner._hp.Value : -1;
+            yield return Until(() => C("healed") > 0, 8f, "healer heals");
+            Note($"healer: runner hp {hurt} -> {(runner ? runner._hp.Value : -1)}, heals {C("healed")}");
+
+            // Splitter dies into three minis.
+            var split = plugin.ServerSpawnMinion(EnemyKind.Splitter, Gap(2, 14f));
+            yield return new WaitForSecondsRealtime(1f);
+            if (split) split.ServerChangeHp(1000000);
+            yield return new WaitForSecondsRealtime(1f);
+            Note($"splitter: minis spawned {C("spawned_Mini")}");
+
+            // Digger meets a wall line and tunnels under it.
+            float g0 = FortressIsland.GapAngles[0] * Mathf.Deg2Rad;
+            Vector3 gd = new Vector3(Mathf.Cos(g0), 0f, Mathf.Sin(g0)), side = Vector3.Cross(Vector3.up, gd);
+            for (int k = -2; k <= 2; k++) WallAt(center + gd * 15f + side * (k * BuildSystem.Cell) + Vector3.up * 1.2f, gd);
+            var digger = plugin.ServerSpawnMinion(EnemyKind.Digger, Gap(0, 21f));
+            yield return Until(() => C("digger_burrowed") > 0, 20f, "digger burrows");
+            yield return new WaitForSecondsRealtime(3f);
+            Note($"digger: burrowed {C("digger_burrowed")}, now {(digger ? Vector3.Distance(digger.transform.position, center).ToString("F1") : "dead")} m from the lighthouse (walls at 15 m)");
+
+            // Shield bearer walking at a gun that faces it.
+            TurretAt(PieceType.Gun, center + gd * 10f + Vector3.up * 1.2f);
+            plugin.ServerSpawnMinion(EnemyKind.Shield, Gap(0, 22f) + side * 2f);
+            yield return Until(() => C("shield_blocks") > 5, 20f, "shield blocks");
+            Note($"shield: blocked {C("shield_blocks")} hits");
+
+            // The three bosses, one per beach.
+            plugin.ServerSpawnMinion(EnemyKind.Boss, Gap(1, 22f));
+            plugin.ServerSpawnMinion(EnemyKind.Queen, Gap(2, 22f));
+            plugin.ServerSpawnMinion(EnemyKind.Tide, Gap(0, 19f) - side * 3f);
+            yield return Until(() => C("boss_charges") > 0 && C("queen_summons") > 0 && C("tide_breakers") > 0, 24f, "boss moves");
+            Note($"bosses: charges {C("boss_charges")}, queen summons {C("queen_summons")}, breakers {C("tide_breakers")}");
+            yield return Look(center + new Vector3(0f, 2.5f, 0f), YawTo(center, Gap(2, 20f)), "foes_bosses", 0.5f);
+            plugin.DebugKillAll();
             yield return new WaitForSecondsRealtime(1f);
         }
 

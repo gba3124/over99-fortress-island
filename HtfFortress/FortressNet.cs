@@ -55,6 +55,19 @@ namespace HtfFortress
             if (c && c.IsSpawned) _corpses[c] = (value, Time.time + CorpseLife);
         }
 
+        // Thieves: the nearest corpse, and taking it away (returns what it was worth).
+        public Creature ServerNearestCorpse(Vector3 pos, float within) =>
+            _corpses.Keys.Where(c => c && c.IsSpawned && (c.transform.position - pos).sqrMagnitude < within * within)
+                    .OrderBy(c => (c.transform.position - pos).sqrMagnitude).FirstOrDefault();
+
+        public int ServerTakeCorpse(Creature c)
+        {
+            if (!c || !_corpses.TryGetValue(c, out var v)) return 0;
+            _corpses.Remove(c);
+            if (c.IsSpawned) c.DestroyItem();
+            return v.value;
+        }
+
         public IEnumerable<Vector3> ServerCorpsePositions() => _corpses.Keys.Where(c => c && c.IsSpawned).Select(c => c.transform.position);
         public int ServerCapOf(int playerId) => CapOf(playerId);
         public int ServerNetCount(int playerId) => _nets.TryGetValue(playerId, out var n) ? n.count : 0;

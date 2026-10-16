@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace HtfFortress
 {
-    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce, Harpoon, Mortar, Zap, Burn, Scoop, Sell }
+    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce, Harpoon, Mortar, Zap, Burn, Scoop, Sell, Heal, Dust, Wave }
 
     // Host -> everyone: a visual effect (and for Announce, a banner: Key = string key, Arg = number).
     public struct FxEvent : IBroadcast { public FxKind Kind; public Vector3 From; public Vector3 To; public int PieceId; public string Key; public int Arg; }
@@ -17,7 +17,7 @@ namespace HtfFortress
     {
         private static Fx _instance;
         private NetworkManager _registeredOn;
-        private Material _tracer, _ball, _blast, _spit, _bolt, _zap, _fire;
+        private Material _tracer, _ball, _blast, _spit, _bolt, _zap, _fire, _heal, _dust, _water;
 
         static Fx()
         {
@@ -68,7 +68,7 @@ namespace HtfFortress
                 Vector3 me = Player.LocalPlayer && Player.LocalPlayer.Transform ? Player.LocalPlayer.Transform.position : Vector3.zero;
                 switch (e.Key)
                 {
-                    case "bossBanner": Sound("BossFightIntro", me, 1f, AudioDistance.Long); Sound("WhaleNoise_03", me, 1f, AudioDistance.Long); break;
+                    case "bossBannerBoss": case "bossBannerQueen": case "bossBannerTide": Sound("BossFightIntro", me, 1f, AudioDistance.Long); Sound("WhaleNoise_03", me, 1f, AudioDistance.Long); break;
                     case "clearedBanner": Sound("WinRound", me, 0.8f, AudioDistance.Long); break;
                     default: Sound("QuestReceived", me, 0.9f, AudioDistance.Long); break;
                 }
@@ -84,6 +84,9 @@ namespace HtfFortress
                 _bolt = Models.Make(new Color(0.75f, 0.78f, 0.82f));
                 _zap = Models.Make(new Color(0.55f, 0.85f, 1f), new Color(0.4f, 0.8f, 1f));
                 _fire = Models.Make(new Color(1f, 0.45f, 0.1f), new Color(1f, 0.4f, 0.05f));
+                _heal = Models.Make(new Color(0.45f, 1f, 0.5f), new Color(0.3f, 1f, 0.4f));
+                _dust = Models.Make(new Color(0.62f, 0.5f, 0.36f));
+                _water = Models.Make(new Color(0.55f, 0.8f, 1f), new Color(0.4f, 0.7f, 1f));
             }
             if (e.PieceId != 0) AimTurret(e.PieceId, e.To);
             switch (e.Kind)
@@ -98,6 +101,9 @@ namespace HtfFortress
                 case FxKind.Scoop: StartCoroutine(Fly(e.From, e.To + Vector3.up * 1.2f)); SoundRandom("PickUp_V", 1, 3, e.To, 0.7f, AudioDistance.Short); break;
                 case FxKind.Sell: SoundRandom("Sell_0", 1, 3, e.To, 1f); StartCoroutine(Blast(e.To + Vector3.up, 1.6f, _tracer)); break;
                 case FxKind.Burn: StartCoroutine(Blast(e.To + Random.insideUnitSphere * 1.5f, 1.4f, _fire)); break;
+                case FxKind.Heal: StartCoroutine(Zap(e.From, e.To, _heal)); StartCoroutine(Blast(e.To, 0.9f, _heal)); Sound("QuestReceived", e.To, 0.25f, AudioDistance.Short); break;
+                case FxKind.Dust: StartCoroutine(Blast(e.To, 2.2f, _dust)); SoundRandom("ItemImpactHeavy_V", 1, 3, e.To, 0.8f); break;
+                case FxKind.Wave: StartCoroutine(Blast(e.To, 6f, _water)); SoundRandom("WhaleLanding_0", 1, 3, e.To, 1f, AudioDistance.Long); break;
             }
         }
 
@@ -158,14 +164,14 @@ namespace HtfFortress
         }
 
         // Tesla: a jagged bright line that flickers out.
-        private IEnumerator Zap(Vector3 from, Vector3 to)
+        private IEnumerator Zap(Vector3 from, Vector3 to, Material mat = null)
         {
             var parts = new GameObject[3];
             Vector3 prev = from;
             for (int i = 0; i < 3; i++)
             {
                 Vector3 next = i == 2 ? to : Vector3.Lerp(from, to, (i + 1) / 3f) + Random.insideUnitSphere * 0.5f;
-                var go = Shape(PrimitiveType.Cube, _zap);
+                var go = Shape(PrimitiveType.Cube, mat ? mat : _zap);
                 Vector3 d = next - prev;
                 go.transform.SetPositionAndRotation(prev + d * 0.5f, Quaternion.LookRotation(d));
                 go.transform.localScale = new Vector3(0.07f, 0.07f, d.magnitude);
