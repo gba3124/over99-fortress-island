@@ -9,12 +9,8 @@ namespace HtfFortress
     {
         private static Canvas _canvas;
 
-        public static TextMeshProUGUI CreateText(string name, Vector2 anchor, Vector2 offset, float size, TextAlignmentOptions align)
+        private static Canvas Canvas()
         {
-            var font = AccessTools.Field(typeof(LocalizationManager), "_defaultFontAsset")?.GetValue(
-                AccessTools.Field(typeof(LocalizationManager), "_instance")?.GetValue(null)) as TMP_FontAsset;
-            if (!font) return null;
-
             if (!_canvas)
             {
                 var canvasGo = new GameObject("FortressHUD");
@@ -23,9 +19,29 @@ namespace HtfFortress
                 _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
                 _canvas.sortingOrder = 500;
             }
+            return _canvas;
+        }
+
+        // A plain coloured square (no sprite needed), e.g. rotated 45 degrees for an arrow-like marker.
+        public static UnityEngine.UI.Image CreateMarker(string name, Color color, float size)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(Canvas().transform, false);
+            var img = go.AddComponent<UnityEngine.UI.Image>();
+            img.color = color;
+            img.raycastTarget = false;
+            img.rectTransform.sizeDelta = new Vector2(size, size);
+            return img;
+        }
+
+        public static TextMeshProUGUI CreateText(string name, Vector2 anchor, Vector2 offset, float size, TextAlignmentOptions align)
+        {
+            var font = AccessTools.Field(typeof(LocalizationManager), "_defaultFontAsset")?.GetValue(
+                AccessTools.Field(typeof(LocalizationManager), "_instance")?.GetValue(null)) as TMP_FontAsset;
+            if (!font) return null;
 
             var go = new GameObject(name);
-            go.transform.SetParent(_canvas.transform, false);
+            go.transform.SetParent(Canvas().transform, false);
             var tmp = go.AddComponent<TextMeshProUGUI>();
             tmp.font = font;
             tmp.fontSize = size;

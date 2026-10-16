@@ -98,6 +98,7 @@ namespace HtfFortress
                 case "siege": yield return SiegeScenario(); break;
                 case "enemies": yield return EnemiesScenario(); break;
                 case "build": yield return BuildScenario(); break;
+                case "balance": yield return BalanceScenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -120,6 +121,9 @@ namespace HtfFortress
             }
             Note("final boss killed: " + (NPCManager.Instance ? NPCManager.Instance.FinalBossKilled.ToString() : "no NPCManager"));
             Models.Make(Color.white); // logs the material template and its properties
+            var clips = AccessTools.Field(typeof(AudioManager), "_realClips")?.GetValue(null) as System.Collections.IDictionary;
+            if (clips != null) File.WriteAllText(Path.Combine(Root, "fortress-sounds.txt"), string.Join("\n", clips.Keys.Cast<object>().Select(k => k.ToString()).OrderBy(k => k)));
+            Note("sound clips: " + (clips?.Count ?? -1));
         }
 
         // Fortress round where the player stands: pre-built ring of walls + turrets, waves start immediately.
@@ -371,6 +375,74 @@ namespace HtfFortress
                 Note($"wave {w}: alive {FortressPlugin.Alive.Count}, core {Siege.Instance.CoreHp}");
                 plugin.DebugKillAll();
                 yield return new WaitForSecondsRealtime(1.5f);
+            }
+        }
+
+        // A greedy "average player" builder: spends whatever the team has during build time, waves play out for real.
+        private IEnumerator BalanceScenario()
+        {
+            var island = FortressIsland.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            PlayerManager.ToggleGodMode();
+            Vector3 center = island.Center;
+            Player.LocalPlayer.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => FortressPlugin.Instance.Running, 15f, "round start");
+            if (!FortressPlugin.Instance.Running) yield break;
+            var plugin = FortressPlugin.Instance;
+            int lastWave = -1;
+            float end = Time.realtimeSinceStartup + 900f;
+            while (plugin.Running && Time.realtimeSinceStartup < end && plugin.Wave < 15)
+            {
+                if (plugin.InBuildTime) { SpendLikeAPlayer(center); yield return new WaitForSecondsRealtime(1f); plugin.SkipBuildTime(); }
+                if (plugin.Wave != lastWave)
+                {
+                    lastWave = plugin.Wave;
+                    Note($"wave {plugin.Wave}: core {Siege.Instance.CoreHp}, coins {Siege.Instance.ServerCoins}, pieces {BuildSystem.Instance.ServerPieces.Count()}, enemies {FortressPlugin.Alive.Count}");
+                    if (plugin.Wave % 3 == 0) { Vector3 eye = center + new Vector3(0f, 0f, -6f); yield return Look(eye, 0f, "bal_w" + plugin.Wave, 0.5f); }
+                }
+                yield return new WaitForSecondsRealtime(1f);
+            }
+            Note($"balance result: reached wave {plugin.Wave}, running {plugin.Running}, core {Siege.Instance.CoreHp}");
+        }
+
+        private static readonly List<(PieceType type, float r, float sideOffset, int gap)> Plan = BuildPlan();
+        private static List<(PieceType, float, float, int)> BuildPlan()
+        {
+            var p = new List<(PieceType, float, float, int)>();
+            for (int g = 0; g < 3; g++) { p.Add((PieceType.Wall, 15f, 0f, g)); p.Add((PieceType.Wall, 15f, 1f, g)); p.Add((PieceType.Wall, 15f, -1f, g)); }
+            for (int g = 0; g < 3; g++) p.Add((PieceType.Gun, 10f, 0.7f, g));
+            for (int g = 0; g < 3; g++) p.Add((PieceType.Spikes, 19f, 0f, g));
+            p.Add((PieceType.Cannon, 4f, 0f, 0));
+            for (int g = 0; g < 3; g++) p.Add((PieceType.Harpoon, 10f, -0.8f, g));
+            p.Add((PieceType.Tesla, 4f, 0f, 1)); p.Add((PieceType.Mortar, 4f, 0f, 2));
+            for (int g = 0; g < 3; g++) { p.Add((PieceType.Wall, 12f, 1f, g)); p.Add((PieceType.Wall, 12f, -1f, g)); }
+            return p;
+        }
+
+        private static void SpendLikeAPlayer(Vector3 center)
+        {
+            // 1) repair anything below half, 2) build the next planned piece, 3) upgrade the cheapest upgradable piece.
+            foreach (var p in BuildSystem.Instance.ServerPieces.Where(p => p.Hp < p.MaxHp / 2).ToList())
+                BuildSystem.Instance.ServerUpgrade(p.Id, 0, repair: true);
+            for (int guard = 0; guard < 40; guard++)
+            {
+                bool did = false;
+                foreach (var (type, r, side, gi) in Plan)
+                {
+                    float g = FortressIsland.GapAngles[gi] * Mathf.Deg2Rad;
+                    Vector3 dir = new Vector3(Mathf.Cos(g), 0f, Mathf.Sin(g)), sv = Vector3.Cross(Vector3.up, dir);
+                    Vector3 at = center + dir * r + sv * side * BuildSystem.Cell + Vector3.up * 1.2f;
+                    bool ok = type == PieceType.Wall ? WallAt(at, dir) : TurretAt(type, at);
+                    if (ok) { did = true; break; }
+                }
+                if (!did)
+                {
+                    var up = BuildSystem.Instance.ServerPieces.Where(p => p.Level < Catalog.MaxLevel && p.Type != PieceType.Floor)
+                        .OrderBy(p => Catalog.UpgradeCost(p.Type, p.Level)).FirstOrDefault();
+                    if (up.Id == 0 || Siege.Instance.ServerCoins < Catalog.UpgradeCost(up.Type, up.Level)) break;
+                    BuildSystem.Instance.ServerUpgrade(up.Id, 1 + (up.Id % 2));
+                }
+                if (Siege.Instance.ServerCoins < 8) break;
             }
         }
 

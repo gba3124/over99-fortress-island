@@ -103,9 +103,13 @@ namespace HtfFortress
             if (!_root) Spawn();
 
             UpdateRing();
+            // First time you come near the island: a welcome banner.
+            if (!_welcomed && Player.LocalPlayer && Player.LocalPlayer.Transform && OnIsland(Player.LocalPlayer.Transform.position, IslandRadius + 12f))
+            { _welcomed = true; Banner(L10n.T("islandWelcome"), 4f); }
             if (InstanceFinder.IsServerStarted) ServerReadyCheck();
         }
         private bool _wasUnlockedKnown;
+        private bool _welcomed;
 
         // Offshore, pointing away from the other islands so it never overlaps one.
         private static Vector3 PickCenter(Vector3 cur)
@@ -252,6 +256,7 @@ namespace HtfFortress
                           + (r.NewRecord ? L10n.T("resultRecord") : L10n.T("resultBest", r.Best)) + "\n\n"
                           + L10n.T("resultAgain");
             _resultsUntil = Time.time + 12f;
+            Fx.Sound(r.NewRecord ? "CasinoWinEpic" : "Death", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Center, 1f, AudioDistance.Long);
         }
 
         private void LateUpdate()

@@ -28,9 +28,21 @@ namespace HtfFortress
         private void Awake() => _instance = this;
 
         // Host: send to everyone (the host's own client receives it too).
-        public static void Send(FxKind kind, Vector3 from, Vector3 to, int pieceId = 0)
+        // `damage` > 0 shows the game's own damage number where it lands.
+        public static void Send(FxKind kind, Vector3 from, Vector3 to, int pieceId = 0, int damage = 0)
         {
-            if (InstanceFinder.IsServerStarted) InstanceFinder.ServerManager.Broadcast(new FxEvent { Kind = kind, From = from, To = to, PieceId = pieceId });
+            if (InstanceFinder.IsServerStarted) InstanceFinder.ServerManager.Broadcast(new FxEvent { Kind = kind, From = from, To = to, PieceId = pieceId, Arg = damage });
+        }
+
+        // The game's own sounds (see BepInEx/fortress-sounds.txt for every name).
+        public static void Sound(string clip, Vector3 at, float volume = 1f, AudioDistance dist = AudioDistance.Medium)
+        {
+            try { AudioManager.PlayClipAt(clip, at, true, dist, volume); } catch { }
+        }
+
+        public static void SoundRandom(string prefix, int min, int max, Vector3 at, float volume = 1f, AudioDistance dist = AudioDistance.Medium)
+        {
+            try { AudioManager.PlayRandomClipAt(prefix, min, max, at, true, dist, volume); } catch { }
         }
 
         public static void Announce(string key, int arg = 0)
@@ -53,8 +65,16 @@ namespace HtfFortress
             if (e.Kind == FxKind.Announce)
             {
                 if (FortressIsland.Instance) FortressIsland.Instance.Banner(L10n.T(e.Key, e.Arg), 3.5f);
+                Vector3 me = Player.LocalPlayer && Player.LocalPlayer.Transform ? Player.LocalPlayer.Transform.position : Vector3.zero;
+                switch (e.Key)
+                {
+                    case "bossBanner": Sound("BossFightIntro", me, 1f, AudioDistance.Long); Sound("WhaleNoise_03", me, 1f, AudioDistance.Long); break;
+                    case "clearedBanner": Sound("WinRound", me, 0.8f, AudioDistance.Long); break;
+                    default: Sound("QuestReceived", me, 0.9f, AudioDistance.Long); break;
+                }
                 return;
             }
+            if (e.Arg > 0) { try { PlayerUI.AddDamageNumber(e.To + Vector3.up * 0.8f, e.Arg, false); } catch { } }
             if (!_tracer)
             {
                 _tracer = Models.Make(new Color(1f, 0.85f, 0.4f), new Color(1f, 0.7f, 0.2f));
@@ -68,13 +88,13 @@ namespace HtfFortress
             if (e.PieceId != 0) AimTurret(e.PieceId, e.To);
             switch (e.Kind)
             {
-                case FxKind.Tracer: StartCoroutine(Tracer(e.From, e.To)); break;
-                case FxKind.Cannonball: StartCoroutine(Arc(e.From, e.To, _ball, 0.35f, 0.35f, 1.5f, true)); break;
-                case FxKind.Spit: StartCoroutine(Arc(e.From, e.To, _spit, 0.3f, SpitFlight, 2.5f, false)); break;
-                case FxKind.Blast: StartCoroutine(Blast(e.To, 3.5f)); break;
-                case FxKind.Harpoon: StartCoroutine(Bolt(e.From, e.To)); break;
-                case FxKind.Mortar: StartCoroutine(Arc(e.From, e.To, _ball, 0.45f, MortarFlight, 9f, true)); break;
-                case FxKind.Zap: StartCoroutine(Zap(e.From, e.To)); break;
+                case FxKind.Tracer: StartCoroutine(Tracer(e.From, e.To)); SoundRandom("SMGFireOutside_V", 1, 4, e.From, 0.35f); break;
+                case FxKind.Cannonball: StartCoroutine(Arc(e.From, e.To, _ball, 0.35f, 0.35f, 1.5f, true)); SoundRandom("ShotgunFireOutside_0", 1, 4, e.From, 0.8f); break;
+                case FxKind.Spit: StartCoroutine(Arc(e.From, e.To, _spit, 0.3f, SpitFlight, 2.5f, false)); SoundRandom("PiranhaVomit_V", 1, 3, e.From, 0.8f); break;
+                case FxKind.Blast: StartCoroutine(Blast(e.To, 3.5f)); Sound("Explosion", e.To, 1f, AudioDistance.Long); break;
+                case FxKind.Harpoon: StartCoroutine(Bolt(e.From, e.To)); SoundRandom("BowShoot_0", 1, 4, e.From, 0.9f); break;
+                case FxKind.Mortar: StartCoroutine(Arc(e.From, e.To, _ball, 0.45f, MortarFlight, 9f, true)); Sound("BoatFire", e.From, 0.8f); break;
+                case FxKind.Zap: StartCoroutine(Zap(e.From, e.To)); if (e.PieceId != 0) Sound("Ignite", e.From, 0.6f); break;
                 case FxKind.Burn: StartCoroutine(Blast(e.To + Random.insideUnitSphere * 1.5f, 1.4f, _fire)); break;
             }
         }
@@ -149,8 +169,8 @@ namespace HtfFortress
                 yield return null;
             }
             Destroy(ball);
-            if (blastAtEnd) yield return Blast(to, 2.5f);
-            else yield return Blast(to, 1.2f, _spit);
+            if (blastAtEnd) { Sound("Explosion", to, 0.6f); yield return Blast(to, 2.5f); }
+            else { SoundRandom("ItemHitWaterMedium_V", 1, 3, to, 0.8f); yield return Blast(to, 1.2f, _spit); }
         }
 
         private IEnumerator Blast(Vector3 at, float maxSize, Material mat = null)

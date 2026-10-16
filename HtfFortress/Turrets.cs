@@ -62,16 +62,19 @@ namespace HtfFortress
             switch (p.Type)
             {
                 case PieceType.Gun:
-                    target.ServerChangeHp(Dmg(s.Damage, target, s));
-                    Fx.Send(FxKind.Tracer, muzzle, hit, p.Id);
+                {
+                    int dmg = Dmg(s.Damage, target, s);
+                    target.ServerChangeHp(dmg);
+                    Fx.Send(FxKind.Tracer, muzzle, hit, p.Id, dmg);
                     break;
+                }
 
                 case PieceType.Cannon:
                     for (int i = 0; i < s.Shots; i++)
                     {
                         Vector3 at = i == 0 ? hit : hit + Random.insideUnitSphere.Flat() * 3f;
                         Splash(alive, at, s.Splash, s.Damage, s);
-                        Fx.Send(FxKind.Cannonball, muzzle, at, i == 0 ? p.Id : 0);
+                        Fx.Send(FxKind.Cannonball, muzzle, at, i == 0 ? p.Id : 0, Mathf.RoundToInt(s.Damage * DamageMultiplier.Value));
                     }
                     break;
 
@@ -109,9 +112,10 @@ namespace HtfFortress
                     for (int n = 0; n < s.Chain && cur; n++)
                     {
                         hitSet.Add(cur);
-                        cur.ServerChangeHp(Dmg(s.Damage, cur, s));
+                        int zd = Dmg(s.Damage, cur, s);
+                        cur.ServerChangeHp(zd);
                         Vector3 to = cur.transform.position + Vector3.up * 0.4f;
-                        Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0);
+                        Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0, zd);
                         from = to;
                         Creature nextC = null; float nb = 6f * 6f;
                         foreach (var c in alive)

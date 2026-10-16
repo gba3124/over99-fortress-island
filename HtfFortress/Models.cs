@@ -139,7 +139,7 @@ namespace HtfFortress
             if (level <= 1) return c;
             float lum = c.grayscale;
             if (Catalog.IsTurret(type))
-                return Color.Lerp(c, new Color(1f, 0.8f, 0.3f), level == 2 ? 0.2f : 0.45f);
+                return Color.Lerp(c, new Color(1f, 0.85f, 0.45f), level == 2 ? 0.08f : 0.16f);
             var target = level == 2 ? new Color(0.58f, 0.58f, 0.6f) : new Color(0.38f, 0.43f, 0.52f);
             return Color.Lerp(new Color(lum, lum, lum), target, 0.75f) * (0.7f + lum);
         }

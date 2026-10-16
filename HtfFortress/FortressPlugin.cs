@@ -61,15 +61,15 @@ namespace HtfFortress
             _countPerWave = Config.Bind("Waves", "CountPerWave", 2, new ConfigDescription("Extra creatures added each wave.", new AcceptableValueRange<int>(0, 20)));
             _hpPerWave = Config.Bind("Waves", "HpPerWave", 0.25f, new ConfigDescription("Extra HP multiplier per wave (0.25 = +25% each wave).", new AcceptableValueRange<float>(0f, 2f)));
             _radius = Config.Bind("Waves", "SpawnRadius", 6f, new ConfigDescription("Distance from the host where creatures appear.", new AcceptableValueRange<float>(3f, 80f)));
-            _breakSeconds = Config.Bind("Waves", "BreakSeconds", 20f, new ConfigDescription("Build time between waves.", new AcceptableValueRange<float>(0f, 60f)));
+            _breakSeconds = Config.Bind("Waves", "BreakSeconds", 25f, new ConfigDescription("Build time between waves.", new AcceptableValueRange<float>(0f, 60f)));
             _bestWave = Config.Bind("Stats", "BestWave", 0, "Most waves cleared in one run (saved automatically).");
             _walkerShare = Config.Bind("Siege", "WalkerShare", 0.5f, new ConfigDescription("Share of each wave that are walkers charging the core.", new AcceptableValueRange<float>(0f, 1f)));
             _walkerRadius = Config.Bind("Siege", "WalkerSpawnRadius", 25f, new ConfigDescription("How far from the core walkers appear (on land).", new AcceptableValueRange<float>(8f, 80f)));
             Siege.CoreMaxHp = Config.Bind("Siege", "CoreMaxHp", 500, new ConfigDescription("Core health.", new AcceptableValueRange<int>(50, 10000)));
             Siege.WalkerDamage = Config.Bind("Siege", "WalkerDamage", 10, new ConfigDescription("Damage a walker deals per hit to walls and the core.", new AcceptableValueRange<int>(1, 500)));
             _readyKey = Config.Bind("Waves", "ReadyKey", Key.N, "Host presses this during build time to start the next wave right away.");
-            _firstBuildSeconds = Config.Bind("Waves", "FirstBuildSeconds", 30f, new ConfigDescription("Build time before wave 1.", new AcceptableValueRange<float>(0f, 120f)));
-            Siege.StartCoins = Config.Bind("Economy", "StartCoins", 100, new ConfigDescription("Team coins at the start of a run.", new AcceptableValueRange<int>(0, 10000)));
+            _firstBuildSeconds = Config.Bind("Waves", "FirstBuildSeconds", 45f, new ConfigDescription("Build time before wave 1.", new AcceptableValueRange<float>(0f, 120f)));
+            Siege.StartCoins = Config.Bind("Economy", "StartCoins", 150, new ConfigDescription("Team coins at the start of a run.", new AcceptableValueRange<int>(0, 10000)));
             _killReward = Config.Bind("Economy", "KillReward", 3, new ConfigDescription("Coins per kill (plus the wave number).", new AcceptableValueRange<int>(0, 100)));
             _waveBonus = Config.Bind("Economy", "WaveBonus", 20, new ConfigDescription("Coins for clearing a wave (plus 5 x wave).", new AcceptableValueRange<int>(0, 500)));
             Turrets.DamageMultiplier = Config.Bind("Economy", "TurretDamage", 1f, new ConfigDescription("Turret damage multiplier.", new AcceptableValueRange<float>(0.1f, 10f)));

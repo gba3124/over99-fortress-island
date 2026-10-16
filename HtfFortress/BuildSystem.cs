@@ -437,12 +437,17 @@ namespace HtfFortress
             _pieces.TryGetValue(s.Id, out var go);
             if (s.Removed)
             {
-                if (go) { _pieceIds.Remove(go); Destroy(go); }
+                if (go)
+                {
+                    _pieceIds.Remove(go);
+                    bool broken = _states.TryGetValue(s.Id, out var last) && last.Hp <= 0 || s.Hp <= 0;
+                    StartCoroutine(Shatter(go, broken));
+                }
                 _pieces.Remove(s.Id);
                 _states.Remove(s.Id);
                 return;
             }
-            _states.TryGetValue(s.Id, out var prev);
+            bool had = _states.TryGetValue(s.Id, out var prev);
             if (!go)
             {
                 go = CreatePieceObject(s.Type, PieceLayer); // ground layer, so players and creatures can stand and walk on it
@@ -454,8 +459,53 @@ namespace HtfFortress
                 prev.Level = 0;
             }
             if (prev.Level != s.Level) Models.SetLevelLook(go, s.Type, s.Level);
+            if (!had) { StartCoroutine(Pop(go.transform)); Fx.SoundRandom("WoodItemImpact_V", 1, 3, s.Pos, 0.8f, AudioDistance.Short); }
+            else if (s.Level > prev.Level) { StartCoroutine(Pop(go.transform)); Fx.SoundRandom("MetallicItemImpact_V", 1, 2, s.Pos, 0.9f, AudioDistance.Short); Fx.Sound("Buy_01", s.Pos, 0.6f, AudioDistance.Short); }
+            else if (s.Hp < prev.Hp) { StartCoroutine(Shake(go.transform)); if (Time.time > _nextHitSound) { _nextHitSound = Time.time + 0.15f; Fx.SoundRandom("KnifeHit_0", 1, 4, s.Pos, 0.6f, AudioDistance.Short); } }
+            else if (s.Hp > prev.Hp) Fx.Sound("Buy_02", s.Pos, 0.6f, AudioDistance.Short);
             _states[s.Id] = s;
             Models.Tint(go, s.MaxHp > 0 ? Mathf.Clamp01((float)s.Hp / s.MaxHp) : 1f);
+        }
+
+        private float _nextHitSound;
+
+        // New / upgraded: grow in from 70 %.
+        private static System.Collections.IEnumerator Pop(Transform t)
+        {
+            for (float k = 0f; k < 1f && t; k += Time.deltaTime / 0.18f)
+            {
+                t.localScale = Vector3.one * Mathf.Lerp(0.7f, 1f, 1f - (1f - k) * (1f - k));
+                yield return null;
+            }
+            if (t) t.localScale = Vector3.one;
+        }
+
+        // Hit: a short shudder.
+        private static System.Collections.IEnumerator Shake(Transform t)
+        {
+            if (!t) yield break;
+            Vector3 home = t.position;
+            for (float k = 0f; k < 0.15f && t; k += Time.deltaTime)
+            {
+                t.position = home + Random.insideUnitSphere * 0.06f;
+                yield return null;
+            }
+            if (t) t.position = home;
+        }
+
+        // Destroyed: sink and shrink with a crash; removed by hand: just shrink.
+        private static System.Collections.IEnumerator Shatter(GameObject go, bool broken)
+        {
+            if (broken) Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, go.transform.position, 1f);
+            foreach (var c in go.GetComponentsInChildren<Collider>()) c.enabled = false;
+            Vector3 start = go.transform.position;
+            for (float k = 0f; k < 1f && go; k += Time.deltaTime / (broken ? 0.4f : 0.2f))
+            {
+                go.transform.localScale = Vector3.one * (1f - k);
+                if (broken) go.transform.position = start + Vector3.down * k * 0.8f + Random.insideUnitSphere * 0.05f;
+                yield return null;
+            }
+            if (go) Destroy(go);
         }
 
         private void ClearLocalPieces()

@@ -33,6 +33,8 @@ namespace HtfFortress
         private SiegeState _lastSent;
         private float _nextSend;
         private int _bossMax;
+        private int _lastCoins; private bool _lastCoinsKnown; private string _coinPop = ""; private float _coinPopUntil;
+        private int _lastReady; private bool _wasActive;
         private readonly HashSet<RunningFish> _walkers = new HashSet<RunningFish>();
         private readonly Dictionary<RunningFish, float> _nextAttack = new Dictionary<RunningFish, float>();
 
@@ -281,6 +283,11 @@ namespace HtfFortress
 
         private void LateUpdate()
         {
+            // Sounds for the ready countdown and the round starting.
+            if (_view.ReadyCountdown != _lastReady) { if (_view.ReadyCountdown > 0) Fx.Sound("Click", _view.CorePos, 1f, AudioDistance.Long); _lastReady = _view.ReadyCountdown; }
+            if (_view.Active && !_wasActive) { Fx.Sound("QuestFinished", _view.CorePos, 1f, AudioDistance.Long); _lastCoinsKnown = false; }
+            _wasActive = _view.Active;
+
             if (!_view.Active)
             {
                 if (_core) Destroy(_core);
@@ -313,8 +320,11 @@ namespace HtfFortress
             {
                 _hud.gameObject.SetActive(true);
                 string phase = _view.Building ? L10n.T("buildPhase", _view.Countdown) : L10n.T("fightPhase");
+                if (_view.Coins > _lastCoins && _lastCoinsKnown) { _coinPop = "+" + (_view.Coins - _lastCoins); _coinPopUntil = Time.time + 1.2f; Fx.Sound("Sell_01", _view.CorePos, 0.4f, AudioDistance.Long); }
+                _lastCoins = _view.Coins; _lastCoinsKnown = true;
+                string coinPop = Time.time < _coinPopUntil ? "  <color=#ffd75a>" + _coinPop + "</color>" : "";
                 string boss = _view.BossMax > 0 ? "\n<color=#ff6050>" + L10n.T("bossHud", _view.BossHp, _view.BossMax) + "</color>" : "";
-                _hud.text = L10n.T("siegeHud", _view.Wave, _view.CoreHp, _view.CoreMax, _view.Remaining, _view.Coins) + "\n" + phase + boss;
+                _hud.text = L10n.T("siegeHud", _view.Wave, _view.CoreHp, _view.CoreMax, _view.Remaining, _view.Coins) + coinPop + "\n" + phase + boss;
             }
         }
 

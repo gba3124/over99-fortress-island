@@ -78,6 +78,7 @@ namespace HtfFortress
             ["branchHint"] = new[] { "[U] {0} / [Shift+U] {1}: {2} coins", "[U] {0} / [Shift+U] {1}：{2} 金幣", "[U] {0} / [Shift+U] {1}：{2} 金币" },
             ["repairHint"] = new[] { "[J] repair: {0} coins", "[J] 修理：{0} 金幣", "[J] 修理：{0} 金币" },
             ["barHint"] = new[] { "[T] next  [Shift+T] back", "[T] 下一個  [Shift+T] 上一個", "[T] 下一个  [Shift+T] 上一个" },
+            ["islandWelcome"] = new[] { "<size=120%>Fortress Island</size>\nHold the lighthouse", "<size=120%>要塞島</size>\n守住燈塔", "<size=120%>要塞岛</size>\n守住灯塔" },
             ["Wall"] = new[] { "Wall", "牆", "墙" },
             ["Floor"] = new[] { "Floor", "地板", "地板" },
             ["Ramp"] = new[] { "Ramp", "斜坡", "斜坡" },

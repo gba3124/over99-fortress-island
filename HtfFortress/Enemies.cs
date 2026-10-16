@@ -84,6 +84,52 @@ namespace HtfFortress
         public void ServerClear() => _tags.Clear();
         public IEnumerable<KeyValuePair<Creature, EnemyTag>> ServerAll => _tags.Where(kv => kv.Key);
 
+        // Client: tagged enemies currently spawned here (for the HUD markers).
+        public IEnumerable<Transform> ClientEnemies()
+        {
+            var cm = InstanceFinder.ClientManager;
+            if (cm == null) yield break;
+            foreach (int id in _dressed)
+                if (cm.Objects.Spawned.TryGetValue(id, out NetworkObject nob) && nob && nob.GetComponent<Creature>() is Creature c && c.Hp > 0)
+                    yield return nob.transform;
+        }
+
+        // Edge-of-screen markers for enemies you can't see (within 70 m).
+        private readonly List<UnityEngine.UI.Image> _markers = new List<UnityEngine.UI.Image>();
+
+        private void LateUpdate()
+        {
+            int used = 0;
+            var cam = GameInfo.CurCamera;
+            if (cam && Siege.Instance && Siege.Instance.ViewActive)
+            {
+                Vector3 me = cam.transform.position;
+                foreach (var t in ClientEnemies())
+                {
+                    if (used >= 12) break;
+                    Vector3 wp = t.position + Vector3.up;
+                    float dist = Vector3.Distance(wp, me);
+                    if (dist > 70f) continue;
+                    Vector3 vp = cam.WorldToViewportPoint(wp);
+                    bool onScreen = vp.z > 0f && vp.x > 0.02f && vp.x < 0.98f && vp.y > 0.02f && vp.y < 0.98f;
+                    if (onScreen) continue;
+                    Vector2 d = new Vector2(vp.x - 0.5f, vp.y - 0.5f);
+                    if (vp.z < 0f) d = -d;
+                    if (d.sqrMagnitude < 0.0001f) d = Vector2.down;
+                    d = d.normalized;
+                    if (used >= _markers.Count) _markers.Add(Hud.CreateMarker("EnemyMarker", new Color(1f, 0.25f, 0.2f, 0.9f), 18f));
+                    var m = _markers[used++];
+                    m.gameObject.SetActive(true);
+                    float s = Mathf.Max(Mathf.Abs(d.x) / 0.46f, Mathf.Abs(d.y) / 0.44f);
+                    m.rectTransform.anchorMin = m.rectTransform.anchorMax = new Vector2(0.5f + d.x / s, 0.5f + d.y / s);
+                    m.rectTransform.anchoredPosition = Vector2.zero;
+                    m.rectTransform.localRotation = Quaternion.Euler(0f, 0f, 45f);
+                    m.color = new Color(1f, 0.25f, 0.2f, Mathf.Lerp(1f, 0.35f, dist / 70f));
+                }
+            }
+            for (int i = used; i < _markers.Count; i++) if (_markers[i]) _markers[i].gameObject.SetActive(false);
+        }
+
         private void Update()
         {
             var nm = InstanceFinder.NetworkManager;
