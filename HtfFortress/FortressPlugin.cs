@@ -59,7 +59,7 @@ namespace HtfFortress
             _pool = Config.Bind("Waves", "CreaturePool", "", "Comma-separated creature names to spawn. Empty = hostile creatures only. Names are listed in the BepInEx log on start.");
             _baseCount = Config.Bind("Waves", "BaseCount", 3, new ConfigDescription("Creatures in wave 1.", new AcceptableValueRange<int>(1, 50)));
             _countPerWave = Config.Bind("Waves", "CountPerWave", 2, new ConfigDescription("Extra creatures added each wave.", new AcceptableValueRange<int>(0, 20)));
-            _hpPerWave = Config.Bind("Waves", "HpPerWave", 0.25f, new ConfigDescription("Extra HP multiplier per wave (0.25 = +25% each wave).", new AcceptableValueRange<float>(0f, 2f)));
+            _hpPerWave = Config.Bind("Waves", "HpPerWave", 0.4f, new ConfigDescription("Extra HP multiplier per wave (0.4 = +40% each wave).", new AcceptableValueRange<float>(0f, 2f)));
             _radius = Config.Bind("Waves", "SpawnRadius", 6f, new ConfigDescription("Distance from the host where creatures appear.", new AcceptableValueRange<float>(3f, 80f)));
             _breakSeconds = Config.Bind("Waves", "BreakSeconds", 25f, new ConfigDescription("Build time between waves.", new AcceptableValueRange<float>(0f, 60f)));
             _bestWave = Config.Bind("Stats", "BestWave", 0, "Most waves cleared in one run (saved automatically).");
@@ -71,7 +71,7 @@ namespace HtfFortress
             _firstBuildSeconds = Config.Bind("Waves", "FirstBuildSeconds", 45f, new ConfigDescription("Build time before wave 1.", new AcceptableValueRange<float>(0f, 120f)));
             Siege.StartCoins = Config.Bind("Economy", "StartCoins", 150, new ConfigDescription("Team coins at the start of a run.", new AcceptableValueRange<int>(0, 10000)));
             _killReward = Config.Bind("Economy", "KillReward", 3, new ConfigDescription("Coins per kill (plus the wave number).", new AcceptableValueRange<int>(0, 100)));
-            _waveBonus = Config.Bind("Economy", "WaveBonus", 30, new ConfigDescription("Coins for clearing a wave (plus 8 x wave).", new AcceptableValueRange<int>(0, 500)));
+            _waveBonus = Config.Bind("Economy", "WaveBonus", 25, new ConfigDescription("Coins for clearing a wave (plus 6 x wave).", new AcceptableValueRange<int>(0, 500)));
             Turrets.DamageMultiplier = Config.Bind("Economy", "TurretDamage", 1f, new ConfigDescription("Turret damage multiplier.", new AcceptableValueRange<float>(0.1f, 10f)));
             L10n.Setting = Config.Bind("General", "Language", LanguageSetting.Auto, "Language for Fortress messages. Auto follows the game.");
             BuildSystem.BuildKey = Config.Bind("Build", "BuildKey", Key.G, "Toggle build mode.");
@@ -163,6 +163,14 @@ namespace HtfFortress
             // Wave is over when the land attackers are dead (or, if a wave had none, everything), or after 3 minutes for extras.
             bool waveDone = _wave > 0 && _nextWaveAt == 0f && (_requiredSpawned ? _required.Count == 0 : _alive.Count == 0);
             if (_wave > 0 && _nextWaveAt == 0f && Time.time - _waveStarted > 180f && _required.Count == 0) waveDone = true;
+            // Hard cap: a wave never lasts more than 4 minutes (stragglers leave, no reward).
+            if (_wave > 0 && _nextWaveAt == 0f && Time.time - _waveStarted > 240f)
+            {
+                foreach (var c in _required.Where(c => c).ToList())
+                    BuildSystem.Log.LogInfo($"wave cap: removing {(Enemies.Instance.TryGet(c, out var t) ? t.Kind.ToString() : "?")} at {c.transform.position} (core {Siege.Instance.CorePos})");
+                waveDone = true;
+                AutoTest.Count("wave_capped");
+            }
             if (waveDone && _alive.Count > 0)
             {
                 foreach (var c in _alive.Where(c => c && c.IsSpawned).ToList()) c.DestroyItem();
@@ -175,7 +183,7 @@ namespace HtfFortress
                 if (_wave > 0)
                 {
                     _cleared = _wave;
-                    int bonus = _waveBonus.Value + 8 * _wave;
+                    int bonus = _waveBonus.Value + 6 * _wave;
                     Siege.Instance.ServerAddCoins(bonus);
                     Say(L10n.T("cleared", _wave, bonus, _breakSeconds.Value.ToString("0"), _readyKey.Value));
                     Fx.Announce("clearedBanner", _wave);

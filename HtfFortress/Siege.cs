@@ -154,6 +154,16 @@ namespace HtfFortress
             if (fish.AttachedRod || rig.isKinematic || !Grounded(fish)) return true; // hold still until it lands
 
             Vector3 pos = fish.transform.position;
+            // Stuck on a rock or tree (no progress and no attack for 8 s): send it back to a landing beach.
+            if (!_progress.TryGetValue(fish, out var prog) || (pos - prog.pos).sqrMagnitude > 0.5f * 0.5f) _progress[fish] = prog = (pos, Time.time);
+            else if (Time.time - prog.time > 8f && FortressIsland.Instance.Exists && FortressIsland.Instance.WalkerSpawn(out var retry))
+            {
+                rig.position = retry; fish.transform.position = retry;
+                _progress[fish] = (retry, Time.time);
+                BuildSystem.Log.LogInfo($"unstuck {tag.Kind} from {pos}");
+                AutoTest.Count("unstuck");
+                return true;
+            }
             Vector3 to = _server.CorePos - pos; to.y = 0f;
             float dist = to.magnitude;
             Vector3 dir = dist > 0.01f ? to / dist : fish.transform.forward;
@@ -191,6 +201,8 @@ namespace HtfFortress
         }
         private float SlowFactor(Creature c) => _slow.TryGetValue(c, out var s) && s.until > Time.time ? s.factor : 1f;
 
+        private readonly Dictionary<RunningFish, (Vector3 pos, float time)> _progress = new Dictionary<RunningFish, (Vector3, float)>();
+
         private static void Halt(Rigidbody rig) => rig.linearVelocity = new Vector3(0f, rig.linearVelocity.y, 0f);
 
         private void TryAttack(RunningFish fish, Collider wall, EnemyTag tag, EnemyStats stats)
@@ -199,7 +211,8 @@ namespace HtfFortress
             _nextAttack.TryGetValue(fish, out float next);
             if (Time.time < next) return;
             _nextAttack[fish] = Time.time + AttackInterval;
-            int dmg = Mathf.RoundToInt(WalkerDamage.Value * stats.Damage);
+            _progress[fish] = (fish.transform.position, Time.time); // attacking counts as progress
+            int dmg = Mathf.RoundToInt(WalkerDamage.Value * stats.Damage * (1f + 0.08f * Mathf.Max(0, _server.Wave - 1))); // hits harder each wave
             if (tag.Kind == EnemyKind.Bomber) { Explode(fish, dmg); return; }
             if (wall) { BuildSystem.Instance.ServerDamage(wall, Mathf.RoundToInt(dmg * stats.WallMult)); AutoTest.Count("walker_hit_piece"); }
             else { DamageCore(Mathf.Max(1, dmg / 2)); AutoTest.Count("walker_hit_core"); } // the lighthouse is sturdier than a wall
