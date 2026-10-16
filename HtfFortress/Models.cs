@@ -36,38 +36,47 @@ namespace HtfFortress
             return _template;
         }
 
+        // The game's DefaultShader takes albedo from a palette texture (_Colors), not a colour property,
+        // so each material gets its own tiny solid texture that we repaint for tints.
+        private static readonly Dictionary<Material, Texture2D> Swatch = new Dictionary<Material, Texture2D>();
+        private static readonly Dictionary<Material, Color> Painted = new Dictionary<Material, Color>();
+
         public static Material Make(Color color, Color emit = default)
         {
             var t = Template();
             var m = t ? new Material(t) : new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
+            Swatch[m] = tex;
             var sh = m.shader;
             for (int i = 0; i < sh.GetPropertyCount(); i++)
             {
                 string n = sh.GetPropertyName(i);
-                var type = sh.GetPropertyType(i);
                 string ln = n.ToLowerInvariant();
-                // Plain colour: blank out the albedo texture and tint every colour slot.
-                if (type == UnityEngine.Rendering.ShaderPropertyType.Texture && (ln.Contains("main") || ln.Contains("base") || ln.Contains("albedo") || ln.Contains("color") || ln.Contains("palette")))
-                    m.SetTexture(n, Texture2D.whiteTexture);
-                if (type == UnityEngine.Rendering.ShaderPropertyType.Color)
-                {
-                    if (ln.Contains("emis")) m.SetColor(n, emit);
-                    else if (ln.Contains("color") || ln.Contains("tint")) m.SetColor(n, color);
-                }
+                var type = sh.GetPropertyType(i);
+                if (type == UnityEngine.Rendering.ShaderPropertyType.Texture && (ln == "_colors" || ln.Contains("main") || ln.Contains("base") || ln.Contains("albedo")))
+                    m.SetTexture(n, tex);
             }
-            if (emit.maxColorComponent > 0f) m.EnableKeyword("_EMISSION");
+            if (emit.maxColorComponent > 0f)
+            {
+                if (m.HasProperty("_Emission")) m.SetFloat("_Emission", 1f);
+                m.EnableKeyword("_EMISSION");
+                color = Color.Lerp(color, emit, 0.5f);
+            }
+            SetMatColor(m, color);
             return m;
         }
 
         private static void SetMatColor(Material m, Color c)
         {
-            var sh = m.shader;
-            for (int i = 0; i < sh.GetPropertyCount(); i++)
+            if (Painted.TryGetValue(m, out var prev) && prev == c) return;
+            Painted[m] = c;
+            if (Swatch.TryGetValue(m, out var tex) && tex)
             {
-                string ln = sh.GetPropertyName(i).ToLowerInvariant();
-                if (sh.GetPropertyType(i) == UnityEngine.Rendering.ShaderPropertyType.Color && !ln.Contains("emis") && (ln.Contains("color") || ln.Contains("tint")))
-                    m.SetColor(sh.GetPropertyName(i), c);
+                tex.SetPixels(new[] { c, c, c, c });
+                tex.Apply(false);
             }
+            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
+            if (m.HasProperty("_Color")) m.SetColor("_Color", c);
         }
 
         // ---------- spawning ----------

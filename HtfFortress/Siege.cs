@@ -13,7 +13,7 @@ using UnityEngine;
 namespace HtfFortress
 {
     // Host -> everyone: the core and the wave status shown on the HUD.
-    public struct SiegeState : IBroadcast { public bool Active; public Vector3 CorePos; public int CoreHp; public int CoreMax; public int Wave; public int Remaining; public int Coins; public bool Building; public int Countdown; }
+    public struct SiegeState : IBroadcast { public bool Active; public Vector3 CorePos; public int CoreHp; public int CoreMax; public int Wave; public int Remaining; public int Coins; public bool Building; public int Countdown; public int ReadyTotal; public int ReadyIn; public int ReadyCountdown; }
 
     // The fortress core, and the walkers that charge it and break walls in the way.
     // All decisions run on the host; clients just draw the core and the HUD from SiegeState.
@@ -49,12 +49,12 @@ namespace HtfFortress
             GenericWriter<SiegeState>.SetWrite((w, v) =>
             {
                 w.WriteBoolean(v.Active); w.WriteVector3(v.CorePos); w.WriteInt32(v.CoreHp); w.WriteInt32(v.CoreMax);
-                w.WriteInt32(v.Wave); w.WriteInt32(v.Remaining); w.WriteInt32(v.Coins); w.WriteBoolean(v.Building); w.WriteInt32(v.Countdown);
+                w.WriteInt32(v.Wave); w.WriteInt32(v.Remaining); w.WriteInt32(v.Coins); w.WriteBoolean(v.Building); w.WriteInt32(v.Countdown); w.WriteInt32(v.ReadyTotal); w.WriteInt32(v.ReadyIn); w.WriteInt32(v.ReadyCountdown);
             });
             GenericReader<SiegeState>.SetRead(r => new SiegeState
             {
                 Active = r.ReadBoolean(), CorePos = r.ReadVector3(), CoreHp = r.ReadInt32(), CoreMax = r.ReadInt32(),
-                Wave = r.ReadInt32(), Remaining = r.ReadInt32(), Coins = r.ReadInt32(), Building = r.ReadBoolean(), Countdown = r.ReadInt32()
+                Wave = r.ReadInt32(), Remaining = r.ReadInt32(), Coins = r.ReadInt32(), Building = r.ReadBoolean(), Countdown = r.ReadInt32(), ReadyTotal = r.ReadInt32(), ReadyIn = r.ReadInt32(), ReadyCountdown = r.ReadInt32()
             });
         }
 
@@ -67,6 +67,16 @@ namespace HtfFortress
         public bool ServerActive => _server.Active;
         public bool ViewActive => _view.Active;
         public int ViewCoins => _view.Coins;
+        public int ServerCoins => _server.Coins;
+        public SiegeState View => _view;
+
+        public void ServerDamageCoreForTest(int dmg) => _server.CoreHp = Mathf.Max(0, _server.CoreHp - dmg);
+
+        public void ServerReady(int total, int inCircle, int countdown)
+        {
+            _server.ReadyTotal = total; _server.ReadyIn = inCircle; _server.ReadyCountdown = countdown;
+        }
+        public int CoreHp => _server.CoreHp;
 
         // Outside fortress mode building is free (sandbox); inside it costs the team's coins.
         public bool ServerTrySpend(int cost)
@@ -170,8 +180,8 @@ namespace HtfFortress
             _nextAttack.TryGetValue(fish, out float next);
             if (Time.time < next) return;
             _nextAttack[fish] = Time.time + AttackInterval;
-            if (wall) BuildSystem.Instance.ServerDamage(wall, WalkerDamage.Value);
-            else _server.CoreHp = Mathf.Max(0, _server.CoreHp - WalkerDamage.Value);
+            if (wall) { BuildSystem.Instance.ServerDamage(wall, WalkerDamage.Value); AutoTest.Count("walker_hit_piece"); }
+            else { _server.CoreHp = Mathf.Max(0, _server.CoreHp - WalkerDamage.Value); AutoTest.Count("walker_hit_core"); }
         }
 
         // ---------- per frame ----------
@@ -187,7 +197,16 @@ namespace HtfFortress
             if (!_view.Active)
             {
                 if (_core) Destroy(_core);
-                if (_hud) _hud.gameObject.SetActive(false);
+                // Between rounds: on the island, explain how to start.
+                bool near = FortressIsland.Instance && Player.LocalPlayer && Player.LocalPlayer.Transform
+                            && FortressIsland.Instance.OnIsland(Player.LocalPlayer.Transform.position, FortressIsland.IslandRadius + 6f);
+                if (!near) { if (_hud) _hud.gameObject.SetActive(false); return; }
+                if (!_hud) _hud = Hud.CreateText("SiegeStatus", new Vector2(0.5f, 1f), new Vector2(0f, -40f), 30f, TextAlignmentOptions.Top);
+                if (!_hud) return;
+                _hud.gameObject.SetActive(true);
+                _hud.text = L10n.T("islandTitle") + "\n" + (_view.ReadyCountdown > 0
+                    ? L10n.T("readyCountdown", _view.ReadyCountdown)
+                    : L10n.T("readyPrompt", _view.ReadyIn, _view.ReadyTotal));
                 return;
             }
             if (!_core)

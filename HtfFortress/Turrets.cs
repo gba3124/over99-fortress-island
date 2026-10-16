@@ -73,6 +73,7 @@ namespace HtfFortress
                 }
                 else target.ServerChangeHp(dmg);
 
+                AutoTest.Count("shots_" + p.Type);
                 InstanceFinder.ServerManager.Broadcast(new ShotFx { PieceId = p.Id, From = muzzle, To = hit, Cannon = p.Type == PieceType.Cannon });
             }
         }

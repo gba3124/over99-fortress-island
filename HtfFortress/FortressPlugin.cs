@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using BepInEx;
 using BepInEx.Configuration;
+using FishNet;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -13,10 +14,12 @@ namespace HtfFortress
 {
     // Fortress mode: host presses a key, a core appears where they stand, and waves of the game's own creatures attack.
     // Walkers (RunningFish) charge the core and break walls; the rest spawn near the host. Each wave is bigger and tougher.
-    [BepInPlugin("owen.htf.fortress", "HTF Fortress", "0.3.0")]
+    [BepInPlugin("owen.htf.fortress", "HTF Fortress", "0.4.0")]
     public class FortressPlugin : BaseUnityPlugin
     {
         private ConfigEntry<Key> _toggleKey;
+        private ConfigEntry<bool> _debugKeys;
+        private int _kills;
         private ConfigEntry<string> _pool;
         private ConfigEntry<int> _baseCount;
         private ConfigEntry<int> _countPerWave;
@@ -41,11 +44,14 @@ namespace HtfFortress
         private int _cleared;
         private float _nextWaveAt;
         private bool _warnedNoLand;
+        private bool _hadAlivePlayers;
 
         private void Awake()
         {
             _instance = this;
-            _toggleKey = Config.Bind("Waves", "ToggleKey", Key.F9, "Host presses this to start / stop the wave mode.");
+            _toggleKey = Config.Bind("Debug", "ToggleKey", Key.F9, "Debug only: host starts/stops a round where they stand (needs DebugKeys).");
+            _debugKeys = Config.Bind("Debug", "DebugKeys", false, "Enable debug keys (F9 start/stop anywhere).");
+            FortressIsland.Unlock = Config.Bind("Island", "Unlock", IslandUnlock.AfterFinalBoss, "When the fortress island appears: after beating the final boss, or always.");
             _pool = Config.Bind("Waves", "CreaturePool", "", "Comma-separated creature names to spawn. Empty = hostile creatures only. Names are listed in the BepInEx log on start.");
             _baseCount = Config.Bind("Waves", "BaseCount", 3, new ConfigDescription("Creatures in wave 1.", new AcceptableValueRange<int>(1, 50)));
             _countPerWave = Config.Bind("Waves", "CountPerWave", 2, new ConfigDescription("Extra creatures added each wave.", new AcceptableValueRange<int>(0, 20)));
@@ -64,14 +70,16 @@ namespace HtfFortress
             _waveBonus = Config.Bind("Economy", "WaveBonus", 20, new ConfigDescription("Coins for clearing a wave (plus 5 x wave).", new AcceptableValueRange<int>(0, 500)));
             Turrets.DamageMultiplier = Config.Bind("Economy", "TurretDamage", 1f, new ConfigDescription("Turret damage multiplier.", new AcceptableValueRange<float>(0.1f, 10f)));
             L10n.Setting = Config.Bind("General", "Language", LanguageSetting.Auto, "Language for Fortress messages. Auto follows the game.");
-            BuildSystem.BuildKey = Config.Bind("Build", "BuildKey", Key.B, "Toggle build mode (place walls).");
+            BuildSystem.BuildKey = Config.Bind("Build", "BuildKey", Key.G, "Toggle build mode.");
             BuildSystem.Log = Logger;
             Models.Dir = Path.Combine(Path.GetDirectoryName(Info.Location), "Models");
             gameObject.AddComponent<BuildSystem>();
             gameObject.AddComponent<Siege>();
             gameObject.AddComponent<Turrets>();
+            gameObject.AddComponent<FortressIsland>();
+            gameObject.AddComponent<AutoTest>();
             new Harmony("owen.htf.fortress").PatchAll();
-            Logger.LogInfo("HTF Fortress loaded. Host: press " + _toggleKey.Value + " in game to start waves.");
+            Logger.LogInfo("HTF Fortress loaded.");
         }
 
         private static bool IsHost => Server.Instance && Server.Instance.IsServerInitialized;
@@ -79,6 +87,11 @@ namespace HtfFortress
         // Screenshots land in BepInEx/fortress-shots so they can be checked without watching the screen.
         public static void Shot(string tag, float delay = 0f) => _instance.StartCoroutine(_instance.ShotAfter(tag, delay));
         private static FortressPlugin _instance;
+        public static FortressPlugin Instance => _instance;
+        public bool Running => _running;
+        public int Wave => _wave;
+        public bool InBuildTime => _running && _nextWaveAt > 0f;
+        public void SkipBuildTime() { if (InBuildTime) _nextWaveAt = Time.time; }
 
         private IEnumerator ShotAfter(string tag, float delay)
         {
@@ -94,22 +107,24 @@ namespace HtfFortress
         {
             var kb = Keyboard.current;
             if (kb != null && kb.f10Key.wasPressedThisFrame) Shot("manual");
-            if (kb != null && kb[_toggleKey.Value].wasPressedThisFrame && !ChatManager.IsTyping)
+            if (_debugKeys.Value && kb != null && kb[_toggleKey.Value].wasPressedThisFrame && !ChatManager.IsTyping)
             {
                 if (_running) Stop(L10n.T("stopped"));
-                else Start_();
+                else if (Player.LocalPlayer) StartRound(Player.LocalPlayer.Transform.position);
             }
             if (!_running) return;
             if (!IsHost || !Player.LocalPlayer) { Stop(L10n.T("notHost")); return; }
             // Same squad-wipe check the game uses (PlayerDying.OnPlayerAmountChange).
-            if (_wave > 0 && PlayerManager.AlivePlayers.Count == 0) { Stop(L10n.T("wipe")); return; }
+            // Only once someone has been alive this round (a fresh save starts in a 'drowning' intro with nobody alive).
+            if (PlayerManager.AlivePlayers.Count > 0) _hadAlivePlayers = true;
+            else if (_hadAlivePlayers && _wave > 0) { Stop(L10n.T("wipe")); return; }
             if (Siege.Instance.CoreDestroyed) { Stop(L10n.T("coreDown")); return; }
 
             // Creature.Hp is only filled in OnStartClient; the synced _hp is valid from spawn.
             int before = _alive.Count;
             _alive.RemoveAll(c => !c || c._hp.Value <= 0);
             int killed = before - _alive.Count;
-            if (killed > 0) Siege.Instance.ServerAddCoins(killed * (_killReward.Value + _wave));
+            if (killed > 0) { Siege.Instance.ServerAddCoins(killed * (_killReward.Value + _wave)); _kills += killed; AutoTest.Count("kills", killed); }
 
             if (_alive.Count == 0 && _nextWaveAt == 0f)
             {
@@ -132,7 +147,7 @@ namespace HtfFortress
             }
         }
 
-        private void Start_()
+        public void StartRound(Vector3 corePos)
         {
             if (!IsHost) { ChatManager.ChatMessage(L10n.T("prefix") + " " + L10n.T("onlyHost")); return; }
             var pool = BuildPool();
@@ -143,10 +158,13 @@ namespace HtfFortress
             _wave = 0;
             _cleared = 0;
             _warnedNoLand = false;
+            _hadAlivePlayers = false;
+            _kills = 0;
+            BuildSystem.Instance.RoundBuilt = 0;
             _nextWaveAt = 0f;
             _alive.Clear();
-            Siege.Instance.ServerStart(Player.LocalPlayer.Transform.position);
-            Say(L10n.T("start", pool.Count, _bestWave.Value, _toggleKey.Value));
+            Siege.Instance.ServerStart(corePos);
+            Say(L10n.T("start", _bestWave.Value));
             Say(L10n.T("startHint", BuildSystem.BuildKey.Value, _readyKey.Value));
             Shot("start", 2f);
         }
@@ -154,12 +172,17 @@ namespace HtfFortress
         private void Stop(string why)
         {
             _running = false;
+            bool coreLost = Siege.Instance.CoreDestroyed;
             foreach (var c in _alive.Where(c => c && c.IsSpawned)) c.DestroyItem();
             _alive.Clear();
             Siege.Instance.ServerStop();
-            string record = _cleared > _bestWave.Value ? L10n.T("newRecord") : L10n.T("best", _bestWave.Value);
-            if (_cleared > _bestWave.Value) _bestWave.Value = _cleared;
-            Say(L10n.T("result", why, _cleared) + record);
+            bool record = _cleared > _bestWave.Value;
+            string recordText = record ? L10n.T("newRecord") : L10n.T("best", _bestWave.Value);
+            if (record) _bestWave.Value = _cleared;
+            Say(L10n.T("result", why, _cleared) + recordText);
+            // Everyone sees the results panel; the field is cleared for the next round.
+            InstanceFinder.ServerManager.Broadcast(new RoundResult { Waves = _cleared, Kills = _kills, Built = BuildSystem.Instance.RoundBuilt, Best = _bestWave.Value, NewRecord = record, CoreLost = coreLost });
+            BuildSystem.Instance.ServerClearAll();
         }
 
         private List<Item> BuildPool()
@@ -194,7 +217,9 @@ namespace HtfFortress
             {
                 bool walker = i < walkers;
                 Vector3 pos = default;
-                if (walker && !FindLandAround(core, _walkerRadius.Value, out pos))
+                bool island = FortressIsland.Instance.Exists && FortressIsland.Instance.OnIsland(core);
+                if (walker && island) { if (!FortressIsland.Instance.WalkerSpawn(out pos)) walker = false; }
+                else if (walker && !FindLandAround(core, _walkerRadius.Value, out pos))
                 {
                     walker = false; // no ground nearby: spawn a sea creature instead of drowning the walker
                     if (!_warnedNoLand) { _warnedNoLand = true; Say(L10n.T("noLand")); }
@@ -202,12 +227,12 @@ namespace HtfFortress
                 var list = walker ? _walkerPrefabs : _poolPrefabs;
                 if (list.Count == 0) continue;
                 Item prefab = list[UnityEngine.Random.Range(0, list.Count)];
-                if (!walker) pos = FindSpawnPos(host, _radius.Value, WalksOnLand(prefab.GetComponent<Creature>()));
+                if (!walker) pos = island ? FortressIsland.Instance.SeaSpawn() : FindSpawnPos(host, _radius.Value, WalksOnLand(prefab.GetComponent<Creature>()));
                 Item item = Instantiate(prefab, pos, Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f));
                 Creature c = item.Creature;
                 c._hp.Value = Mathf.Max(1, Mathf.RoundToInt(c.MaxHp * hpMult));
                 Server.Instance.Spawn(item.gameObject);
-                if (walker) Siege.Instance.RegisterWalker(c);
+                if (walker) { Siege.Instance.RegisterWalker(c); AutoTest.Count("walkers_spawned"); } else AutoTest.Count("sea_spawned");
                 _alive.Add(c);
                 Logger.LogInfo($"  spawned {prefab.name}{(walker ? " [walker]" : "")} at {pos}");
             }

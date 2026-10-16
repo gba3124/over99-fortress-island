@@ -21,7 +21,8 @@ namespace HtfFortress
     public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; public int Hp; public int MaxHp; public int Level; }
 
     // Fortnite-style building on a fixed world grid.
-    // B toggles build mode, Q cycles pieces, hold LMB to keep placing, R flips, U upgrades and X removes the piece you look at.
+    // G toggles build mode, T cycles pieces, hold LMB to keep placing, Y flips, U upgrades and H removes the piece you look at.
+    // (The game already uses B, Q, R, X, E, F, C, V, Z and 1-9.) While building, item clicks are blocked so you don't swing what you hold.
     // The host owns the piece list and the coins; clients send requests and mirror what the host broadcasts.
     public class BuildSystem : MonoBehaviour
     {
@@ -46,6 +47,7 @@ namespace HtfFortress
 
         private NetworkManager _registeredOn;
         private bool _building;
+        public static bool Building => Instance && Instance._building;
         private PieceType _type = PieceType.Wall;
         private bool _flip;
         private GameObject _ghost;
@@ -54,6 +56,8 @@ namespace HtfFortress
         private Vector3 _lastSentPos = Vector3.positiveInfinity;
         private TextMeshProUGUI _hud;
         private string _lookInfo = "";
+        private string _blockReason = "";
+        public int RoundBuilt;
 
         public static int PieceLayer
         {
@@ -102,8 +106,8 @@ namespace HtfFortress
             }
 
             if (kb.escapeKey.wasPressedThisFrame) { SetBuilding(false); return; }
-            if (kb.qKey.wasPressedThisFrame) _type = (PieceType)(((int)_type + 1) % Catalog.TypeCount);
-            if (kb.rKey.wasPressedThisFrame) _flip = !_flip;
+            if (kb.tKey.wasPressedThisFrame) _type = (PieceType)(((int)_type + 1) % Catalog.TypeCount);
+            if (kb.yKey.wasPressedThisFrame) _flip = !_flip;
 
             UpdateGhost();
             UpdateLookInfo(out int lookedId);
@@ -115,7 +119,7 @@ namespace HtfFortress
                 InstanceFinder.ClientManager.Broadcast(new PiecePlaceRequest { Type = _type, Pos = _lastSentPos, RotY = _ghost.transform.eulerAngles.y });
             }
             if (mouse != null && mouse.leftButton.wasReleasedThisFrame) _lastSentPos = Vector3.positiveInfinity;
-            if (lookedId != 0 && kb.xKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceRemoveRequest { Id = lookedId });
+            if (lookedId != 0 && kb.hKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceRemoveRequest { Id = lookedId });
             if (lookedId != 0 && kb.uKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = lookedId });
         }
 
@@ -185,6 +189,9 @@ namespace HtfFortress
             return hit;
         }
 
+        // Building happens on the fortress island during a round.
+        private static bool AllowedAt(Vector3 pos) => FortressIsland.Instance && FortressIsland.Instance.OnIsland(pos, FortressIsland.BuildRadius);
+
         private static bool Clashes(PieceType a, PieceType b) => a == b || (Catalog.IsTurret(a) && Catalog.IsTurret(b));
 
         private void UpdateGhost()
@@ -202,8 +209,13 @@ namespace HtfFortress
             bool hit = ComputePlacement(out var pos, out var rot);
             bool aboveWater = pos.y + Cell > WaterManager.GetWaterHeight(pos);
             bool free = !_states.Values.Any(s => Clashes(s.Type, _type) && (s.Pos - pos).sqrMagnitude < 0.01f);
-            bool affordable = !Siege.Instance.ViewActive || Siege.Instance.ViewCoins >= Catalog.BuildCost(_type);
-            _ghostValid = hit && aboveWater && free && affordable;
+            bool affordable = Siege.Instance.ViewCoins >= Catalog.BuildCost(_type);
+            bool zone = AllowedAt(pos);
+            _blockReason = !Siege.Instance.ViewActive ? L10n.T("needRound")
+                         : !zone ? L10n.T("needIsland")
+                         : !affordable ? L10n.T("needCoins")
+                         : "";
+            _ghostValid = hit && aboveWater && free && affordable && zone && Siege.Instance.ViewActive;
 
             _ghost.SetActive(true);
             _ghost.transform.SetPositionAndRotation(pos, rot);
@@ -257,8 +269,9 @@ namespace HtfFortress
             if (!_hud) _hud = Hud.CreateText("BuildHint", new Vector2(0.5f, 0f), new Vector2(0f, 80f), 26f, TextAlignmentOptions.Bottom);
             if (!_hud) return;
             _hud.gameObject.SetActive(true);
-            string cost = Siege.Instance.ViewActive ? L10n.T("cost", Catalog.BuildCost(_type)) : L10n.T("free");
-            _hud.text = (_lookInfo.Length > 0 ? _lookInfo + "\n" : "") + L10n.T("buildHud", PieceName(_type, 1) + cost);
+            string cost = L10n.T("cost", Catalog.BuildCost(_type));
+            string top = _blockReason.Length > 0 ? "<color=#ff7060>" + _blockReason + "</color>" : _lookInfo;
+            _hud.text = (top.Length > 0 ? top + "\n" : "") + L10n.T("buildHud", PieceName(_type, 1) + cost);
         }
 
         // ---------- networking ----------
@@ -278,16 +291,23 @@ namespace HtfFortress
             Log.LogInfo("Build system registered on NetworkManager.");
         }
 
-        private void OnPlaceRequest(NetworkConnection conn, PiecePlaceRequest req, Channel ch)
+        private void OnPlaceRequest(NetworkConnection conn, PiecePlaceRequest req, Channel ch) => ServerPlace(req.Type, req.Pos, req.RotY);
+
+        // Host only. Returns false if the slot is taken or the team can't afford it.
+        public bool ServerPlace(PieceType type, Vector3 pos, float rotY)
         {
-            if (_serverPieces.Values.Any(p => Clashes(p.Type, req.Type) && (p.Pos - req.Pos).sqrMagnitude < 0.01f)) return;
-            int cost = Catalog.BuildCost(req.Type);
-            if (!Siege.Instance.ServerTrySpend(cost)) return; // free outside fortress mode
-            int maxHp = Catalog.MaxHp(req.Type, 1);
-            var state = new PieceState { Id = _nextId++, Type = req.Type, Pos = req.Pos, RotY = req.RotY, Hp = maxHp, MaxHp = maxHp, Level = 1 };
+            if (_serverPieces.Values.Any(p => Clashes(p.Type, type) && (p.Pos - pos).sqrMagnitude < 0.01f)) return false;
+            if (!Siege.Instance.ServerActive || !AllowedAt(pos)) return false;
+            int cost = Catalog.BuildCost(type);
+            if (!Siege.Instance.ServerTrySpend(cost)) return false;
+            int maxHp = Catalog.MaxHp(type, 1);
+            var state = new PieceState { Id = _nextId++, Type = type, Pos = pos, RotY = rotY, Hp = maxHp, MaxHp = maxHp, Level = 1 };
             _serverPieces[state.Id] = state;
             _spent[state.Id] = Siege.Instance.ServerActive ? cost : 0;
             InstanceFinder.ServerManager.Broadcast(state);
+            RoundBuilt++;
+            AutoTest.Count("placed_" + type);
+            return true;
         }
 
         private void OnUpgradeRequest(NetworkConnection conn, PieceUpgradeRequest req, Channel ch)
@@ -311,6 +331,12 @@ namespace HtfFortress
             Remove(state);
         }
 
+        // Host: wipe the field between rounds.
+        public void ServerClearAll()
+        {
+            foreach (var p in _serverPieces.Values.ToList()) Remove(p);
+        }
+
         private void Remove(PieceState state)
         {
             _serverPieces.Remove(state.Id);
@@ -324,7 +350,7 @@ namespace HtfFortress
         {
             if (!col || !_pieceIds.TryGetValue(col.gameObject, out int id) || !_serverPieces.TryGetValue(id, out var state)) return false;
             state.Hp -= dmg;
-            if (state.Hp <= 0) { Remove(state); return true; }
+            if (state.Hp <= 0) { Remove(state); AutoTest.Count("pieces_destroyed"); return true; }
             _serverPieces[id] = state;
             InstanceFinder.ServerManager.Broadcast(state);
             return true;
@@ -374,4 +400,11 @@ namespace HtfFortress
             _pieceIds.Clear();
         }
     }
+
+    // Left/right click go to the held item; swallow them while building so placing doesn't also swing or shoot.
+    [HarmonyLib.HarmonyPatch(typeof(PlayerHolding), "PrimaryInput")]
+    internal static class BlockPrimaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building; }
+
+    [HarmonyLib.HarmonyPatch(typeof(PlayerHolding), "SecondaryInput")]
+    internal static class BlockSecondaryWhileBuilding { private static bool Prefix() => !BuildSystem.Building; }
 }
