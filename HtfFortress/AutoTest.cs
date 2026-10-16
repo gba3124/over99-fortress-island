@@ -482,7 +482,7 @@ namespace HtfFortress
                 {
                     var corpse = FortressNet.Instance.ServerCorpsePositions().Where(q => island.OnIsland(q, 26f)).Cast<Vector3?>().FirstOrDefault();
                     if (FortressNet.Instance.ServerNetCount(me.ObjectId) >= 5) me.LocalTeleport(island.CratePos + new Vector3(-1.2f, 0.3f, 0f), 0f, true);
-                    else if (corpse != null && Random.value < 0.5f) me.LocalTeleport(corpse.Value + Vector3.up * 0.5f, 0f, true);
+                    else if (corpse != null && UnityEngine.Random.value < 0.5f) me.LocalTeleport(corpse.Value + Vector3.up * 0.5f, 0f, true);
                     else { Vector3 stand = center + gapDir * 18f; me.LocalTeleport(stand, YawTo(stand, center + gapDir * 26f), true); }
                 }
                 if (!shotBite && AutoTest.Counters.TryGetValue("player_hits", out int hits) && hits > 0) { shotBite = true; FortressPlugin.Shot("coop_bitten"); }
