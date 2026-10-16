@@ -66,8 +66,11 @@ namespace HtfFortress
 
         public void ServerStart(Vector3 near)
         {
+            // Only snap to ground right under the host's feet; a long ray from a dock or boat would hit the seabed.
             Vector3 pos = near;
-            if (Physics.Raycast(near + Vector3.up * 5f, Vector3.down, out var rh, 30f, GameInfo.LevelLayer)) pos = rh.point;
+            if (Physics.Raycast(near + Vector3.up * 2f, Vector3.down, out var rh, 6f, GameInfo.LevelLayer)) pos = rh.point;
+            pos.y = Mathf.Max(pos.y, WaterManager.GetWaterHeight(pos));
+            BuildSystem.Log.LogInfo($"Core placed at {pos} (host at {near}).");
             _server = new SiegeState { Active = true, CorePos = pos, CoreHp = CoreMaxHp.Value, CoreMax = CoreMaxHp.Value };
             _walkers.Clear();
             _nextAttack.Clear();

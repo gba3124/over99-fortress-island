@@ -32,6 +32,7 @@ namespace HtfFortress
         private int _wave;
         private int _cleared;
         private float _nextWaveAt;
+        private bool _warnedNoLand;
 
         private void Awake()
         {
@@ -97,6 +98,7 @@ namespace HtfFortress
             _running = true;
             _wave = 0;
             _cleared = 0;
+            _warnedNoLand = false;
             _nextWaveAt = 0f;
             _alive.Clear();
             Siege.Instance.ServerStart(Player.LocalPlayer.transform.position);
@@ -145,12 +147,16 @@ namespace HtfFortress
             for (int i = 0; i < count; i++)
             {
                 bool walker = i < walkers;
+                Vector3 pos = default;
+                if (walker && !FindLandAround(core, _walkerRadius.Value, out pos))
+                {
+                    walker = false; // no ground nearby: spawn a sea creature instead of drowning the walker
+                    if (!_warnedNoLand) { _warnedNoLand = true; Say(L10n.T("noLand")); }
+                }
                 var list = walker ? _walkerPrefabs : _poolPrefabs;
                 if (list.Count == 0) continue;
                 Item prefab = list[UnityEngine.Random.Range(0, list.Count)];
-                Vector3 pos;
-                if (walker) { if (!FindLandAround(core, _walkerRadius.Value, out pos)) continue; }
-                else pos = FindSpawnPos(host, _radius.Value, WalksOnLand(prefab.GetComponent<Creature>()));
+                if (!walker) pos = FindSpawnPos(host, _radius.Value, WalksOnLand(prefab.GetComponent<Creature>()));
                 Item item = Instantiate(prefab, pos, Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f));
                 Creature c = item.Creature;
                 c._hp.Value = Mathf.Max(1, Mathf.RoundToInt(c.MaxHp * hpMult));

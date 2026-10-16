@@ -35,6 +35,7 @@ namespace HtfFortress
                                    "建造：{0}    [Q] 切换   [按住左键] 放置   [R] 反向   [X] 拆除   [B] 离开" },
             ["siegeHud"] = new[] { "Wave {0}     Core {1}/{2}     Enemies left {3}", "第 {0} 波     核心 {1}/{2}     剩餘敵人 {3}", "第 {0} 波     核心 {1}/{2}     剩余敌人 {3}" },
             ["coreDown"] = new[] { "The core was destroyed! Game over.", "核心被摧毀！遊戲結束。", "核心被摧毁！游戏结束。" },
+            ["noLand"] = new[] { "No land near the core, so walkers can't spawn. Start on an island to get walkers.", "核心附近沒有陸地，登陸魚無法出現。請站在島上再開始。", "核心附近没有陆地，登陆鱼无法出现。请站在岛上再开始。" },
             ["Wall"] = new[] { "Wall", "牆", "墙" },
             ["Floor"] = new[] { "Floor", "地板", "地板" },
             ["Ramp"] = new[] { "Ramp", "斜坡", "斜坡" },
