@@ -55,6 +55,9 @@ namespace HtfFortress
             if (c && c.IsSpawned) _corpses[c] = (value, Time.time + CorpseLife);
         }
 
+        public IEnumerable<Vector3> ServerCorpsePositions() => _corpses.Keys.Where(c => c && c.IsSpawned).Select(c => c.transform.position);
+        public int ServerNetCount(int playerId) => _nets.TryGetValue(playerId, out var n) ? n.count : 0;
+
         public void ServerReset()
         {
             foreach (var c in _corpses.Keys.Where(c => c && c.IsSpawned).ToList()) c.DestroyItem();

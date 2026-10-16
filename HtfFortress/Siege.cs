@@ -222,9 +222,15 @@ namespace HtfFortress
         private readonly Dictionary<RunningFish, float> _nextSpit = new Dictionary<RunningFish, float>();
         private readonly Dictionary<RunningFish, float> _nextMove = new Dictionary<RunningFish, float>();
 
+        private readonly Dictionary<RunningFish, float> _spitterBorn = new Dictionary<RunningFish, float>();
+        private const float SpitterStay = 75f;
+
         private void SteerSpitter(RunningFish fish, Rigidbody rig, EnemyStats stats)
         {
             if (!rig.isKinematic) rig.isKinematic = true;
+            // After a while it dives back into the deep (no reward), so one unreachable spitter can't stall a wave forever.
+            if (!_spitterBorn.TryGetValue(fish, out float born)) _spitterBorn[fish] = born = Time.time;
+            if (Time.time - born > SpitterStay) { _walkers.Remove(fish); _spitterBorn.Remove(fish); fish.DestroyItem(); AutoTest.Count("spitter_retreated"); return; }
             Vector3 pos = fish.transform.position;
             float water = WaterManager.GetWaterHeight(pos);
             _nextMove.TryGetValue(fish, out float move);

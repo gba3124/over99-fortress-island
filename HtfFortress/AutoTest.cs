@@ -401,6 +401,12 @@ namespace HtfFortress
                     Note($"wave {plugin.Wave}: core {Siege.Instance.CoreHp}, coins {Siege.Instance.ServerCoins}, pieces {BuildSystem.Instance.ServerPieces.Count()}, enemies {FortressPlugin.Alive.Count}");
                     if (plugin.Wave % 3 == 0) { Vector3 eye = center + new Vector3(0f, 0f, -6f); yield return Look(eye, 0f, "bal_w" + plugin.Wave, 0.5f); }
                 }
+                // Play the net: walk to a corpse on the island, sell when the net is full (or every few pickups).
+                var me = Player.LocalPlayer;
+                var corpse = FortressNet.Instance.ServerCorpsePositions().Where(p => island.OnIsland(p, 26f)).OrderBy(p => (p - me.Transform.position).sqrMagnitude).Cast<Vector3?>().FirstOrDefault();
+                if (FortressNet.Instance.ServerNetCount(me.ObjectId) >= 5 || (corpse == null && FortressNet.Instance.ServerNetCount(me.ObjectId) > 0))
+                    me.LocalTeleport(island.CratePos + new Vector3(-1.2f, 0.3f, 0f), 0f, true);
+                else if (corpse != null) me.LocalTeleport(corpse.Value + Vector3.up * 0.5f, 0f, true);
                 yield return new WaitForSecondsRealtime(1f);
             }
             Note($"balance result: reached wave {plugin.Wave}, running {plugin.Running}, core {Siege.Instance.CoreHp}");

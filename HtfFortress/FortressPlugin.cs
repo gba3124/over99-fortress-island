@@ -151,6 +151,7 @@ namespace HtfFortress
             int killed = dead.Count, reward = 0;
             foreach (var d in dead)
             {
+                if (!d) { killed--; continue; } // despawned (retreated / cleaned up), not killed: no reward
                 bool tagged = Enemies.Instance.TryGet(d, out var tag);
                 int r = tagged ? Enemies.StatsOf(tag).Reward + _wave / 2 : _killReward.Value;
                 reward += r;
