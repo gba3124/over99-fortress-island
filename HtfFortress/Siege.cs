@@ -270,11 +270,14 @@ namespace HtfFortress
 
         private static float AggroRange(EnemyKind k) => k == EnemyKind.Charger || k == EnemyKind.Boss ? 7f : k == EnemyKind.Tank ? 4f : 5f;
 
+        // Players enemies can go after (the balance test turns this off to measure turrets against the core alone).
+        private static IEnumerable<Player> Targets => AutoTest.IgnorePlayers ? Enumerable.Empty<Player>() : PlayerManager.AlivePlayers;
+
         private static Player Prey(Vector3 pos, EnemyKind kind)
         {
             float r = AggroRange(kind), best = r * r;
             Player prey = null;
-            foreach (var p in PlayerManager.AlivePlayers)
+            foreach (var p in Targets)
             {
                 if (!p || !p.Transform) continue;
                 float d = (p.Transform.position - pos).sqrMagnitude;
@@ -302,7 +305,7 @@ namespace HtfFortress
 
         private static void HurtPlayersAround(Vector3 at, float radius, int dmg)
         {
-            foreach (var p in PlayerManager.AlivePlayers.ToList())
+            foreach (var p in Targets.ToList())
                 if (p && p.Transform && (p.Transform.position - at).sqrMagnitude <= radius * radius)
                     HurtPlayer(p, dmg, (p.Transform.position - at).normalized * 6f + Vector3.up * 3f);
         }
@@ -353,7 +356,7 @@ namespace HtfFortress
                 if (d < best && d < 30f * 30f) { best = d; target = p.Pos; }
             }
             // Sometimes it aims at a player in range instead of a building.
-            var mark = PlayerManager.AlivePlayers.Where(p => p && p.Transform && (p.Transform.position - pos).sqrMagnitude < 25f * 25f).OrderBy(_ => Random.value).FirstOrDefault();
+            var mark = Targets.Where(p => p && p.Transform && (p.Transform.position - pos).sqrMagnitude < 25f * 25f).OrderBy(_ => Random.value).FirstOrDefault();
             if (mark && Random.value < 0.4f) target = mark.Transform.position;
             Vector3 face = target - pos; face.y = 0f;
             if (face.sqrMagnitude > 0.01f) fish.transform.rotation = Quaternion.LookRotation(face);

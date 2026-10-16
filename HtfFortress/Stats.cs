@@ -79,6 +79,6 @@ namespace HtfFortress
     [HarmonyPatch(typeof(Server), "RpcLogic___HitCreature___215526726")]
     internal static class RecordHandHits
     {
-        private static void Prefix(Creature P_0, Player P_1) => Stats.HandHit(P_0, P_1);
+        private static void Prefix(Creature __0, Player __1) => Stats.HandHit(__0, __1);
     }
 }

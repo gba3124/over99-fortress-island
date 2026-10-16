@@ -86,7 +86,11 @@ namespace HtfFortress
             gameObject.AddComponent<Fx>();
             gameObject.AddComponent<FortressNet>();
             gameObject.AddComponent<AutoTest>();
-            new Harmony("owen.htf.fortress").PatchAll();
+            // One class at a time: a patch that breaks after a game update must not take the others down with it.
+            var harmony = new Harmony("owen.htf.fortress");
+            foreach (var t in AccessTools.GetTypesFromAssembly(typeof(FortressPlugin).Assembly))
+                try { harmony.CreateClassProcessor(t).Patch(); }
+                catch (System.Exception e) { Logger.LogError($"Patch {t.Name} failed: {e.GetBaseException().Message}"); }
             Logger.LogInfo("HTF Fortress loaded.");
         }
 
@@ -181,7 +185,7 @@ namespace HtfFortress
             }
             if (killed > 0) { Siege.Instance.ServerAddCoins(reward); _kills += killed; AutoTest.Count("kills", killed); }
 
-            if (_alive.Count == 0 && _nextWaveAt == 0f)
+            if ((_wave == 0 || waveDone) && _alive.Count == 0 && _nextWaveAt == 0f) // not between bursts
             {
                 if (_wave > 0)
                 {
@@ -229,6 +233,7 @@ namespace HtfFortress
 
         private void Stop(string why)
         {
+            Stats.TrackDowns(); // the wipe that ends the round is a down too
             _running = false;
             bool coreLost = Siege.Instance.CoreDestroyed;
             foreach (var c in _alive.Where(c => c && c.IsSpawned)) c.DestroyItem();

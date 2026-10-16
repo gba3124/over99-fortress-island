@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using BepInEx.Configuration;
 using FishNet;
@@ -54,6 +55,7 @@ namespace HtfFortress
 
         // client: results panel
         private TextMeshProUGUI _results;
+        private UnityEngine.UI.Image _resultsBg;
         private float _resultsUntil;
         private TextMeshProUGUI _banner;
         private float _bannerUntil;
@@ -279,7 +281,11 @@ namespace HtfFortress
 
         private void ShowResults(RoundResult r)
         {
-            if (!_results) _results = Hud.CreateText("FortressResults", new Vector2(0.5f, 0.5f), new Vector2(0f, 40f), 34f, TextAlignmentOptions.Center);
+            if (!_results)
+            {
+                _resultsBg = Hud.CreateMarker("FortressResultsBg", new Color(0f, 0f, 0f, 0.8f), 1f); // created first so it draws behind
+                _results = Hud.CreateText("FortressResults", new Vector2(0.5f, 0.5f), new Vector2(0f, 40f), 34f, TextAlignmentOptions.Center);
+            }
             if (!_results) return;
             _results.rectTransform.sizeDelta = new Vector2(1100f, 700f);
             _results.text = L10n.T(r.CoreLost ? "resultCore" : "resultWipe") + "\n\n"
@@ -287,7 +293,12 @@ namespace HtfFortress
                           + (r.NewRecord ? L10n.T("resultRecord") : L10n.T("resultBest", r.Best)) + "\n\n"
                           + PlayerTable(r.Table) + "\n"
                           + L10n.T("resultAgain");
+            _results.ForceMeshUpdate();
+            var b = _results.textBounds;
+            _resultsBg.rectTransform.sizeDelta = new Vector2(b.size.x + 90f, b.size.y + 60f);
+            _resultsBg.rectTransform.anchoredPosition = _results.rectTransform.anchoredPosition + (Vector2)b.center;
             _resultsUntil = Time.time + 18f;
+            _bannerUntil = 0f;
             Fx.Sound(r.NewRecord ? "CasinoWinEpic" : "Death", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Center, 1f, AudioDistance.Long);
         }
 
@@ -297,15 +308,23 @@ namespace HtfFortress
             var rows = Stats.Parse(table);
             if (rows.Count == 0) return "";
             var sb = new System.Text.StringBuilder("<size=80%>");
-            sb.AppendLine(L10n.T("tableHeader"));
+            // Fixed columns (percent of the panel width); the header is the same six cells split on its triple spaces.
+            int[] cols = { 12, 40, 50, 66, 79, 89 };
+            string Line(IEnumerable<string> cells) => string.Concat(cells.Select((c, i) => $"<pos={cols[i]}%>{c}"));
+            sb.Append("<align=left>");
+            sb.AppendLine("<color=#bfe3ff>" + Line(L10n.T("tableHeader").Split(new[] { "   " }, System.StringSplitOptions.None)) + "</color>");
             foreach (var row in rows.OrderByDescending(x => x.Kills + x.TurretKills))
-                sb.AppendLine($"{row.Name}   {row.Kills}   {row.TurretKills}   {row.Fished}   {row.Built}   {row.Downs}");
+            {
+                string name = row.Name.Length > 16 ? row.Name.Substring(0, 15) + "…" : row.Name;
+                sb.AppendLine(Line(new[] { name, row.Kills.ToString(), row.TurretKills.ToString(), row.Fished.ToString(), row.Built.ToString(), row.Downs.ToString() }));
+            }
+            sb.Append("</align>");
             void Mvp(string key, Stats.Row best, int value) { if (best != null && value > 0) sb.AppendLine("<color=#ffd75a>" + L10n.T(key) + "</color>  " + best.Name + "  (" + value + ")"); }
             if (rows.Count > 1 || AutoTest.Running)
             {
                 sb.AppendLine();
                 var k = rows.OrderByDescending(x => x.Kills).First(); Mvp("mvpKills", k, k.Kills);
-                var t = rows.OrderByDescending(x => x.TurretKills + x.Built).First(); Mvp("mvpBuilder", t, t.TurretKills);
+                var t = rows.OrderByDescending(x => x.TurretKills).ThenByDescending(x => x.Built).First(); Mvp("mvpBuilder", t, t.TurretKills);
                 var f = rows.OrderByDescending(x => x.Fished).First(); Mvp("mvpFisher", f, f.Fished);
                 var s = rows.OrderBy(x => x.Downs).ThenByDescending(x => x.Kills).First(); if (s.Downs == 0) sb.AppendLine("<color=#ffd75a>" + L10n.T("mvpSurvivor") + "</color>  " + s.Name);
             }
@@ -315,7 +334,11 @@ namespace HtfFortress
 
         private void LateUpdate()
         {
-            if (_results) _results.gameObject.SetActive(Time.time < _resultsUntil);
+            // Hold the panel while the game's death screen is up; it shows once you are back on your feet.
+            bool dead = Player.LocalPlayer && !PlayerManager.AlivePlayers.Contains(Player.LocalPlayer);
+            if (dead && Time.time < _resultsUntil) _resultsUntil = Time.time + 18f;
+            if (_results) _results.gameObject.SetActive(!dead && Time.time < _resultsUntil);
+            if (_resultsBg) _resultsBg.gameObject.SetActive(!dead && Time.time < _resultsUntil);
             if (_banner) _banner.gameObject.SetActive(Time.time < _bannerUntil);
         }
 
@@ -344,16 +367,33 @@ namespace HtfFortress
         }
     }
 
-    // Dying mid-round respawns you at the fortress dock instead of back home.
-    [HarmonyPatch(typeof(PlayerManager), nameof(PlayerManager.OnPlayerResurrected))]
-    internal static class RespawnAtDock
+    // A wipe on the fortress respawns everyone (and moves the boat) to the island's spawn point. Send them to the
+    // fortress dock instead, so "try again" is a short walk instead of a sail back. Revives stay where the body was.
+    [HarmonyPatch]
+    internal static class RespawnAtFortress
     {
-        private static void Postfix(Player player)
+        private static bool Near(Vector3 pos) => FortressIsland.Instance != null && FortressIsland.Instance.Exists && FortressIsland.Instance.OnIsland(pos, 70f);
+        private static Vector3 Center => FortressIsland.Instance.Center;
+        private static Vector3 Berth { get { var p = Center + new Vector3(4f, 0f, -42f); p.y = WaterManager.GetWaterHeight(p); return p; } }
+
+        [HarmonyPostfix, HarmonyPatch(typeof(SpawnManager), nameof(SpawnManager.GetPlayerSpawnPos))]
+        private static void PlayerPos(Vector3 __0, ref Vector3 __result) { if (Near(__0)) __result = FortressIsland.Instance.DockPos; }
+
+        [HarmonyPostfix, HarmonyPatch(typeof(SpawnManager), nameof(SpawnManager.GetPlayerSpawnRot))]
+        private static void PlayerRot(Vector3 __0, ref float __result) { if (Near(__0)) __result = 0f; } // facing +Z, up the dock
+
+        // Host: the wipe branch of the respawn moves the boat home; move it to the fortress berth afterwards.
+        [HarmonyPrefix, HarmonyPatch(typeof(Server), "RpcLogic___RespawnPlayer___2210451296")]
+        private static void WipeStart(Vector3 __1, out bool __state) => __state = PlayerManager.AlivePlayers.Count == 0 && Near(__1);
+
+        [HarmonyPostfix, HarmonyPatch(typeof(Server), "RpcLogic___RespawnPlayer___2210451296")]
+        private static void WipeEnd(bool __state) { if (__state) FortressIsland.Instance.StartCoroutine(MoveBoatToBerth()); }
+
+        // Wait a moment so this lands after the game's own move home.
+        private static System.Collections.IEnumerator MoveBoatToBerth()
         {
-            var island = FortressIsland.Instance;
-            if (player != Player.LocalPlayer || island == null || !island.Exists || !(Siege.Instance && Siege.Instance.ViewActive)) return;
-            var d = island.Center - island.DockPos;
-            player.LocalTeleport(island.DockPos, Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg, true);
+            yield return new WaitForSeconds(0.5f);
+            BoatManager.Instance.TryMoveBoat(Berth, Quaternion.identity);
         }
     }
 }

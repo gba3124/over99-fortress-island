@@ -16,6 +16,7 @@ namespace HtfFortress
     public class AutoTest : MonoBehaviour
     {
         public static bool Running { get; private set; }
+        public static bool IgnorePlayers;
 
         // Counters the rest of the mod bumps so a run can be judged from the report.
         public static readonly Dictionary<string, int> Counters = new Dictionary<string, int>();
@@ -397,6 +398,7 @@ namespace HtfFortress
             var island = FortressIsland.Instance;
             yield return Until(() => island.Exists, 30f, "fortress island");
             PlayerManager.ToggleGodMode();
+            IgnorePlayers = true; // the god-mode collector would soak up every bite and skew the numbers
             Vector3 center = island.Center;
             Player.LocalPlayer.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
             yield return Until(() => FortressPlugin.Instance.Running, 15f, "round start");
@@ -490,6 +492,14 @@ namespace HtfFortress
             }
             Note($"coop end: wave {plugin.Wave}, running {plugin.Running}, my hp {Player.LocalPlayer.Vitals.Health}, alive {PlayerManager.AlivePlayers.Count}");
             yield return new WaitForSecondsRealtime(2f);
+            FortressPlugin.Shot("coop_dead");
+            // Press "respawn" like the death screen does: we should wake up on the fortress dock with the boat beside it,
+            // and only then see the results panel.
+            if (!PlayerManager.AlivePlayers.Contains(Player.LocalPlayer)) AccessTools.Method(typeof(PlayerDying), "LocalRespawn").Invoke(Player.LocalPlayer.Dying, null);
+            yield return Until(() => PlayerManager.AlivePlayers.Contains(Player.LocalPlayer), 15f, "respawn");
+            yield return new WaitForSecondsRealtime(2f);
+            float boat = BoatManager.Boat ? Vector3.Distance(BoatManager.Boat.HiddenPhysicsRig.position, island.DockPos) : -1f;
+            Note($"respawn: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.DockPos):F1} m from dock, boat {boat:F1} m from dock");
             FortressPlugin.Shot("coop_results");
             yield return new WaitForSecondsRealtime(1f);
         }
