@@ -429,6 +429,7 @@ namespace HtfFortress
         {
             var island = FortressIsland.Instance;
             yield return Until(() => island.Exists, 30f, "fortress island");
+            Loot.Instance.ServerWipeVaultForTest(); // no gear left over from other tests
             PlayerManager.ToggleGodMode();
             IgnorePlayers = true; // the god-mode collector would soak up every bite and skew the numbers
             Vector3 center = island.Center;
