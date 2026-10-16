@@ -15,6 +15,7 @@ namespace HtfFortress
     public class Turrets : MonoBehaviour
     {
         public static ConfigEntry<float> DamageMultiplier;
+        public static float OverclockUntil;
 
         private readonly Dictionary<int, float> _nextFire = new Dictionary<int, float>();
         private float _nextSpikeTick;
@@ -39,7 +40,9 @@ namespace HtfFortress
         {
             Stats.TurretHit(c, _owner);
             float d = baseDmg * DamageMultiplier.Value * (1f + Perks.Team(Gear.Gunpowder));
-            if (Enemies.Instance.TryGet(c, out var st) && st.Kind == EnemyKind.Shield)
+            if (Perks.TeamLegend(Gear.Scope) && Random.value < 0.1f) { d *= 3f; AutoTest.Count("legend_crits"); } // legendary: 10% crits
+            if (Perks.TeamLegend(Gear.FrostCore) && Random.value < 0.06f) { Siege.Instance.Slow(c, 1f, 1.5f); AutoTest.Count("legend_freezes"); } // legendary: freeze
+            if (!Perks.TeamLegend(Gear.ApRounds) && Enemies.Instance.TryGet(c, out var st) && st.Kind == EnemyKind.Shield) // legendary AP ignores shields
             {
                 Vector3 toTurret = _from - c.transform.position; toTurret.y = 0f;
                 if (toTurret.sqrMagnitude > 0.01f && Vector3.Angle(c.transform.forward, toTurret) < 70f) { d *= 0.2f; AutoTest.Count("shield_blocks"); }
@@ -52,10 +55,12 @@ namespace HtfFortress
 
         private void Fire(PieceState p, List<Creature> alive)
         {
+            if (p.Type == PieceType.Bubble) return; // shields, doesn't shoot
             _nextFire.TryGetValue(p.Id, out float next);
             if (Time.time < next) return;
             var s = Catalog.Turret(p.Type, p.Level, p.Branch);
             s.Range *= 1f + Perks.Team(Gear.Scope);
+            if (Time.time < OverclockUntil) s.Interval *= 0.5f; // an Overclock chip was used
             if (p.Type == PieceType.Tesla) s.Chain += Mathf.RoundToInt(Perks.Team(Gear.TeslaCoil));
             _owner = BuildSystem.Instance.OwnerOf(p.Id);
             _from = p.Pos;
@@ -69,6 +74,9 @@ namespace HtfFortress
                 float d = (c.transform.position - muzzle).sqrMagnitude;
                 if (d < best && d >= min) { best = d; target = c; }
             }
+            // The sniper picks the toughest fish in range instead of the nearest.
+            if (p.Type == PieceType.Sniper)
+                target = alive.Where(c => Alive(c) && (c.transform.position - muzzle).sqrMagnitude < s.Range * s.Range).OrderByDescending(c => c._hp.Value).FirstOrDefault() ?? target;
             if (!target) return;
             _nextFire[p.Id] = Time.time + s.Interval;
             Vector3 hit = target.transform.position;
@@ -79,9 +87,32 @@ namespace HtfFortress
                 case PieceType.Gun:
                 {
                     int dmg = Dmg(s.Damage, target, s);
-                    target.ServerChangeHp(dmg);
+                    Hit(target, dmg);
                     Ignite(target);
                     Fx.Send(FxKind.Tracer, muzzle, hit, p.Id, dmg);
+                    break;
+                }
+
+                case PieceType.Flame:
+                {
+                    // Everything in a cone toward the target burns.
+                    Vector3 aim = (hit - muzzle).Flat().normalized;
+                    foreach (var c in alive.Where(Alive).ToList())
+                    {
+                        Vector3 to = (c.transform.position - muzzle).Flat();
+                        if (to.sqrMagnitude > s.Range * s.Range || Vector3.Angle(aim, to) > s.Cone) continue;
+                        Hit(c, Dmg(s.Damage, c, s));
+                        SetBurn(c, s.Burn);
+                    }
+                    Fx.Send(FxKind.Flame, muzzle, muzzle + aim * s.Range * 0.9f, p.Id);
+                    break;
+                }
+
+                case PieceType.Sniper:
+                {
+                    int dmg = Dmg(s.Damage, target, s);
+                    Hit(target, dmg);
+                    Fx.Send(FxKind.Snipe, muzzle, hit, p.Id, dmg);
                     break;
                 }
 
@@ -104,7 +135,7 @@ namespace HtfFortress
                         foreach (var c in alive.Where(Alive).ToList())
                             if (DistToSegment(c.transform.position, muzzle, end) < 1f)
                             {
-                                c.ServerChangeHp(Dmg(s.Damage, c, s));
+                                Hit(c, Dmg(s.Damage, c, s));
                                 Siege.Instance.Slow(c, s.Slow, s.SlowTime);
                             }
                         Fx.Send(FxKind.Harpoon, muzzle, end, i == 0 ? p.Id : 0);
@@ -129,7 +160,8 @@ namespace HtfFortress
                     {
                         hitSet.Add(cur);
                         int zd = Dmg(s.Damage, cur, s);
-                        cur.ServerChangeHp(zd);
+                        Hit(cur, zd);
+                        if (Perks.TeamLegend(Gear.TeslaCoil)) Siege.Instance.Slow(cur, 1f, 0.35f); // legendary: every zap stuns
                         Vector3 to = cur.transform.position + Vector3.up * 0.4f;
                         Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0, zd);
                         from = to;
@@ -151,17 +183,60 @@ namespace HtfFortress
         {
             float r2 = radius * radius;
             foreach (var c in alive.Where(Alive).ToList())
-                if ((c.transform.position - at).sqrMagnitude <= r2) { c.ServerChangeHp(Dmg(dmg, c, s)); if (ignite) Ignite(c); }
+                if ((c.transform.position - at).sqrMagnitude <= r2) { Hit(c, Dmg(dmg, c, s)); if (ignite) Ignite(c); }
         }
 
         // Incendiary rounds (fortress gear): gun and cannon hits set the target burning for 3 s.
         private readonly Dictionary<Creature, (float dps, float until, int owner)> _burning = new Dictionary<Creature, (float, float, int)>();
         private int _burnTicks;
 
-        private void Ignite(Creature c)
+        private void Ignite(Creature c, bool spread = true)
         {
             float dps = Perks.Team(Gear.Incendiary);
-            if (dps > 0f && Alive(c)) _burning[c] = (dps, Time.time + 3f, _owner);
+            if (dps <= 0f || !Alive(c)) return;
+            _burning[c] = (dps, Time.time + 3f, _owner);
+            // Legendary: the fire jumps to the nearest other fish.
+            if (spread && Perks.TeamLegend(Gear.Incendiary))
+            {
+                var next = FortressPlugin.Alive.Where(x => x != c && Alive(x) && !_burning.ContainsKey(x) && (x.transform.position - c.transform.position).sqrMagnitude < 2.5f * 2.5f).FirstOrDefault();
+                if (next) Ignite(next, false);
+            }
+        }
+
+        // Flamethrower burns: keeps the stronger of two burns.
+        private void SetBurn(Creature c, float dps)
+        {
+            if (dps <= 0f || !Alive(c)) return;
+            if (_burning.TryGetValue(c, out var b) && b.dps > dps && b.until > Time.time) return;
+            _burning[c] = (dps, Time.time + 3f, _owner);
+        }
+
+        // Bubble shields: the strongest one covering `pos` (0 = none). Used by every piece-damage path on the host.
+        public static float ShieldAt(Vector3 pos)
+        {
+            float best = 0f;
+            foreach (var p in BuildSystem.Instance.ServerPieces)
+            {
+                if (p.Type != PieceType.Bubble) continue;
+                var s = Catalog.Turret(p.Type, p.Level, p.Branch);
+                if ((p.Pos - pos).sqrMagnitude <= s.Range * s.Range) best = Mathf.Max(best, s.Shield);
+            }
+            return best;
+        }
+
+        // Every turret hit lands here. Legendary gunpowder: a turret kill bursts and hurts the fish around it.
+        private bool _bursting;
+        private void Hit(Creature c, int dmg)
+        {
+            c.ServerChangeHp(dmg);
+            if (c._hp.Value > 0 || _bursting || !Perks.TeamLegend(Gear.Gunpowder)) return;
+            _bursting = true;
+            Vector3 at = c.transform.position;
+            foreach (var x in FortressPlugin.Alive.Where(x => x != c && Alive(x) && (x.transform.position - at).sqrMagnitude < 2.5f * 2.5f).ToList())
+                x.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(dmg * 0.3f)));
+            Fx.Send(FxKind.Blast, at, at);
+            AutoTest.Count("legend_bursts");
+            _bursting = false;
         }
 
         private void BurnTick()
@@ -172,7 +247,7 @@ namespace HtfFortress
                 var c = kv.Key;
                 if (!Alive(c) || Time.time > kv.Value.until) { _burning.Remove(c); continue; }
                 Stats.TurretHit(c, kv.Value.owner);
-                c.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(kv.Value.dps * 0.5f * DamageMultiplier.Value)));
+                Hit(c, Mathf.Max(1, Mathf.RoundToInt(kv.Value.dps * 0.5f * DamageMultiplier.Value)));
                 if (fx) Fx.Send(FxKind.Burn, c.transform.position, c.transform.position);
                 AutoTest.Count("burn_ticks");
             }

@@ -85,7 +85,11 @@ namespace HtfFortress
         private static void Prefix(Creature __0, Player __1, ref int __2)
         {
             Stats.HandHit(__0, __1);
-            if (__0 && Enemies.Instance && Enemies.Instance.TryGet(__0, out _)) __2 = Mathf.RoundToInt(__2 * (1f + Perks.Of(__1, Gear.Gauntlet)));
+            if (__0 && Enemies.Instance && Enemies.Instance.TryGet(__0, out _))
+            {
+                __2 = Mathf.RoundToInt(__2 * (1f + Perks.Of(__1, Gear.Gauntlet)));
+                if (Perks.Legend(__1, Gear.Gauntlet)) Siege.Instance.Slow(__0, 1f, 0.6f); // legendary: each punch stuns
+            }
         }
     }
 }

@@ -19,7 +19,7 @@ namespace HtfFortress
     // Client -> host: one vault action.
     public struct VaultRequest : IBroadcast { public VaultAction Action; public Gear Gear; public Rarity Rarity; public byte Slot; }
 
-    public enum LootWhat : byte { Drop, DropGone, Chest, ChestGone, Leftovers }
+    public enum LootWhat : byte { Drop, DropGone, Chest, ChestGone, Leftovers, Blueprint }
     // Host -> everyone: gear on the ground, chests, and who got what.
     public struct LootEvent : IBroadcast { public int Id; public LootWhat What; public Vector3 Pos; public Gear Gear; public Rarity Rarity; public string Who; public string Data; public string Item; }
 
@@ -140,8 +140,11 @@ namespace HtfFortress
             float chance = EnemyCatalog.IsBoss(kind) ? 1f : elite ? 0.25f : 0.03f;
             var killer = PlayerManager.Players.FirstOrDefault(p => p && p.ObjectId == killerId);
             if (killer) chance *= Mathf.Max(1f, Vault.PersonalValue(KeyOf(killer), Gear.LuckyCharm));
+            if (EnemyCatalog.IsBoss(kind)) ServerUnlockRandom(killer); // every boss leaves a blueprint while any are left
             if (Random.value >= chance) return;
-            Drop(GearCatalog.RandomGear(), GearCatalog.Roll(wave, EnemyCatalog.IsBoss(kind) ? Rarity.Epic : Rarity.Common), pos);
+            Rarity r = GearCatalog.Roll(wave, EnemyCatalog.IsBoss(kind) ? Rarity.Epic : Rarity.Common);
+            if (killer && Perks.Legend(killer, Gear.LuckyCharm) && r < Rarity.Legendary) r++; // legendary: one rarity better
+            Drop(GearCatalog.RandomGear(), r, pos);
         }
 
         private void Drop(Gear g, Rarity r, Vector3 pos)
@@ -153,6 +156,21 @@ namespace HtfFortress
             _drops[id] = (g, r, pos, Time.time + DropLife);
             Broadcast(new LootEvent { Id = id, What = LootWhat.Drop, Pos = pos, Gear = g, Rarity = r });
             AutoTest.Count("loot_dropped");
+        }
+
+        // A blueprint for a turret the team doesn't have yet (none left: nothing happens).
+        public bool ServerUnlockRandom(Player who)
+        {
+            EnsureLoaded();
+            var locked = System.Enum.GetValues(typeof(PieceType)).Cast<PieceType>().Where(t => !Vault.CanBuild(t)).ToList();
+            if (locked.Count == 0) return false;
+            var t = locked[Random.Range(0, locked.Count)];
+            Vault.Unlocked.Add(t);
+            SaveVault();
+            Broadcast(new LootEvent { What = LootWhat.Blueprint, Who = who ? NameOf(who) : "", Data = t.ToString() });
+            Fx.Announce("blueprintBanner");
+            AutoTest.Count("blueprints");
+            return true;
         }
 
         // After every 5th wave: a chest by the lighthouse; the first player to step on it opens it for the team.
@@ -186,6 +204,7 @@ namespace HtfFortress
             for (int i = 0; i < n; i++) got.Add((GearCatalog.RandomGear(), GearCatalog.Roll(_chest.wave + 5)));
             foreach (var g in got) Vault.Add(g.Item1, g.Item2);
             SaveVault();
+            if (_chest.wave >= 10 && (Random.value < 0.6f || AutoTest.ForceGameItem)) ServerUnlockRandom(who);
             string item = "";
             if (Random.value < GameItemChance || AutoTest.ForceGameItem)
             {
@@ -271,7 +290,9 @@ namespace HtfFortress
                     break;
                 case VaultAction.EquipPersonal:
                     var slots = Vault.Slots(key);
-                    if (GearCatalog.IsFortress(g) || Vault.Count(g, r) < 1 || slots.Count >= GearCatalog.PersonalSlots || slots.Any(s => s.Item1 == g)) return;
+                    bool active = GearCatalog.IsActive(g);
+                    int sameKind = slots.Count(s => GearCatalog.IsActive(s.Item1) == active);
+                    if (GearCatalog.IsFortress(g) || Vault.Count(g, r) < 1 || sameKind >= (active ? GearCatalog.ActiveSlots : GearCatalog.PersonalSlots) || slots.Any(s => s.Item1 == g)) return;
                     Vault.Add(g, r, -1);
                     slots.Add((g, r));
                     Vault.Names[key] = NameOf(who);
@@ -304,6 +325,16 @@ namespace HtfFortress
 
         public string ServerVaultFile => string.IsNullOrEmpty(_loadedFor) ? null : FilePath(_loadedFor);
 
+        // Auto-test: put a piece of gear on a player even mid-round (the real menu refuses that).
+        public void DebugEquip(Player who, Gear g, Rarity r)
+        {
+            EnsureLoaded();
+            var slots = Vault.Slots(KeyOf(who));
+            if (GearCatalog.IsFortress(g)) { Vault.Fortress.RemoveAll(f => f.Item1 == g); Vault.Fortress.Add((g, r)); }
+            else { slots.RemoveAll(s => GearCatalog.IsActive(s.Item1) == GearCatalog.IsActive(g)); slots.Add((g, r)); }
+            SaveVault();
+        }
+
         // Auto-test: put gear straight into the vault.
         public void ServerGive(Gear g, Rarity r, int n = 1) { EnsureLoaded(); Vault.Add(g, r, n); SaveVault(); }
 
@@ -335,6 +366,10 @@ namespace HtfFortress
                     if (f.Length == 2 && int.TryParse(f[1], out int ir))
                         ChatManager.ChatMessage(L10n.T("chestGameItem", $"<color=#{GearCatalog.Hex((Rarity)ir)}>[{GearCatalog.RarityName((Rarity)ir)}] {L10n.T("item_" + f[0])}</color>"));
                     Fx.Sound("CasinoWinEpic", e.Pos, 1f, AudioDistance.Long);
+                    break;
+                case LootWhat.Blueprint:
+                    if (System.Enum.TryParse(e.Data, out PieceType bp))
+                        ChatManager.ChatMessage(L10n.T(string.IsNullOrEmpty(e.Who) ? "blueprintFoundTeam" : "blueprintFound", e.Who, BuildSystem.PieceName(bp, 1)));
                     break;
                 case LootWhat.Leftovers:
                     ChatManager.ChatMessage(L10n.T("lootLeftovers", Labels(e.Data)));

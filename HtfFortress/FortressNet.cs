@@ -70,6 +70,26 @@ namespace HtfFortress
 
         public IEnumerable<Vector3> ServerCorpsePositions() => _corpses.Keys.Where(c => c && c.IsSpawned).Select(c => c.transform.position);
         public int ServerCapOf(int playerId) => CapOf(playerId);
+
+        // The fish cannon: every corpse within `radius` flies into this player's net (as far as it holds).
+        public int ServerScoopAround(Player p, float radius)
+        {
+            if (!p || !p.Transform) return 0;
+            Vector3 pos = p.Transform.position;
+            _nets.TryGetValue(p.ObjectId, out var net);
+            int cap = CapOf(p.ObjectId), got = 0;
+            foreach (var kv in _corpses.Where(kv => kv.Key && (kv.Key.transform.position - pos).sqrMagnitude < radius * radius).OrderBy(kv => (kv.Key.transform.position - pos).sqrMagnitude).ToList())
+            {
+                if (net.count >= cap) break;
+                net.count++; net.value += kv.Value.value; got++;
+                Fx.Send(FxKind.Scoop, kv.Key.transform.position, pos);
+                kv.Key.DestroyItem();
+                _corpses.Remove(kv.Key);
+            }
+            _nets[p.ObjectId] = net;
+            Send(p.ObjectId);
+            return got;
+        }
         public int ServerNetCount(int playerId) => _nets.TryGetValue(playerId, out var n) ? n.count : 0;
 
         public void ServerReset()
@@ -125,11 +145,22 @@ namespace HtfFortress
                     {
                         if (net.count >= cap) break;
                         net.count++; net.value += kv.Value.value; changed = true;
+                        if (Perks.Legend(p, Gear.FishGloves)) { Siege.Instance.ServerAddCoins(1); Stats.Fished(p.ObjectId, 1); } // legendary: paid on the spot
                         Fx.Send(FxKind.Scoop, kv.Key.transform.position, pos);
                         kv.Key.DestroyItem();
                         _corpses.Remove(kv.Key);
                         AutoTest.Count("net_scooped");
                     }
+                // Legendary big net: a full net sells itself (at 80%) wherever you are.
+                if (net.count >= cap && Perks.Legend(p, Gear.BigNet) && (pos - crate).sqrMagnitude >= CrateRadius * CrateRadius)
+                {
+                    int value = Mathf.RoundToInt(net.value * 0.8f * (1f + Perks.Of(p, Gear.FishGloves)));
+                    Siege.Instance.ServerAddCoins(value);
+                    Stats.Fished(p.ObjectId, value);
+                    Fx.Send(FxKind.Sell, pos, pos, 0, value);
+                    AutoTest.Count("legend_autosell");
+                    net = default; changed = true;
+                }
                 // Sell at the crate.
                 if (net.count > 0 && (pos - crate).sqrMagnitude < CrateRadius * CrateRadius)
                 {

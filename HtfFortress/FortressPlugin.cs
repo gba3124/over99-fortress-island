@@ -89,6 +89,7 @@ namespace HtfFortress
             gameObject.AddComponent<VaultUI>();
             gameObject.AddComponent<Construction>();
             gameObject.AddComponent<PieceMenu>();
+            gameObject.AddComponent<Actives>();
             gameObject.AddComponent<AutoTest>();
             // One class at a time: a patch that breaks after a game update must not take the others down with it.
             var harmony = new Harmony("owen.htf.fortress");
@@ -256,6 +257,7 @@ namespace HtfFortress
                 {
                     _cleared = _wave;
                     int bonus = _waveBonus.Value + 6 * _wave;
+                    if (Perks.TeamLegend(Gear.WarChest)) bonus += Mathf.Min(100, Siege.Instance.ServerCoins / 10); // legendary: 10% interest
                     Siege.Instance.ServerAddCoins(bonus);
                     Say(L10n.T("cleared", _wave, bonus, _breakSeconds.Value.ToString("0"), _readyKey.Value));
                     Fx.Announce("clearedBanner", _wave);

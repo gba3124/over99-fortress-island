@@ -106,7 +106,12 @@ namespace HtfFortress
 
             if (kb.escapeKey.wasPressedThisFrame) { SetBuilding(false); return; }
             bool shift = kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed;
-            if (kb.tKey.wasPressedThisFrame) _type = (PieceType)(((int)_type + (shift ? Catalog.TypeCount - 1 : 1)) % Catalog.TypeCount);
+            if (kb.tKey.wasPressedThisFrame)
+                for (int n = 0; n < Catalog.TypeCount; n++) // skip turrets still waiting for a blueprint
+                {
+                    _type = (PieceType)(((int)_type + (shift ? Catalog.TypeCount - 1 : 1)) % Catalog.TypeCount);
+                    if (Loot.Instance.ClientVault.CanBuild(_type)) break;
+                }
             if (kb.yKey.wasPressedThisFrame) _flip = !_flip;
 
             UpdateGhost();
@@ -265,12 +270,13 @@ namespace HtfFortress
             bool aboveWater = pos.y + Cell > WaterManager.GetWaterHeight(pos);
             bool free = !_states.Values.Any(s => Clashes(s.Type, _type) && (s.Pos - pos).sqrMagnitude < 0.01f);
             bool affordable = Siege.Instance.ViewCoins >= Perks.MyCost(Catalog.BuildCost(_type));
-            bool zone = AllowedAt(pos);
-            _blockReason = !Siege.Instance.ViewActive ? L10n.T("needRound")
+            bool zone = AllowedAt(pos), unlocked = Loot.Instance.ClientVault.CanBuild(_type);
+            _blockReason = !unlocked ? L10n.T("needBlueprint")
+                         : !Siege.Instance.ViewActive ? L10n.T("needRound")
                          : !zone ? L10n.T("needIsland")
                          : !affordable ? L10n.T("needCoins")
                          : "";
-            _ghostValid = hit && aboveWater && free && affordable && zone && Siege.Instance.ViewActive;
+            _ghostValid = hit && aboveWater && free && affordable && zone && unlocked && Siege.Instance.ViewActive;
 
             _ghost.SetActive(true);
             _ghost.transform.SetPositionAndRotation(pos, rot);
@@ -305,6 +311,30 @@ namespace HtfFortress
             }
             else Models.Attach(t.ToString(), go.transform, size);
             return go;
+        }
+
+        // Bubble shield: glowing studs on the ground show how far it reaches.
+        private static Material _ringMat;
+        private static void SetBubbleRing(GameObject go, int level, int branch)
+        {
+            var old = go.transform.Find("BubbleRing");
+            if (old) Destroy(old.gameObject);
+            var ring = new GameObject("BubbleRing").transform;
+            ring.SetParent(go.transform, false);
+            if (!_ringMat) _ringMat = Models.Make(new Color(0.55f, 0.85f, 1f), new Color(0.45f, 0.8f, 1.2f));
+            float r = Catalog.Turret(PieceType.Bubble, level, branch).Range;
+            int n = Mathf.RoundToInt(r * 4f);
+            for (int i = 0; i < n; i++)
+            {
+                float a = i * Mathf.PI * 2f / n;
+                var stud = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Destroy(stud.GetComponent<Collider>());
+                stud.transform.SetParent(ring, false);
+                stud.transform.localPosition = new Vector3(Mathf.Cos(a) * r, 0.08f, Mathf.Sin(a) * r);
+                stud.transform.localScale = new Vector3(0.35f, 0.08f, 0.12f);
+                stud.transform.localRotation = Quaternion.Euler(0f, -a * Mathf.Rad2Deg, 0f);
+                stud.GetComponent<Renderer>().sharedMaterial = _ringMat;
+            }
         }
 
         // Walls change material with their level: wooden palisade, stone with battlements, spiked iron plates.
@@ -358,14 +388,14 @@ namespace HtfFortress
             if (!Hud.Font) return false;
             var root = Hud.Root;
             Vector2 C = new Vector2(0.5f, 0.5f);
-            const float w = 112f, gap = 10f;
+            const float w = 98f, gap = 8f;
             float total = Catalog.TypeCount * w + (Catalog.TypeCount - 1) * gap;
             _cards = Hud.Node(root, "BuildCards", new Vector2(0.5f, 0f), new Vector2(0f, 128f), new Vector2(total, 90f));
             for (int i = 0; i < Catalog.TypeCount; i++)
             {
                 var box = Hud.Box(_cards, new Vector2(0f, 0f), new Vector2(i * (w + gap), 0f), new Vector2(w, 86f), Hud.Panel, 14f);
                 var ring = Hud.Box(box.transform, C, Vector2.zero, new Vector2(w, 86f), Hud.Accent, 14f, "Ui_outline");
-                var name = Hud.Label(box.transform, "", 19f, new Vector2(0.5f, 1f), new Vector2(0f, -8f), new Vector2(w - 10f, 44f), TextAlignmentOptions.Top);
+                var name = Hud.Label(box.transform, "", 17f, new Vector2(0.5f, 1f), new Vector2(0f, -8f), new Vector2(w - 10f, 44f), TextAlignmentOptions.Top);
                 var cost = Hud.Label(box.transform, "", 22f, new Vector2(0.5f, 0f), new Vector2(0f, 8f), new Vector2(w - 10f, 30f), TextAlignmentOptions.Bottom, Hud.Gold, bold: true);
                 _card.Add((box, ring, name, cost));
             }
@@ -398,15 +428,17 @@ namespace HtfFortress
                 var t = (PieceType)i;
                 var (box, ring, name, cost) = _card[i];
                 int c = Perks.MyCost(Catalog.BuildCost(t));
-                bool sel = t == _type, afford = Siege.Instance.ViewCoins >= c;
+                bool locked = !Loot.Instance.ClientVault.CanBuild(t);
+                bool sel = t == _type, afford = Siege.Instance.ViewCoins >= c && !locked;
                 ring.gameObject.SetActive(sel);
                 box.color = sel ? new Color(0.22f, 0.16f, 0.07f, 0.92f) : Hud.Panel;
                 box.rectTransform.anchoredPosition = new Vector2(box.rectTransform.anchoredPosition.x, sel ? 10f : 0f);
                 name.text = PieceName(t, 1);
                 name.color = afford ? Hud.Ink : Hud.Muted;
                 name.fontStyle = sel ? FontStyles.Bold : FontStyles.Normal;
-                cost.text = c.ToString();
-                cost.color = afford ? Hud.Gold : Hud.Bad;
+                cost.text = locked ? L10n.T("cardLocked") : c.ToString();
+                cost.color = locked ? Hud.Muted : afford ? Hud.Gold : Hud.Bad;
+                box.color = locked ? new Color(0.05f, 0.06f, 0.08f, 0.55f) : box.color;
             }
             FitPill(_keysBox, _keysText, Hud.Keys(L10n.T("buildKeys")));
             bool warn = _blockReason.Length > 0;
@@ -458,7 +490,7 @@ namespace HtfFortress
         public int OwnerOf(int pieceId) => _owner.TryGetValue(pieceId, out int o) ? o : -1;
 
         public bool ServerCanPlace(PieceType type, Vector3 pos) =>
-            Siege.Instance.ServerActive && AllowedAt(pos) && !_serverPieces.Values.Any(p => Clashes(p.Type, type) && (p.Pos - pos).sqrMagnitude < 0.01f);
+            Siege.Instance.ServerActive && AllowedAt(pos) && Loot.Instance.Vault.CanBuild(type) && !_serverPieces.Values.Any(p => Clashes(p.Type, type) && (p.Pos - pos).sqrMagnitude < 0.01f);
 
         // Host only. Returns false if the slot is taken or the team can't afford it. A finished construction site has paid already.
         public bool ServerPlace(PieceType type, Vector3 pos, float rotY, int ownerId = -1, int prepaid = -1)
@@ -532,6 +564,7 @@ namespace HtfFortress
         public bool ServerDamage(Collider col, int dmg)
         {
             if (!col || !_pieceIds.TryGetValue(col.gameObject, out int id) || !_serverPieces.TryGetValue(id, out var state)) return false;
+            dmg = Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Turrets.ShieldAt(state.Pos))));
             state.Hp -= dmg;
             if (state.Hp <= 0) { Remove(state); AutoTest.Count("pieces_destroyed"); return true; }
             _serverPieces[id] = state;
@@ -545,11 +578,26 @@ namespace HtfFortress
             foreach (var p in _serverPieces.Values.Where(p => (p.Pos - at).sqrMagnitude <= radius * radius).ToList())
             {
                 var s = p;
-                s.Hp -= dmg;
+                s.Hp -= Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Turrets.ShieldAt(s.Pos))));
                 if (s.Hp <= 0) { Remove(s); AutoTest.Count("pieces_destroyed"); continue; }
                 _serverPieces[s.Id] = s;
                 InstanceFinder.ServerManager.Broadcast(s);
             }
+        }
+
+        // Host: the First-aid toolbox. Returns the pieces it reached.
+        public List<Vector3> ServerRepairArea(Vector3 at, float radius, float share)
+        {
+            var hit = new List<Vector3>();
+            foreach (var p in _serverPieces.Values.Where(p => p.Hp < p.MaxHp && (p.Pos - at).sqrMagnitude <= radius * radius).ToList())
+            {
+                var s = p;
+                s.Hp = Mathf.Min(s.MaxHp, s.Hp + Mathf.CeilToInt(s.MaxHp * share));
+                _serverPieces[s.Id] = s;
+                InstanceFinder.ServerManager.Broadcast(s);
+                hit.Add(s.Pos);
+            }
+            return hit;
         }
 
         // Pieces a walker has to break through (it walks over floors and ramps).
@@ -593,10 +641,11 @@ namespace HtfFortress
                 _pieceIds[go] = s.Id;
                 prev.Level = 0;
             }
-            if (prev.Level != s.Level)
+            if (prev.Level != s.Level || prev.Branch != s.Branch)
             {
                 if (s.Type == PieceType.Wall) SetWallModel(go, s.Level);
                 else Models.SetLevelLook(go, s.Type, s.Level);
+                if (s.Type == PieceType.Bubble) SetBubbleRing(go, s.Level, s.Branch);
             }
             if (!had) { StartCoroutine(Pop(go.transform)); Fx.SoundRandom("WoodItemImpact_V", 1, 3, s.Pos, 0.8f, AudioDistance.Short); }
             else if (s.Level > prev.Level) { StartCoroutine(Pop(go.transform)); Fx.SoundRandom("MetallicItemImpact_V", 1, 2, s.Pos, 0.9f, AudioDistance.Short); Fx.Sound("Buy_01", s.Pos, 0.6f, AudioDistance.Short); }

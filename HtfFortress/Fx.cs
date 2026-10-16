@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace HtfFortress
 {
-    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce, Harpoon, Mortar, Zap, Burn, Scoop, Sell, Heal, Dust, Wave }
+    public enum FxKind : byte { Tracer, Cannonball, Blast, Spit, Announce, Harpoon, Mortar, Zap, Burn, Scoop, Sell, Heal, Dust, Wave, Decoy, Snipe, Flame }
 
     // Host -> everyone: a visual effect (and for Announce, a banner: Key = string key, Arg = number).
     public struct FxEvent : IBroadcast { public FxKind Kind; public Vector3 From; public Vector3 To; public int PieceId; public string Key; public int Arg; }
@@ -104,6 +104,12 @@ namespace HtfFortress
                 case FxKind.Heal: StartCoroutine(Zap(e.From, e.To, _heal)); StartCoroutine(Blast(e.To, 0.9f, _heal)); Sound("QuestReceived", e.To, 0.25f, AudioDistance.Short); break;
                 case FxKind.Dust: StartCoroutine(Blast(e.To, 2.2f, _dust)); SoundRandom("ItemImpactHeavy_V", 1, 3, e.To, 0.8f); break;
                 case FxKind.Wave: StartCoroutine(Blast(e.To, 6f, _water)); SoundRandom("WhaleLanding_0", 1, 3, e.To, 1f, AudioDistance.Long); break;
+                case FxKind.Decoy: StartCoroutine(Duck(e.To, e.Arg)); break;
+                case FxKind.Snipe: StartCoroutine(Tracer(e.From, e.To)); SoundRandom("SniperrifleFireOutside_V", 1, 4, e.From, 0.9f, AudioDistance.Long); break;
+                case FxKind.Flame:
+                    for (int i = 1; i <= 3; i++) StartCoroutine(Blast(Vector3.Lerp(e.From, e.To, i / 3f), 0.6f + 0.35f * i, _fire));
+                    if (Random.value < 0.3f) Sound("Ignite", e.From, 0.5f);
+                    break;
             }
         }
 
@@ -164,6 +170,22 @@ namespace HtfFortress
         }
 
         // Tesla: a jagged bright line that flickers out.
+        // The decoy: a big rubber duck that bobs and squeaks, then deflates.
+        private IEnumerator Duck(Vector3 at, float seconds)
+        {
+            var go = new GameObject("FortressDecoy");
+            go.transform.position = at;
+            Models.Attach("Decoy", go.transform, new Vector3(0.8f, 0.8f, 0.8f), new Vector3(0f, 0.4f, 0f));
+            Sound("QuestReceived", at, 0.6f);
+            for (float t = 0f; t < seconds && go; t += Time.deltaTime)
+            {
+                go.transform.localScale = Vector3.one * (1f + 0.06f * Mathf.Sin(t * 9f)) * Mathf.Min(1f, (seconds - t) * 2f);
+                go.transform.rotation = Quaternion.Euler(0f, Mathf.Sin(t * 2f) * 25f, Mathf.Sin(t * 5f) * 6f);
+                yield return null;
+            }
+            if (go) Destroy(go);
+        }
+
         private IEnumerator Zap(Vector3 from, Vector3 to, Material mat = null)
         {
             var parts = new GameObject[3];

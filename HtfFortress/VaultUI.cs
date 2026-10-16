@@ -116,7 +116,7 @@ namespace HtfFortress
             Text(panel, L10n.T("vaultMine"), 26f, new Vector2(220f, 70f), new Vector2(-590f, 195f), TextAlignmentOptions.Left);
             _mineRow = new GameObject("MySlots", typeof(RectTransform)).transform;
             _mineRow.SetParent(panel, false);
-            _team = Text(panel, "", 20f, new Vector2(560f, 80f), new Vector2(390f, 195f), TextAlignmentOptions.TopLeft);
+            _team = Text(panel, "", 19f, new Vector2(330f, 110f), new Vector2(540f, 205f), TextAlignmentOptions.TopLeft);
             _team.color = new Color(0.75f, 0.8f, 0.85f);
 
             Box(panel, new Vector2(1380f, 2f), new Vector2(0f, 145f), new Color(1f, 1f, 1f, 0.12f), 0f);
@@ -152,11 +152,17 @@ namespace HtfFortress
             }
             Clear(_mineRow);
             var mine = v.Personal.TryGetValue(me, out var l) ? l : new List<(Gear, Rarity)>();
+            // Two passive slots, then the active one (K).
+            var passive = mine.Select((x, i) => (x, i)).Where(t => !GearCatalog.IsActive(t.x.Item1)).ToList();
+            var active = mine.Select((x, i) => (x, i)).Where(t => GearCatalog.IsActive(t.x.Item1)).ToList();
             for (int i = 0; i < GearCatalog.PersonalSlots; i++)
             {
-                int slot = i;
-                Slot(_mineRow, i < mine.Count ? mine[i] : ((Gear, Rarity)?)null, new Vector2(-370f + 245f * i, 195f), () => Send(VaultAction.UnequipPersonal, slot: slot));
+                bool has = i < passive.Count;
+                int slot = has ? passive[i].i : 0;
+                Slot(_mineRow, has ? passive[i].x : ((Gear, Rarity)?)null, new Vector2(-370f + 245f * i, 195f), () => Send(VaultAction.UnequipPersonal, slot: slot));
             }
+            int aslot = active.Count > 0 ? active[0].i : 0;
+            Slot(_mineRow, active.Count > 0 ? active[0].x : ((Gear, Rarity)?)null, new Vector2(120f, 195f), () => Send(VaultAction.UnequipPersonal, slot: aslot), L10n.T("vaultActiveSlot"));
             var others = v.Personal.Where(kv => kv.Key != me && kv.Value.Count > 0)
                 .Select(kv => (v.Names.TryGetValue(kv.Key, out var n) ? n : "?") + "：" + string.Join("、", kv.Value.Select(s => GearCatalog.Label(s.Item1, s.Item2)))).ToList();
             _team.text = others.Count > 0 ? L10n.T("vaultTeam") + "\n" + string.Join("\n", others) : "";
@@ -180,17 +186,26 @@ namespace HtfFortress
             // Selected item.
             if (_sel is (Gear sg, Rarity sr) && v.Count(sg, sr) > 0)
             {
-                var lines = new List<string> { $"<size=120%>{GearCatalog.Label(sg, sr)}</size>", L10n.T(GearCatalog.IsFortress(sg) ? "vaultKindFortress" : "vaultKindPersonal"), "" };
+                var lines = new List<string> { $"<size=120%>{GearCatalog.Label(sg, sr)}</size>", L10n.T(GearCatalog.IsFortress(sg) ? "vaultKindFortress" : GearCatalog.IsActive(sg) ? "vaultKindActive" : "vaultKindPersonal"), "" };
                 foreach (Rarity rr in Enum.GetValues(typeof(Rarity)))
                     lines.Add((rr == sr ? "▶ " : "　") + $"<color=#{GearCatalog.Hex(rr)}>{GearCatalog.RarityName(rr)}</color>　{GearCatalog.Effect(sg, rr)}");
+                bool isLegend = sr == Rarity.Legendary;
+                if (!GearCatalog.IsActive(sg))
+                {
+                    string legend = L10n.T("gearLegend" + sg);
+                    lines.Add($"<color=#{GearCatalog.Hex(Rarity.Legendary)}>{(isLegend ? "★" : "☆")} {L10n.T("legendTitle")}</color>" + (isLegend ? "" : $"<size=80%><color=#888888>{L10n.T("legendOnly")}</color></size>"));
+                    lines.Add($"<size=90%>{(isLegend ? legend : $"<color=#999999>{legend}</color>")}</size>");
+                }
                 lines.Add("");
                 lines.Add(L10n.T("vaultOwned", v.Count(sg, sr)));
                 _detail.text = string.Join("\n", lines);
                 bool canMerge = sr != Rarity.Legendary && v.Count(sg, sr) >= 3;
                 _merge.interactable = canMerge;
                 _mergeText.text = sr == Rarity.Legendary ? L10n.T("vaultMaxed") : L10n.T("vaultMerge", v.Count(sg, sr));
-                bool fortress = GearCatalog.IsFortress(sg);
-                bool full = fortress ? v.Fortress.Count >= GearCatalog.FortressSlots : mine.Count >= GearCatalog.PersonalSlots;
+                bool fortress = GearCatalog.IsFortress(sg), act = GearCatalog.IsActive(sg);
+                bool full = fortress ? v.Fortress.Count >= GearCatalog.FortressSlots
+                          : act ? mine.Count(x => GearCatalog.IsActive(x.Item1)) >= GearCatalog.ActiveSlots
+                          : mine.Count(x => !GearCatalog.IsActive(x.Item1)) >= GearCatalog.PersonalSlots;
                 bool dup = fortress ? v.Fortress.Any(f => f.Item1 == sg) : mine.Any(m => m.Item1 == sg);
                 _equip.interactable = !full && !dup;
                 _equipText.text = dup ? L10n.T("vaultAlready") : full ? L10n.T("vaultFull") : L10n.T(fortress ? "vaultEquipFortress" : "vaultEquipMine");
@@ -206,7 +221,7 @@ namespace HtfFortress
             }
         }
 
-        private void Slot(Transform parent, (Gear, Rarity)? item, Vector2 pos, Action unequip)
+        private void Slot(Transform parent, (Gear, Rarity)? item, Vector2 pos, Action unequip, string emptyText = null)
         {
             if (item is (Gear g, Rarity r))
             {
@@ -218,7 +233,7 @@ namespace HtfFortress
             else
             {
                 var box = Box(parent, new Vector2(230f, 70f), pos, Hud.Raised);
-                Text(box.transform, L10n.T("vaultEmptySlot"), 20f, new Vector2(220f, 60f), Vector2.zero, TextAlignmentOptions.Center).color = new Color(0.5f, 0.55f, 0.6f);
+                Text(box.transform, emptyText ?? L10n.T("vaultEmptySlot"), 20f, new Vector2(220f, 60f), Vector2.zero, TextAlignmentOptions.Center).color = new Color(0.5f, 0.55f, 0.6f);
             }
         }
 

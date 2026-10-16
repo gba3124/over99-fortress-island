@@ -191,10 +191,20 @@ namespace HtfFortress
                 return true;
             }
             Vector3 target = prey && tag.Kind != EnemyKind.Bomber ? prey.Transform.position : _server.CorePos;
+            bool decoyed = DecoyNear(pos, out var duck);
+            if (decoyed) { target = duck; prey = null; }
             Vector3 to = target - pos; to.y = 0f;
             float dist = to.magnitude;
             Vector3 dir = dist > 0.01f ? to / dist : fish.transform.forward;
             fish.transform.forward = dir;
+            if (decoyed && dist <= 1.5f + 0.5f * (stats.Scale - 1f))
+            {
+                // Pecking at a rubber duck. A bomber blows itself up on it.
+                Halt(rig);
+                if (tag.Kind == EnemyKind.Bomber) Explode(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage));
+                AutoTest.Count("decoyed");
+                return true;
+            }
 
             if (prey && tag.Kind != EnemyKind.Bomber)
             {
@@ -247,6 +257,50 @@ namespace HtfFortress
             rig.linearVelocity = v;
             rig.angularVelocity = Vector3.zero;
             return true;
+        }
+
+        // ---------- active gear on the host: decoy duck, shockwave ----------
+
+        private readonly List<(Vector3 pos, float until)> _decoys = new List<(Vector3, float)>();
+
+        public void ServerDecoy(Vector3 pos, float seconds)
+        {
+            if (Physics.Raycast(pos + Vector3.up * 4f, Vector3.down, out var g, 10f, GameInfo.LevelLayer)) pos = g.point;
+            _decoys.Add((pos, Time.time + seconds));
+            Fx.Send(FxKind.Decoy, pos, pos, 0, Mathf.RoundToInt(seconds));
+        }
+
+        private bool DecoyNear(Vector3 pos, out Vector3 at)
+        {
+            _decoys.RemoveAll(d => Time.time > d.until);
+            at = default;
+            float best = 15f * 15f;
+            bool found = false;
+            foreach (var d in _decoys)
+            {
+                float dd = (d.pos - pos).sqrMagnitude;
+                if (dd < best) { best = dd; at = d.pos; found = true; }
+            }
+            return found;
+        }
+
+        public int ServerShockwave(Vector3 at, float radius, float stun, int dmg)
+        {
+            int n = 0;
+            foreach (var fish in _walkers.ToList())
+            {
+                if (!fish || fish.IsDead) continue;
+                Vector3 d = fish.transform.position - at; d.y = 0f;
+                if (d.sqrMagnitude > radius * radius) continue;
+                Vector3 to = fish.transform.position + (d.sqrMagnitude > 0.01f ? d.normalized : Vector3.forward) * 3f;
+                if (Physics.Raycast(to + Vector3.up * 5f, Vector3.down, out var g, 10f, GameInfo.LevelLayer)) to = g.point + Vector3.up * 0.4f;
+                if (!fish.Rig.isKinematic) { fish.Rig.position = to; fish.transform.position = to; }
+                Slow(fish, 1f, stun);
+                fish.ServerChangeHp(dmg);
+                n++;
+            }
+            Fx.Send(FxKind.Blast, at, at);
+            return n;
         }
 
         // ---------- the newer kinds ----------
@@ -466,7 +520,12 @@ namespace HtfFortress
             _progress[fish] = (fish.transform.position, Time.time); // attacking counts as progress
             int dmg = Mathf.RoundToInt(WalkerDamage.Value * stats.Damage * (1f + 0.08f * Mathf.Max(0, _server.Wave - 1))); // hits harder each wave
             if (tag.Kind == EnemyKind.Bomber) { Explode(fish, dmg); return; }
-            if (wall) { BuildSystem.Instance.ServerDamage(wall, Mathf.RoundToInt(dmg * stats.WallMult)); AutoTest.Count("walker_hit_piece"); }
+            if (wall)
+            {
+                BuildSystem.Instance.ServerDamage(wall, Mathf.RoundToInt(dmg * stats.WallMult));
+                AutoTest.Count("walker_hit_piece");
+                if (Perks.TeamLegend(Gear.Rebar)) { fish.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(dmg * stats.WallMult * 0.3f))); AutoTest.Count("legend_thorns"); } // legendary: walls bite back
+            }
             else { DamageCore(Mathf.Max(1, dmg / 2)); AutoTest.Count("walker_hit_core"); } // the lighthouse is sturdier than a wall
         }
 
@@ -498,6 +557,7 @@ namespace HtfFortress
             _progress[fish] = (fish.transform.position, Time.time);
             int dmg = Mathf.Min(60, Mathf.RoundToInt(12f * stats.Damage * (1f + 0.05f * Mathf.Max(0, _server.Wave - 1))));
             HurtPlayer(prey, dmg, fish.transform.forward * 4f + Vector3.up * 2f);
+            if (Perks.Legend(prey, Gear.SharkArmor)) { fish.ServerChangeHp(25); AutoTest.Count("legend_biteback"); } // legendary: bite back
         }
 
         public static void HurtPlayer(Player p, int dmg, Vector3 force)
@@ -517,7 +577,17 @@ namespace HtfFortress
 
         private static int CoreShielded => Mathf.RoundToInt(CoreMaxHp.Value * (1f + Perks.Team(Gear.CoreShield)));
 
-        public void DamageCore(int dmg) => _server.CoreHp = Mathf.Clamp(_server.CoreHp - dmg, 0, _server.CoreMax);
+        public void DamageCore(int dmg) { _server.CoreHp = Mathf.Clamp(_server.CoreHp - dmg, 0, _server.CoreMax); _lastCoreHit = Time.time; }
+        private float _lastCoreHit, _nextRegen;
+
+        // Legendary lighthouse shield: left alone for 5 s, the lighthouse mends 1% a second.
+        private void CoreRegen()
+        {
+            if (!_server.Active || Time.time < _nextRegen || Time.time - _lastCoreHit < 5f || _server.CoreHp >= _server.CoreMax || !Perks.TeamLegend(Gear.CoreShield)) return;
+            _nextRegen = Time.time + 1f;
+            _server.CoreHp = Mathf.Min(_server.CoreMax, _server.CoreHp + Mathf.CeilToInt(_server.CoreMax * 0.01f));
+            AutoTest.Count("legend_regen");
+        }
 
         // Bomber: blows up on whatever stopped it, hurting every piece (and the core) around.
         private void Explode(RunningFish fish, int dmg)
@@ -594,6 +664,7 @@ namespace HtfFortress
             EnsureRegistered();
             if (InstanceFinder.IsServerStarted)
             {
+                CoreRegen();
                 // Boss health for everyone's HUD.
                 _server.BossHp = 0; _server.BossMax = 0;
                 if (_server.Active)

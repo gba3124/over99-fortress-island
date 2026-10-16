@@ -12,14 +12,16 @@ namespace HtfFortress
     {
         Gunpowder, Scope, ApRounds, Incendiary, FrostCore, TeslaCoil, Rebar, CoreShield, WarChest,
         SharkArmor, BigNet, FishGloves, Gauntlet, ToolBelt, LuckyCharm,
+        Overclock, FieldRepair, Decoy, NetCannon, Shockwave, // active gear: press K, then a cooldown
     }
 
     // What every piece of gear does at each rarity. Tune here.
     public static class GearCatalog
     {
-        public const int FortressSlots = 4, PersonalSlots = 2;
+        public const int FortressSlots = 4, PersonalSlots = 2, ActiveSlots = 1;
         public static readonly Gear[] All = (Gear[])Enum.GetValues(typeof(Gear));
         public static bool IsFortress(Gear g) => g <= Gear.WarChest;
+        public static bool IsActive(Gear g) => g >= Gear.Overclock;
 
         // Common / Rare / Epic / Legendary.
         private static readonly float[][] Values =
@@ -39,11 +41,25 @@ namespace HtfFortress
             new[] { 0.15f, 0.30f, 0.50f, 0.80f }, // Gauntlet: hand damage vs fortress enemies +%
             new[] { 0.05f, 0.10f, 0.15f, 0.25f }, // ToolBelt: build / upgrade / repair cost -%
             new[] { 1.25f, 1.5f, 2f, 3f },        // LuckyCharm: drop chance x
+            new[] { 5f, 6f, 7f, 8f },             // Overclock: seconds of double turret fire rate
+            new[] { 0.4f, 0.5f, 0.6f, 0.8f },     // FieldRepair: share of max health back, within 10 m
+            new[] { 8f, 9f, 10f, 12f },           // Decoy: seconds the duck holds the fish's attention
+            new[] { 12f, 14f, 16f, 20f },         // NetCannon: radius scooped into your net
+            new[] { 1f, 1.2f, 1.5f, 2f },         // Shockwave: seconds stunned (6 m, 20 damage)
         };
+
+        private static readonly float[][] Cooldowns =
+        {
+            new[] { 60f, 55f, 50f, 45f }, new[] { 50f, 45f, 40f, 35f }, new[] { 50f, 45f, 40f, 35f },
+            new[] { 30f, 27f, 24f, 20f }, new[] { 40f, 36f, 32f, 28f },
+        };
+
+        public static float Cooldown(Gear g, Rarity r) => IsActive(g) ? Cooldowns[g - Gear.Overclock][(int)r] : 0f;
 
         public static float Value(Gear g, Rarity r) => Values[(int)g][(int)r];
 
-        private static bool IsPercent(Gear g) => !(g == Gear.Incendiary || g == Gear.TeslaCoil || g == Gear.WarChest || g == Gear.BigNet || g == Gear.LuckyCharm);
+        private static bool IsPercent(Gear g) => !(g == Gear.Incendiary || g == Gear.TeslaCoil || g == Gear.WarChest || g == Gear.BigNet || g == Gear.LuckyCharm)
+                                                 && (!IsActive(g) || g == Gear.FieldRepair);
 
         public static string FormatValue(Gear g, Rarity r)
         {
@@ -52,7 +68,8 @@ namespace HtfFortress
         }
 
         public static string Name(Gear g) => L10n.T("gear" + g);
-        public static string Effect(Gear g, Rarity r) => L10n.T("gearFx" + g, FormatValue(g, r));
+        public static string Effect(Gear g, Rarity r) =>
+            L10n.T("gearFx" + g, FormatValue(g, r)) + (IsActive(g) ? "<size=85%><color=#9aa4b0>　" + L10n.T("cooldown", Cooldown(g, r).ToString("0")) + "</color></size>" : "");
         public static string RarityName(Rarity r) => L10n.T("rarity" + r);
         public static Color Color(Rarity r) => r == Rarity.Legendary ? new Color(1f, 0.71f, 0.18f) : r == Rarity.Epic ? new Color(0.71f, 0.36f, 1f) : r == Rarity.Rare ? new Color(0.29f, 0.64f, 1f) : new Color(0.91f, 0.91f, 0.91f);
         public static string Hex(Rarity r) => ColorUtility.ToHtmlStringRGB(Color(r));
@@ -80,6 +97,9 @@ namespace HtfFortress
         public readonly List<(Gear, Rarity)> Fortress = new List<(Gear, Rarity)>();
         public readonly Dictionary<ulong, List<(Gear, Rarity)>> Personal = new Dictionary<ulong, List<(Gear, Rarity)>>();
         public readonly Dictionary<ulong, string> Names = new Dictionary<ulong, string>();
+        public readonly HashSet<PieceType> Unlocked = new HashSet<PieceType>(); // blueprint turrets the team has found
+
+        public bool CanBuild(PieceType t) => !Catalog.NeedsBlueprint(t) || Unlocked.Contains(t);
 
         public int Count(Gear g, Rarity r) => Owned.TryGetValue((g, r), out int n) ? n : 0;
         public void Add(Gear g, Rarity r, int n = 1)
@@ -102,6 +122,7 @@ namespace HtfFortress
             foreach (var f in Fortress) lines.Add($"fort {f.Item1} {f.Item2}");
             foreach (var kv in Personal) foreach (var s in kv.Value) lines.Add($"pers {kv.Key} {s.Item1} {s.Item2}");
             foreach (var kv in Names) lines.Add($"name {kv.Key} {kv.Value.Replace("\n", " ")}");
+            foreach (var t in Unlocked) lines.Add($"unlock {t} 1");
             return string.Join("\n", lines);
         }
 
@@ -120,6 +141,7 @@ namespace HtfFortress
                         case "fort": v.Fortress.Add((P<Gear>(f[1]), P<Rarity>(f[2]))); break;
                         case "pers": v.Slots(ulong.Parse(f[1])).Add((P<Gear>(f[2]), P<Rarity>(f[3]))); break;
                         case "name": v.Names[ulong.Parse(f[1])] = f.Length > 3 ? f[2] + " " + f[3] : f[2]; break;
+                        case "unlock": v.Unlocked.Add(P<PieceType>(f[1])); break;
                     }
                 }
                 catch (Exception) { } // one bad line never loses the rest of the vault
@@ -139,6 +161,12 @@ namespace HtfFortress
         public static float Team(Gear g) => V?.FortressValue(g) ?? 0f;
         public static float Of(Player p, Gear g) => p && V != null ? V.PersonalValue(Loot.KeyOf(p), g) : 0f;
         public static float Of(int playerObjectId, Gear g) => Of(PlayerManager.Players.FirstOrDefault(x => x && x.ObjectId == playerObjectId), g);
+
+        // Legendary gear also has a special effect of its own (see "gearLegend..." strings).
+        public static bool TeamLegend(Gear g) => V != null && V.Fortress.Any(f => f.Item1 == g && f.Item2 == Rarity.Legendary);
+        public static bool Legend(Player p, Gear g) =>
+            p && V != null && V.Personal.TryGetValue(Loot.KeyOf(p), out var l) && l.Any(x => x.Item1 == g && x.Item2 == Rarity.Legendary);
+        public static bool Legend(int playerObjectId, Gear g) => Legend(PlayerManager.Players.FirstOrDefault(x => x && x.ObjectId == playerObjectId), g);
 
         public static int Cost(int baseCost, Player builder) => Discount(baseCost, Of(builder, Gear.ToolBelt));
         public static int MyCost(int baseCost) =>

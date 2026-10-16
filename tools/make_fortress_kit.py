@@ -125,6 +125,42 @@ for p in ring_points(0.14, 3, 1.22):
 t.ico(0.16, (0, 0, 1.42), coil, subdiv=2)
 out.append(t.finish())
 
+# ---------- blueprint turrets: flamethrower, sniper, bubble shield ----------
+fuel = mat("FuelRed", (0.78, 0.2, 0.16))
+f = Builder("FlameHead", [iron, fuel, brass, M("Spark"), black])
+f.box((0.46, 0.5, 0.12), (0, 0.05, 0.06), iron)
+for x in (-0.16, 0.16):
+    f.cyl(0.13, 0.5, (x, 0.22, 0.32), fuel, segs=10, axis="Y")       # fuel tanks
+    f.cyl(0.135, 0.04, (x, 0.0, 0.32), brass, segs=10, axis="Y")
+f.beam((0, 0.0, 0.3), (0, -0.75, 0.34), 0.07, iron, segs=8)             # pipe
+f.beam((0, -0.75, 0.34), (0, -1.0, 0.36), 0.08, iron, segs=8, r2=0.13)  # nozzle flare
+f.cyl(0.1, 0.02, (0, -1.01, 0.36), black, segs=8, axis="Y")
+f.ico(0.05, (0, -0.95, 0.5), M("Spark"))                                 # pilot light
+f.beam((0, -0.95, 0.36), (0, -0.95, 0.46), 0.015, iron, segs=4)
+out.append(f.finish())
+
+sn = Builder("SniperHead", [iron, steel, dark, crystal, brass])
+sn.box((0.36, 0.6, 0.2), (0, 0.15, 0.2), dark)                           # stock
+sn.box((0.2, 0.5, 0.18), (0, -0.2, 0.3), iron)                            # receiver
+sn.beam((0, -0.4, 0.32), (0, -1.85, 0.32), 0.045, steel, segs=8)         # long barrel
+sn.cyl(0.07, 0.12, (0, -1.8, 0.32), iron, segs=8, axis="Y")              # muzzle brake
+sn.beam((0, 0.0, 0.45), (0, -0.5, 0.45), 0.06, iron, segs=8)             # scope
+sn.cyl(0.07, 0.02, (0, -0.51, 0.45), crystal, segs=8, axis="Y")
+for s in (-1, 1):
+    sn.beam((0, -1.2, 0.3), (s * 0.25, -1.3, 0.0), 0.02, iron, segs=4)   # bipod
+sn.box((0.06, 0.08, 0.14), (0, -0.1, 0.16), brass)                       # trigger guard
+out.append(sn.finish())
+
+bubble = mat("BubbleGlow", (0.6, 0.85, 1.0), (0.45, 0.8, 1.2))
+bb = Builder("BubbleHead", [iron, brass, bubble, copper])
+bb.cyl(0.32, 0.12, (0, 0, 0.06), iron, segs=10)
+bb.cone(0.12, 0.4, 0.3, (0, 0, 0.27), brass, segs=12)                      # dish
+bb.beam((0, 0, 0.3), (0, 0, 0.62), 0.04, copper, segs=6)
+bb.ico(0.2, (0, 0, 0.78), bubble, subdiv=2)                               # emitter orb
+for z in (0.56, 0.98):
+    bb.cyl(0.26, 0.03, (0, 0, z), bubble, segs=14)
+out.append(bb.finish())
+
 # ---------- the lighthouse (the core): striped tower, gallery, glowing lantern, red cap (~6.2 m) ----------
 L = Builder("Core", [stone, white, red, dark, iron, crystal])
 L.cyl(1.08, 0.2, (0, 0, 0.1), stone, segs=8)

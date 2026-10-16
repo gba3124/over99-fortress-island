@@ -143,10 +143,18 @@ namespace HtfFortress
         {
             string Arrow(string label, string a, string b) => a == b ? $"{label} {a}" : $"{label} {a} → <color={Hud.Hex(Hud.Good)}><b>{b}</b></color>";
             var lines = new List<string>();
-            if (Catalog.IsTurret(s.Type))
+            if (s.Type == PieceType.Bubble)
             {
                 var now = Catalog.Turret(s.Type, s.Level, s.Branch);
                 var next = Catalog.Turret(s.Type, toLevel, branch);
+                lines.Add(Arrow(L10n.T("statShield"), Mathf.RoundToInt(now.Shield * 100f) + "%", Mathf.RoundToInt(next.Shield * 100f) + "%"));
+                lines.Add(Arrow(L10n.T("statRadius"), now.Range.ToString("0"), next.Range.ToString("0")));
+            }
+            else if (Catalog.IsTurret(s.Type))
+            {
+                var now = Catalog.Turret(s.Type, s.Level, s.Branch);
+                var next = Catalog.Turret(s.Type, toLevel, branch);
+                if (s.Type == PieceType.Flame) lines.Add(Arrow(L10n.T("statBurn"), now.Burn.ToString("0") + "/s", next.Burn.ToString("0") + "/s"));
                 string Dmg(Catalog.TurretStats t) => t.Shots > 1 ? $"{t.Damage}×{t.Shots}" : t.Damage.ToString();
                 lines.Add(Arrow(L10n.T("statDamage"), Dmg(now), Dmg(next)));
                 lines.Add(Arrow(L10n.T("statRate"), (1f / now.Interval).ToString("0.#") + "/s", (1f / next.Interval).ToString("0.#") + "/s"));

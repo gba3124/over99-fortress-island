@@ -148,7 +148,8 @@ namespace HtfFortress
                     if (now - s.Work.Values.DefaultIfEmpty(0f).Max() > Abandon) { End(s, 2, refund: true); AutoTest.Count("sites_abandoned"); }
                     continue;
                 }
-                s.Progress += Time.deltaTime * (1f + TeamBonus * (workers - 1)) / BuildTime(s.Type);
+                bool fast = s.Work.Any(kv => now - kv.Value < WorkGap && Perks.Legend(kv.Key, Gear.ToolBelt)); // legendary tool belt: twice as fast
+                s.Progress += Time.deltaTime * (1f + TeamBonus * (workers - 1)) * (fast ? 2f : 1f) / BuildTime(s.Type);
                 if (s.Progress >= 1f)
                 {
                     if (BuildSystem.Instance.ServerPlace(s.Type, s.Pos, s.RotY, s.Owner, prepaid: s.Paid)) End(s, 1, refund: false);

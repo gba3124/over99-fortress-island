@@ -110,6 +110,7 @@ namespace HtfFortress
                 case "ui": yield return UiScenario(); break;
                 case "construct": yield return ConstructScenario(); break;
                 case "newfoes": yield return NewFoesScenario(); break;
+                case "gear2": yield return Gear2Scenario(); break;
                 default: yield return IslandScenario(); break;
             }
 
@@ -533,6 +534,115 @@ namespace HtfFortress
             Note($"respawn: {Vector3.Distance(Player.LocalPlayer.Transform.position, island.DockPos):F1} m from dock, boat {boat:F1} m from dock");
             FortressPlugin.Shot("coop_results");
             yield return new WaitForSecondsRealtime(1f);
+        }
+
+        // Blueprints and the new turrets, the five actives, the legendary specials.
+        private IEnumerator Gear2Scenario()
+        {
+            var island = FortressIsland.Instance;
+            var plugin = FortressPlugin.Instance;
+            var loot = Loot.Instance;
+            yield return Until(() => island.Exists, 30f, "fortress island");
+            loot.ServerWipeVaultForTest();
+            PlayerManager.ToggleGodMode();
+            IgnorePlayers = true;
+            var me = Player.LocalPlayer;
+            Vector3 center = island.Center;
+            int C(string k) => Counters.TryGetValue(k, out int v) ? v : 0;
+            float g0 = FortressIsland.GapAngles[0] * Mathf.Deg2Rad, g1 = FortressIsland.GapAngles[1] * Mathf.Deg2Rad;
+            Vector3 gd = new Vector3(Mathf.Cos(g0), 0f, Mathf.Sin(g0)), gd1 = new Vector3(Mathf.Cos(g1), 0f, Mathf.Sin(g1)), side = Vector3.Cross(Vector3.up, gd);
+
+            // Blueprints: three to find, then none left.
+            bool b1 = loot.ServerUnlockRandom(me), b2 = loot.ServerUnlockRandom(me), b3 = loot.ServerUnlockRandom(me), b4 = loot.ServerUnlockRandom(me);
+            Note($"blueprints: {b1} {b2} {b3} then {b4} (expect true true true false), unlocked [{string.Join(",", loot.Vault.Unlocked)}]");
+
+            // Legendary fortress gear for the fight.
+            foreach (var g in new[] { Gear.Gunpowder, Gear.Scope, Gear.FrostCore, Gear.Rebar }) loot.DebugEquip(me, g, Rarity.Legendary);
+            me.LocalTeleport(center + FortressIsland.ReadyLocal + Vector3.up * 0.5f, 0f, true);
+            yield return Until(() => plugin.Running, 15f, "round start");
+            yield return Until(() => plugin.InBuildTime, 5f, "build time");
+            plugin.DebugExtendBuild(300f);
+            Siege.Instance.ServerAddCoins(3000);
+
+            // The new turrets at the first gap, a wall line in front; the bubble covers the walls there.
+            for (int k = -2; k <= 2; k++) WallAt(center + gd * 15f + side * (k * BuildSystem.Cell) + Vector3.up * 1.2f, gd);
+            for (int k = -1; k <= 1; k++) WallAt(center + gd1 * 15f + Vector3.Cross(Vector3.up, gd1) * (k * BuildSystem.Cell) + Vector3.up * 1.2f, gd1);
+            bool f = TurretAt(PieceType.Flame, center + gd * 12f + Vector3.up * 1.2f);
+            bool sn = TurretAt(PieceType.Sniper, center + gd * 6f + side * 3f + Vector3.up * 1.2f);
+            bool bu = TurretAt(PieceType.Bubble, center + gd * 11f + side * 3f + Vector3.up * 1.2f);
+            Note($"placed flame {f}, sniper {sn}, bubble {bu}");
+            Vector3 Ground(Vector3 w) { if (Physics.Raycast(w + Vector3.up * 10f, Vector3.down, out var rh, 30f, GameInfo.LevelLayer)) return rh.point; return w; }
+            Vector3 look = Ground(center + gd * 6f - side * 5f) + Vector3.up * 1.8f;
+            yield return Look(look, YawTo(look, center + gd * 12f + side * 1.5f), "gear2_turrets", 1.2f);
+
+            // Bubble: the same blast on a covered wall and on an uncovered one.
+            var covered = BuildSystem.Instance.ServerPieces.Where(p => p.Type == PieceType.Wall).OrderBy(p => (p.Pos - (center + gd * 15f)).sqrMagnitude).First();
+            var bare = BuildSystem.Instance.ServerPieces.Where(p => p.Type == PieceType.Wall).OrderBy(p => (p.Pos - (center + gd1 * 15f)).sqrMagnitude).First();
+            BuildSystem.Instance.ServerDamageArea(covered.Pos, 0.5f, 100);
+            BuildSystem.Instance.ServerDamageArea(bare.Pos, 0.5f, 100);
+            int lostCovered = covered.Hp - BuildSystem.Instance.ServerPieces.First(p => p.Id == covered.Id).Hp;
+            int lostBare = bare.Hp - BuildSystem.Instance.ServerPieces.First(p => p.Id == bare.Id).Hp;
+            Note($"bubble: wall under the bubble lost {lostCovered}, bare wall lost {lostBare} (expect 70 / 100)");
+
+            // A fight at the first gap.
+            Vector3 beach = center + gd * 21f + Vector3.up * 3f;
+            for (int i = 0; i < 6; i++) plugin.ServerSpawnMinion(i == 0 ? EnemyKind.Tank : EnemyKind.Runner, beach + side * (i - 2.5f) * 1.2f);
+            Vector3 eye = Ground(center + gd * 7f - side * 4f) + Vector3.up * 1.8f;
+            me.LocalTeleport(eye, YawTo(eye, center + gd * 16f), true);
+            yield return Until(() => C("shots_Flame") > 3 && C("shots_Sniper") > 0, 25f, "flame and sniper fire");
+            FortressPlugin.Shot("gear2_fight");
+            yield return Until(() => !FortressPlugin.Alive.Any(c => c && c._hp.Value > 0 && (c.transform.position - beach).sqrMagnitude < 30f * 30f), 30f, "fight over");
+            Note($"turrets: flame shots {C("shots_Flame")}, sniper shots {C("shots_Sniper")}; legendary: bursts {C("legend_bursts")}, crits {C("legend_crits")}, freezes {C("legend_freezes")}, thorns {C("legend_thorns")}");
+
+            // Actives, one after another.
+            Vector3 spot = Ground(center + gd * 9f) + Vector3.up * 1f;
+            me.LocalTeleport(spot, YawTo(spot, center + gd * 20f), true);
+            yield return new WaitForSecondsRealtime(0.5f);
+            loot.DebugEquip(me, Gear.Overclock, Rarity.Legendary);
+            bool oc = Actives.Instance.ServerUse(me);
+            Note($"overclock: used {oc}, turrets overclocked for {Turrets.OverclockUntil - Time.time:F1}s; used again right away {Actives.Instance.ServerUse(me)} (expect false: cooldown)");
+            foreach (var w in BuildSystem.Instance.ServerPieces.Where(p => p.Type == PieceType.Wall && (p.Pos - spot).sqrMagnitude < 9f * 9f).ToList())
+                BuildSystem.Instance.ServerDamageArea(w.Pos, 0.3f, 120);
+            int hpBefore = BuildSystem.Instance.ServerPieces.Where(p => p.Type == PieceType.Wall).Sum(p => p.Hp);
+            loot.DebugEquip(me, Gear.FieldRepair, Rarity.Legendary);
+            Actives.Instance.DebugResetCooldown(me);
+            Actives.Instance.ServerUse(me);
+            Note($"field repair: wall health {hpBefore} -> {BuildSystem.Instance.ServerPieces.Where(p => p.Type == PieceType.Wall).Sum(p => p.Hp)}");
+            loot.DebugEquip(me, Gear.Decoy, Rarity.Legendary);
+            Actives.Instance.DebugResetCooldown(me);
+            Actives.Instance.ServerUse(me);
+            for (int i = 0; i < 3; i++) plugin.ServerSpawnMinion(EnemyKind.Runner, spot + gd * 6f + side * (i - 1) * 1.5f + Vector3.up * 2f);
+            yield return Until(() => C("decoyed") > 0, 12f, "fish chase the duck");
+            FortressPlugin.Shot("gear2_decoy");
+            Note($"decoy: pecks {C("decoyed")}");
+            loot.DebugEquip(me, Gear.Shockwave, Rarity.Legendary);
+            Actives.Instance.DebugResetCooldown(me);
+            int hit = Siege.Instance.ServerShockwave(me.Transform.position, 99f, 0f, 0); // count what's around without spending the active
+            Actives.Instance.ServerUse(me);
+            Note($"shockwave: used {C("active_Shockwave")}, fish in range {hit}");
+            plugin.DebugKillAll();
+            yield return new WaitForSecondsRealtime(1.5f);
+            loot.DebugEquip(me, Gear.NetCannon, Rarity.Legendary);
+            Actives.Instance.DebugResetCooldown(me);
+            int netBefore = FortressNet.Instance.ServerNetCount(me.ObjectId);
+            Actives.Instance.ServerUse(me);
+            Note($"fish cannon: net {netBefore} -> {FortressNet.Instance.ServerNetCount(me.ObjectId)}");
+            yield return new WaitForSecondsRealtime(1f);
+            FortressPlugin.Shot("gear2_hud");
+            yield return new WaitForSecondsRealtime(0.5f);
+            plugin.TestKey(UnityEngine.InputSystem.Key.F9, false);
+            yield return new WaitForSecondsRealtime(2f);
+            // The vault with the new kinds in it.
+            foreach (var g in new[] { Gear.Overclock, Gear.Decoy, Gear.Shockwave }) loot.ServerGive(g, Rarity.Rare);
+            Vector3 door = island.VaultPos + Quaternion.Euler(0f, -20f, 0f) * new Vector3(0f, 0f, 2.6f);
+            me.LocalTeleport(door + Vector3.up * 0.5f, YawTo(door, island.VaultPos), true);
+            yield return new WaitForSecondsRealtime(1f);
+            VaultUI.Instance.Open();
+            VaultUI.Instance.DebugSelect(Gear.Gunpowder, Rarity.Legendary);
+            yield return new WaitForSecondsRealtime(1f);
+            FortressPlugin.Shot("gear2_vault");
+            yield return new WaitForSecondsRealtime(0.5f);
+            VaultUI.Instance.Close();
         }
 
         // The newer enemies, one behaviour at a time, during a long build phase (no waves get in the way).

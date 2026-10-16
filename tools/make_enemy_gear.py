@@ -99,4 +99,16 @@ for i in range(6):
 g.ico(0.13, (-0.2, 0.3, 0.55), crystal, subdiv=2)
 out.append(g.finish())
 
+# The decoy duck (active gear): a big yellow rubber duck, standing on z = 0, facing -Y.
+duckY = mat("DuckYellow", (1.0, 0.85, 0.2))
+beak = mat("DuckBeak", (1.0, 0.5, 0.12))
+g = Builder("Decoy", [duckY, beak, M("BombBlack")])
+g.ico(0.42, (0, 0.05, 0.38), duckY, subdiv=2)
+g.ico(0.26, (0, -0.22, 0.86), duckY, subdiv=2)
+g.cone(0.12, 0.05, 0.22, (0, -0.5, 0.82), beak, segs=8, axis="-Y")
+for x in (-0.12, 0.12):
+    g.ico(0.045, (x, -0.42, 0.95), M("BombBlack"))
+g.beam((0, 0.35, 0.45), (0, 0.6, 0.62), 0.12, duckY, segs=6, r2=0.02)  # tail
+out.append(g.finish())
+
 export(out)
