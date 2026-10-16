@@ -3,77 +3,11 @@
 # Blender axes: -Y is the front (it ends up facing the game's +Z, toward the dock path), Z is up, the base sits on z = 0.
 import math
 import os
-import bmesh
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bpy
-from mathutils import Matrix, Vector
-
-OUT = os.path.dirname(bpy.data.filepath)
-
-
-def mat(name, kd, ke=(0.0, 0.0, 0.0)):
-    m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
-    m.use_nodes = True
-    bsdf = next(n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
-    if name not in EXISTING:
-        bsdf.inputs["Base Color"].default_value = (*kd, 1.0)
-        if any(ke):
-            bsdf.inputs["Emission Color"].default_value = (*ke, 1.0)
-            bsdf.inputs["Emission Strength"].default_value = 1.0
-    return m
-
-
-EXISTING = {m.name for m in bpy.data.materials}
-
-
-class Builder:
-    def __init__(self, name, mats):
-        self.name, self.mats, self.bm = name, mats, bmesh.new()
-
-    def _tag(self, geom, mi):
-        for f in geom:
-            if isinstance(f, bmesh.types.BMFace):
-                f.material_index = mi
-
-    def box(self, size, loc, m, rot=(0.0, 0.0, 0.0)):
-        mtx = Matrix.Translation(Vector(loc)) @ (Matrix.Rotation(rot[0], 4, "X") @ Matrix.Rotation(rot[1], 4, "Y") @ Matrix.Rotation(rot[2], 4, "Z")) @ Matrix.Diagonal((*size, 1.0))
-        r = bmesh.ops.create_cube(self.bm, size=1.0, matrix=mtx)
-        faces = {f for v in r["verts"] for f in v.link_faces}
-        self._tag(faces, self.mats.index(m))
-
-    def cyl(self, radius, depth, loc, m, segs=8, axis="Z"):
-        rot = {"Z": Matrix.Identity(4), "X": Matrix.Rotation(math.pi / 2, 4, "Y"), "Y": Matrix.Rotation(math.pi / 2, 4, "X")}[axis]
-        r = bmesh.ops.create_cone(self.bm, cap_ends=True, segments=segs, radius1=radius, radius2=radius, depth=depth, matrix=Matrix.Translation(Vector(loc)) @ rot)
-        self._tag({f for v in r["verts"] for f in v.link_faces}, self.mats.index(m))
-
-    def poly(self, pts, m):
-        vs = [self.bm.verts.new(p) for p in pts]
-        f = self.bm.faces.new(vs)
-        f.material_index = self.mats.index(m)
-
-    def prism(self, tri_xz, y, thick, m):
-        # A triangle (in x/z) extruded along y: closed, so it has a proper outside.
-        a = [self.bm.verts.new((x, y - thick / 2, z)) for x, z in tri_xz]
-        b = [self.bm.verts.new((x, y + thick / 2, z)) for x, z in tri_xz]
-        faces = [self.bm.faces.new(a), self.bm.faces.new(b[::-1])]
-        for i in range(3):
-            j = (i + 1) % 3
-            faces.append(self.bm.faces.new((a[i], b[i], b[j], a[j])))
-        self._tag(faces, self.mats.index(m))
-
-    def finish(self):
-        old = bpy.data.objects.get(self.name)
-        if old:
-            bpy.data.objects.remove(old, do_unlink=True)
-        me = bpy.data.meshes.new(self.name)
-        bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
-        self.bm.to_mesh(me)
-        self.bm.free()
-        for m in self.mats:
-            me.materials.append(m)
-        ob = bpy.data.objects.new(self.name, me)
-        bpy.context.scene.collection.objects.link(ob)
-        return ob
-
+from bkit import Builder, export, mat
 
 wood, dark, iron, gold, stone, spark = (bpy.data.materials[n] for n in ("Wood", "DarkWood", "Iron", "Gold", "Stone", "Spark"))
 roof = mat("RoofRed", (0.62, 0.24, 0.19))
@@ -136,12 +70,4 @@ for i in range(6):
     g.poly([b, a, bot], glow)
 gem = g.finish()
 
-bpy.ops.wm.save_mainfile()
-for ob in (chest, vault, gem):
-    for o in bpy.context.scene.objects:
-        o.select_set(False)
-    ob.select_set(True)
-    bpy.context.view_layer.objects.active = ob
-    bpy.ops.wm.obj_export(filepath=os.path.join(OUT, ob.name + ".obj"), export_selected_objects=True, forward_axis="NEGATIVE_Z", up_axis="Y",
-                          export_materials=True, export_triangulated_mesh=True, export_uv=False, export_normals=True, export_smooth_groups=False)
-    print("EXPORTED", ob.name, tuple(round(d, 2) for d in ob.dimensions), len(ob.data.polygons), "faces")
+export([chest, vault, gem])

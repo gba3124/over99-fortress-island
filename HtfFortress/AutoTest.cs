@@ -319,12 +319,12 @@ namespace HtfFortress
             var shown = new List<Creature>();
             for (int i = 0; i < kinds.Length; i++)
                 shown.Add(plugin.DebugShowcase(kinds[i].Item1, kinds[i].Item2, row + new Vector3((i - 2.5f) * 1.6f, 0f, 0f), 180f));
-            yield return new WaitForSecondsRealtime(2.5f);
-            yield return Look(row + new Vector3(0f, 0f, 5.5f), 180f, "gallery", 1.5f);
+            yield return new WaitForSecondsRealtime(0.8f);
+            yield return Look(row + new Vector3(0f, 0.3f, 3.6f), 180f, "gallery", 0.6f);
             foreach (var c in shown) if (c) c.ServerChangeHp(1000000);
-            var boss = plugin.DebugShowcase(EnemyKind.Boss, false, center + new Vector3(0f, 1.8f, 12f), 180f);
-            yield return new WaitForSecondsRealtime(2.5f);
-            yield return Look(center + new Vector3(0f, 0f, 3f), 0f, "gallery_boss", 1.5f);
+            var boss = plugin.DebugShowcase(EnemyKind.Boss, false, center + new Vector3(0f, 1.8f, 9f), 180f);
+            yield return new WaitForSecondsRealtime(0.8f);
+            yield return Look(center + new Vector3(0f, 0.8f, 2.2f), 0f, "gallery_boss", 0.6f);
             if (boss) boss.ServerChangeHp(1000000);
             yield return new WaitForSecondsRealtime(1f);
 

@@ -116,6 +116,8 @@ htf-fortress/
 ├── tools/
 │   ├── autotest.sh          設定下一次啟動要跑的測試情境
 │   ├── run_test.sh          跑一個情境：啟動、等報告、印出結果
+│   ├── bkit.py              Blender 腳本共用的方塊／圓柱／梁等工具
+│   ├── make_fortress_kit.py 用 Blender 產生砲塔、燈塔、石牆鐵牆、敵人配件
 │   ├── make_vault_models.py 用 Blender 產生儲藏庫、寶箱、掉落水晶模型
 │   └── launch.sh            直接用 Pixel Port 的 Wine 啟動遊戲
 └── decompiled/              遊戲反編譯碼（.gitignore，只供查閱）
@@ -141,7 +143,7 @@ cd ~/Desktop/Project/htf-fortress
 tools/autotest.sh island && tools/launch.sh
 ```
 
-情境：`probe`（環境資訊、音效清單）、`island`（完整流程）、`enemies`（敵人圖鑑＋各波）、`build`（所有砲塔與分支）、`balance`（AI 建造者真實打到失敗）、`coop`（不開無敵站在缺口被咬、撿魚、全滅、碼頭重生、結算表）、`cheats`（每個測試鍵）、`loot`（掉落、寶箱、合成、裝備、存檔、儲藏庫介面）、`gear`（每件裝備的效果）。
+情境：`probe`（環境資訊、音效清單）、`island`（完整流程）、`enemies`（敵人圖鑑＋各波）、`build`（所有砲塔與分支）、`balance`（AI 建造者真實打到失敗）、`coop`（不開無敵站在缺口被咬、撿魚、全滅、碼頭重生、結算表）、`cheats`（每個測試鍵）、`loot`（掉落、寶箱、合成、裝備、存檔、儲藏庫介面）、`gear`（每件裝備的效果）、`ui`（每個介面畫面的截圖）。
 測試會用一個獨立的 `FortressTest` 存檔，跑完自動關遊戲。報告在 `BepInEx/fortress-test-report.txt`，截圖在 `BepInEx/fortress-shots/`。
 
 ## 技術筆記

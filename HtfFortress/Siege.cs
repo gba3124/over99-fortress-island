@@ -154,6 +154,7 @@ namespace HtfFortress
         // Returns true when we drove the fish this tick, so the game's own wandering is skipped.
         public bool Steer(RunningFish fish)
         {
+            if (FortressPlugin.Showcase.Contains(fish)) { fish.Rig.isKinematic = true; return true; } // test gallery: stand still
             if (!_server.Active || !_walkers.Contains(fish)) return false;
             if (fish.IsDead) { _walkers.Remove(fish); return false; }
             Enemies.Instance.TryGet(fish, out var tag);

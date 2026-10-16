@@ -254,6 +254,15 @@ namespace HtfFortress
             return go;
         }
 
+        // Walls change material with their level: wooden palisade, stone with battlements, spiked iron plates.
+        private static void SetWallModel(GameObject go, int level)
+        {
+            string model = level >= 3 ? "WallMetal" : level == 2 ? "WallStone" : "Wall";
+            if (go.transform.Find(model + "Model")) return;
+            foreach (Transform c in go.transform) Destroy(c.gameObject);
+            Models.Attach(model, go.transform, Catalog.Size(PieceType.Wall));
+        }
+
         // Shows what you're looking at and returns its id (0 = nothing).
         private void UpdateLookInfo(out int id)
         {
@@ -529,7 +538,11 @@ namespace HtfFortress
                 _pieceIds[go] = s.Id;
                 prev.Level = 0;
             }
-            if (prev.Level != s.Level) Models.SetLevelLook(go, s.Type, s.Level);
+            if (prev.Level != s.Level)
+            {
+                if (s.Type == PieceType.Wall) SetWallModel(go, s.Level);
+                else Models.SetLevelLook(go, s.Type, s.Level);
+            }
             if (!had) { StartCoroutine(Pop(go.transform)); Fx.SoundRandom("WoodItemImpact_V", 1, 3, s.Pos, 0.8f, AudioDistance.Short); }
             else if (s.Level > prev.Level) { StartCoroutine(Pop(go.transform)); Fx.SoundRandom("MetallicItemImpact_V", 1, 2, s.Pos, 0.9f, AudioDistance.Short); Fx.Sound("Buy_01", s.Pos, 0.6f, AudioDistance.Short); }
             else if (s.Hp < prev.Hp) { StartCoroutine(Shake(go.transform)); if (Time.time > _nextHitSound) { _nextHitSound = Time.time + 0.15f; Fx.SoundRandom("KnifeHit_0", 1, 4, s.Pos, 0.6f, AudioDistance.Short); } }

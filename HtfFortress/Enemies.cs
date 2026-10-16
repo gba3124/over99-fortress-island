@@ -32,11 +32,11 @@ namespace HtfFortress
         {
             switch (k)
             {
-                case EnemyKind.Charger: return new EnemyStats { BaseHp = 15f, Speed = 1.8f, Hp = 0.5f, Damage = 0.6f, WallMult = 1f, Scale = 0.75f, Reward = 2, Gear = null, FirstWave = 3 };
+                case EnemyKind.Charger: return new EnemyStats { BaseHp = 15f, Speed = 1.8f, Hp = 0.5f, Damage = 0.6f, WallMult = 1f, Scale = 0.75f, Reward = 2, Gear = "Helmet", FirstWave = 3 };
                 case EnemyKind.Spitter: return new EnemyStats { BaseHp = 40f, Speed = 0f, Hp = 1.2f, Damage = 1f, WallMult = 1f, Scale = 1.1f, Reward = 5, Gear = "SpitterCannon", FirstWave = 5 };
                 case EnemyKind.Bomber: return new EnemyStats { BaseHp = 20f, Speed = 1.2f, Hp = 0.6f, Damage = 8f, WallMult = 1f, Scale = 1f, Reward = 4, Gear = "Bomb", FirstWave = 6 };
                 case EnemyKind.Tank: return new EnemyStats { BaseHp = 150f, Speed = 0.5f, Hp = 5f, Damage = 2.5f, WallMult = 2f, Scale = 1.8f, Reward = 10, Gear = "Shell", FirstWave = 8 };
-                case EnemyKind.Boss: return new EnemyStats { BaseHp = 700f, Speed = 0.45f, Hp = 40f, Damage = 6f, WallMult = 2f, Scale = 3.5f, Reward = 120, Gear = "Shell", FirstWave = 10 };
+                case EnemyKind.Boss: return new EnemyStats { BaseHp = 700f, Speed = 0.45f, Hp = 40f, Damage = 6f, WallMult = 2f, Scale = 3.5f, Reward = 120, Gear = "BossShell", FirstWave = 10 };
                 default: return new EnemyStats { BaseHp = 30f, Speed = 1f, Hp = 1f, Damage = 1f, WallMult = 1f, Scale = 1f, Reward = 3, Gear = null, FirstWave = 1 };
             }
         }
@@ -168,7 +168,7 @@ namespace HtfFortress
             float width = Mathf.Max(0.3f, Mathf.Min(b.size.x, b.size.z));
             Vector3 topLocal = root.InverseTransformPoint(new Vector3(b.center.x, b.max.y, b.center.z));
 
-            if (stats.Gear != null) Wear(root, stats.Gear, topLocal - Vector3.up * (stats.Gear == "Shell" ? 0.35f * b.size.y / stats.Scale : 0.05f), width / stats.Scale);
+            if (stats.Gear != null) Wear(root, stats.Gear, topLocal - Vector3.up * (stats.Gear.EndsWith("Shell") ? 0.35f * b.size.y / stats.Scale : 0.05f), width / stats.Scale);
             if (tag.Elite) Wear(root, "Crown", topLocal, width * 0.7f / stats.Scale);
             _dressed.Add(tag.ObjectId);
             AutoTest.Count("dressed_" + tag.Kind);

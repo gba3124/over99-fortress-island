@@ -117,8 +117,11 @@ namespace HtfFortress
             item.Rig.isKinematic = true;
             Server.Instance.Spawn(item.gameObject);
             Enemies.Instance.ServerTag(item.Creature, kind, elite);
+            Showcase.Add(item.Creature);
             return item.Creature;
         }
+
+        public static readonly HashSet<Creature> Showcase = new HashSet<Creature>();
 
         public void DebugKillAll() { foreach (var c in _alive.Where(c => c && c._hp.Value > 0).ToList()) c.ServerChangeHp(1000000); }
 
