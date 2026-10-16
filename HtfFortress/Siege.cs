@@ -168,18 +168,15 @@ namespace HtfFortress
             }
             if (!_core)
             {
-                _core = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                _core.name = "FortressCore";
+                _core = new GameObject("FortressCore");
                 _core.layer = BuildSystem.PieceLayer;
-                _core.transform.localScale = new Vector3(CoreRadius * 2f, 1.5f, CoreRadius * 2f);
+                var col = _core.AddComponent<CapsuleCollider>();
+                col.radius = CoreRadius; col.height = 3.3f; col.center = new Vector3(0f, 1.65f, 0f);
+                Models.Attach("Core", _core.transform, new Vector3(CoreRadius * 2f, 3f, CoreRadius * 2f), new Vector3(0f, 1.5f, 0f));
                 DontDestroyOnLoad(_core);
             }
-            _core.transform.position = _view.CorePos + Vector3.up * 1.5f;
-            float t = _view.CoreMax > 0 ? (float)_view.CoreHp / _view.CoreMax : 1f;
-            var m = _core.GetComponent<Renderer>().material;
-            var c = Color.Lerp(new Color(0.8f, 0.1f, 0.1f), new Color(1f, 0.8f, 0.2f), t);
-            m.color = c;
-            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
+            _core.transform.position = _view.CorePos;
+            Models.Tint(_core, _view.CoreMax > 0 ? (float)_view.CoreHp / _view.CoreMax : 1f);
 
             if (!_hud) _hud = Hud.CreateText("SiegeStatus", new Vector2(0.5f, 1f), new Vector2(0f, -40f), 30f, TextAlignmentOptions.Top);
             if (_hud)

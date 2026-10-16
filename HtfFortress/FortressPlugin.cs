@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using BepInEx;
 using BepInEx.Configuration;
@@ -36,6 +38,7 @@ namespace HtfFortress
 
         private void Awake()
         {
+            _instance = this;
             _toggleKey = Config.Bind("Waves", "ToggleKey", Key.F9, "Host presses this to start / stop the wave mode.");
             _pool = Config.Bind("Waves", "CreaturePool", "", "Comma-separated creature names to spawn. Empty = hostile creatures only. Names are listed in the BepInEx log on start.");
             _baseCount = Config.Bind("Waves", "BaseCount", 3, new ConfigDescription("Creatures in wave 1.", new AcceptableValueRange<int>(1, 50)));
@@ -51,6 +54,7 @@ namespace HtfFortress
             L10n.Setting = Config.Bind("General", "Language", LanguageSetting.Auto, "Language for Fortress messages. Auto follows the game.");
             BuildSystem.BuildKey = Config.Bind("Build", "BuildKey", Key.B, "Toggle build mode (place walls).");
             BuildSystem.Log = Logger;
+            Models.Dir = Path.Combine(Path.GetDirectoryName(Info.Location), "Models");
             gameObject.AddComponent<BuildSystem>();
             gameObject.AddComponent<Siege>();
             new Harmony("owen.htf.fortress").PatchAll();
@@ -59,9 +63,24 @@ namespace HtfFortress
 
         private static bool IsHost => Server.Instance && Server.Instance.IsServerInitialized;
 
+        // Screenshots land in BepInEx/fortress-shots so they can be checked without watching the screen.
+        public static void Shot(string tag, float delay = 0f) => _instance.StartCoroutine(_instance.ShotAfter(tag, delay));
+        private static FortressPlugin _instance;
+
+        private IEnumerator ShotAfter(string tag, float delay)
+        {
+            if (delay > 0f) yield return new WaitForSeconds(delay);
+            string dir = Path.Combine(Paths.BepInExRootPath, "fortress-shots");
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, DateTime.Now.ToString("HHmmss") + "_" + tag + ".png");
+            ScreenCapture.CaptureScreenshot(file);
+            Logger.LogInfo("Screenshot: " + file);
+        }
+
         private void Update()
         {
             var kb = Keyboard.current;
+            if (kb != null && kb.f10Key.wasPressedThisFrame) Shot("manual");
             if (kb != null && kb[_toggleKey.Value].wasPressedThisFrame && !ChatManager.IsTyping)
             {
                 if (_running) Stop(L10n.T("stopped"));
@@ -101,8 +120,9 @@ namespace HtfFortress
             _warnedNoLand = false;
             _nextWaveAt = 0f;
             _alive.Clear();
-            Siege.Instance.ServerStart(Player.LocalPlayer.transform.position);
+            Siege.Instance.ServerStart(Player.LocalPlayer.Transform.position);
             Say(L10n.T("start", pool.Count, _bestWave.Value, _toggleKey.Value));
+            Shot("start", 2f);
         }
 
         private void Stop(string why)
@@ -142,7 +162,7 @@ namespace HtfFortress
             int count = _baseCount.Value + _countPerWave.Value * (wave - 1);
             float hpMult = 1f + _hpPerWave.Value * (wave - 1);
             int walkers = _walkerPrefabs.Count > 0 ? Mathf.RoundToInt(count * (_poolPrefabs.Count > 0 ? _walkerShare.Value : 1f)) : 0;
-            Vector3 host = Player.LocalPlayer.transform.position;
+            Vector3 host = Player.LocalPlayer.Transform.position;
             Vector3 core = Siege.Instance.CorePos;
             for (int i = 0; i < count; i++)
             {
@@ -166,6 +186,7 @@ namespace HtfFortress
                 Logger.LogInfo($"  spawned {prefab.name}{(walker ? " [walker]" : "")} at {pos}");
             }
             Say(L10n.T("wave", wave, _alive.Count, hpMult.ToString("0.##")));
+            Shot("wave" + wave, 4f);
         }
 
         // Walkers need ground: try the full radius first, then closer rings, so small islands still work.

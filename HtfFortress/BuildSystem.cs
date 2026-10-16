@@ -47,7 +47,6 @@ namespace HtfFortress
         private bool _flip;
         private GameObject _ghost;
         private PieceType _ghostType = (PieceType)255;
-        private Material _ghostMat;
         private bool _ghostValid;
         private Vector3 _lastSentPos = Vector3.positiveInfinity;
 
@@ -137,7 +136,7 @@ namespace HtfFortress
                 case PieceType.Wall:
                 {
                     // Edge between the player's cell and the aimed cell; the far edge when aiming into your own cell.
-                    Vector3 me = Player.LocalPlayer.transform.position;
+                    Vector3 me = Player.LocalPlayer.Transform.position;
                     int px = Mathf.FloorToInt(me.x / Cell), pz = Mathf.FloorToInt(me.z / Cell);
                     float edge;
                     if (alongX)
@@ -173,10 +172,9 @@ namespace HtfFortress
             if (!_ghost || _ghostType != _type)
             {
                 if (_ghost) Destroy(_ghost);
-                _ghost = CreatePieceObject(_type);
+                _ghost = CreatePieceObject(_type, 0);
                 Destroy(_ghost.GetComponent<Collider>());
                 _ghost.name = "FortressGhost";
-                _ghostMat = _ghost.GetComponent<Renderer>().material;
                 _ghostType = _type;
                 DontDestroyOnLoad(_ghost);
             }
@@ -188,17 +186,21 @@ namespace HtfFortress
 
             _ghost.SetActive(true);
             _ghost.transform.SetPositionAndRotation(pos, rot);
-            SetColor(_ghostMat, _ghostValid ? new Color(0.3f, 0.6f, 1f) : new Color(0.9f, 0.2f, 0.2f));
+            Models.Paint(_ghost, _ghostValid ? new Color(0.3f, 0.6f, 1f) : new Color(0.9f, 0.2f, 0.2f));
         }
 
         private static bool SameType(GameObject go, PieceType t) => go.name.StartsWith("FortressPiece_" + t);
 
-        private static GameObject CreatePieceObject(PieceType t)
+        // Root holds the box collider (cheap, matches the grid); the Blender model is a child.
+        private static GameObject CreatePieceObject(PieceType t, int layer)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.transform.localScale = t == PieceType.Wall ? new Vector3(Cell, Cell, Thick)
-                                    : t == PieceType.Floor ? new Vector3(Cell, Thick, Cell)
-                                    : new Vector3(Cell, Thick, Cell * 1.4142f);
+            Vector3 size = t == PieceType.Wall ? new Vector3(Cell, Cell, Thick)
+                         : t == PieceType.Floor ? new Vector3(Cell, Thick, Cell)
+                         : new Vector3(Cell, Thick, Cell * 1.4142f);
+            var go = new GameObject("FortressPiece");
+            go.layer = layer;
+            go.AddComponent<BoxCollider>().size = size;
+            Models.Attach(t.ToString(), go.transform, size);
             return go;
         }
 
@@ -274,8 +276,6 @@ namespace HtfFortress
             foreach (var p in _serverPieces.Values) InstanceFinder.ServerManager.Broadcast(conn, p);
         }
 
-        private static readonly Color PieceColor = new Color(0.6f, 0.45f, 0.3f);
-
         private void OnPieceState(PieceState s, Channel ch)
         {
             _pieces.TryGetValue(s.Id, out var go);
@@ -287,9 +287,8 @@ namespace HtfFortress
             }
             if (!go)
             {
-                go = CreatePieceObject(s.Type);
+                go = CreatePieceObject(s.Type, PieceLayer); // ground layer, so players and creatures can stand and walk on it
                 go.name = "FortressPiece_" + s.Type + "_" + s.Id;
-                go.layer = PieceLayer; // same layer as the ground, so players and creatures can stand and walk on it
                 go.transform.position = s.Pos;
                 go.transform.rotation = s.Type == PieceType.Ramp ? Quaternion.Euler(-45f, s.RotY, 0f) : Quaternion.Euler(0f, s.RotY, 0f);
                 _pieces[s.Id] = go;
@@ -297,7 +296,7 @@ namespace HtfFortress
             }
             // Darken toward red as the piece takes damage.
             float t = s.MaxHp > 0 ? Mathf.Clamp01((float)s.Hp / s.MaxHp) : 1f;
-            SetColor(go.GetComponent<Renderer>().material, Color.Lerp(new Color(0.5f, 0.1f, 0.1f), PieceColor, t));
+            Models.Tint(go, t);
         }
 
         private void ClearLocalPieces()
@@ -305,12 +304,6 @@ namespace HtfFortress
             foreach (var p in _pieces.Values) if (p) Destroy(p);
             _pieces.Clear();
             _pieceIds.Clear();
-        }
-
-        private static void SetColor(Material m, Color c)
-        {
-            m.color = c;
-            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
         }
     }
 }

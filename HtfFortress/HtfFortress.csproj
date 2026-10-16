@@ -21,6 +21,7 @@
     <Reference Include="UnityEngine.PhysicsModule" HintPath="$(Managed)/UnityEngine.PhysicsModule.dll" Private="false" />
     <Reference Include="UnityEngine.IMGUIModule" HintPath="$(Managed)/UnityEngine.IMGUIModule.dll" Private="false" />
     <Reference Include="UnityEngine.TextRenderingModule" HintPath="$(Managed)/UnityEngine.TextRenderingModule.dll" Private="false" />
+    <Reference Include="UnityEngine.ScreenCaptureModule" HintPath="$(Managed)/UnityEngine.ScreenCaptureModule.dll" Private="false" />
     <Reference Include="UnityEngine.UIModule" HintPath="$(Managed)/UnityEngine.UIModule.dll" Private="false" />
     <Reference Include="UnityEngine.UI" HintPath="$(Managed)/UnityEngine.UI.dll" Private="false" />
     <Reference Include="Unity.TextMeshPro" HintPath="$(Managed)/Unity.TextMeshPro.dll" Private="false" />
@@ -28,9 +29,14 @@
     <Reference Include="Unity.ResourceManager" HintPath="$(Managed)/Unity.ResourceManager.dll" Private="false" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ModelFiles Include="Models/*.obj;Models/*.mtl" />
+  </ItemGroup>
+
   <!-- Copy the built plugin straight into the game's BepInEx/plugins -->
   <Target Name="Deploy" AfterTargets="Build">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins/HtfFortress" />
+    <Copy SourceFiles="@(ModelFiles)" DestinationFolder="$(GameDir)/BepInEx/plugins/HtfFortress/Models" />
   </Target>
 
 </Project>
