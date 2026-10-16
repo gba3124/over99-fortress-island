@@ -9,9 +9,9 @@ using UnityEngine.InputSystem;
 
 namespace HtfFortress
 {
-    // Prototype: host presses a key, waves of the game's own creatures spawn around them,
-    // each wave bigger and tougher than the last.
-    [BepInPlugin("owen.htf.fortress", "HTF Fortress", "0.1.0")]
+    // Fortress mode: host presses a key, a core appears where they stand, and waves of the game's own creatures attack.
+    // Walkers (RunningFish) charge the core and break walls; the rest spawn near the host. Each wave is bigger and tougher.
+    [BepInPlugin("owen.htf.fortress", "HTF Fortress", "0.2.0")]
     public class FortressPlugin : BaseUnityPlugin
     {
         private ConfigEntry<Key> _toggleKey;
@@ -22,9 +22,12 @@ namespace HtfFortress
         private ConfigEntry<float> _radius;
         private ConfigEntry<float> _breakSeconds;
         private ConfigEntry<int> _bestWave;
+        private ConfigEntry<float> _walkerShare;
+        private ConfigEntry<float> _walkerRadius;
 
         private readonly List<Creature> _alive = new List<Creature>();
         private List<Item> _poolPrefabs = new List<Item>();
+        private List<Item> _walkerPrefabs = new List<Item>();
         private bool _running;
         private int _wave;
         private int _cleared;
@@ -40,10 +43,16 @@ namespace HtfFortress
             _radius = Config.Bind("Waves", "SpawnRadius", 6f, new ConfigDescription("Distance from the host where creatures appear.", new AcceptableValueRange<float>(3f, 80f)));
             _breakSeconds = Config.Bind("Waves", "BreakSeconds", 10f, new ConfigDescription("Pause between waves.", new AcceptableValueRange<float>(0f, 60f)));
             _bestWave = Config.Bind("Stats", "BestWave", 0, "Most waves cleared in one run (saved automatically).");
+            _walkerShare = Config.Bind("Siege", "WalkerShare", 0.5f, new ConfigDescription("Share of each wave that are walkers charging the core.", new AcceptableValueRange<float>(0f, 1f)));
+            _walkerRadius = Config.Bind("Siege", "WalkerSpawnRadius", 25f, new ConfigDescription("How far from the core walkers appear (on land).", new AcceptableValueRange<float>(8f, 80f)));
+            Siege.CoreMaxHp = Config.Bind("Siege", "CoreMaxHp", 500, new ConfigDescription("Core health.", new AcceptableValueRange<int>(50, 10000)));
+            Siege.WalkerDamage = Config.Bind("Siege", "WalkerDamage", 10, new ConfigDescription("Damage a walker deals per hit to walls and the core.", new AcceptableValueRange<int>(1, 500)));
             L10n.Setting = Config.Bind("General", "Language", LanguageSetting.Auto, "Language for Fortress messages. Auto follows the game.");
             BuildSystem.BuildKey = Config.Bind("Build", "BuildKey", Key.B, "Toggle build mode (place walls).");
             BuildSystem.Log = Logger;
             gameObject.AddComponent<BuildSystem>();
+            gameObject.AddComponent<Siege>();
+            new Harmony("owen.htf.fortress").PatchAll();
             Logger.LogInfo("HTF Fortress loaded. Host: press " + _toggleKey.Value + " in game to start waves.");
         }
 
@@ -61,9 +70,11 @@ namespace HtfFortress
             if (!IsHost || !Player.LocalPlayer) { Stop(L10n.T("notHost")); return; }
             // Same squad-wipe check the game uses (PlayerDying.OnPlayerAmountChange).
             if (_wave > 0 && PlayerManager.AlivePlayers.Count == 0) { Stop(L10n.T("wipe")); return; }
+            if (Siege.Instance.CoreDestroyed) { Stop(L10n.T("coreDown")); return; }
 
             // Creature.Hp is only filled in OnStartClient; the synced _hp is valid from spawn.
             _alive.RemoveAll(c => !c || c._hp.Value <= 0);
+            Siege.Instance.ServerProgress(_wave, _alive.Count);
             if (_alive.Count == 0 && _nextWaveAt == 0f)
             {
                 if (_wave > 0) { _cleared = _wave; Say(L10n.T("cleared", _wave, _breakSeconds.Value.ToString("0"))); }
@@ -79,14 +90,17 @@ namespace HtfFortress
         private void Start_()
         {
             if (!IsHost) { ChatManager.ChatMessage(L10n.T("prefix") + " " + L10n.T("onlyHost")); return; }
-            _poolPrefabs = BuildPool();
-            if (_poolPrefabs.Count == 0) { ChatManager.ChatMessage(L10n.T("prefix") + " " + L10n.T("noCreatures")); return; }
+            var pool = BuildPool();
+            _walkerPrefabs = pool.Where(p => p.GetComponent<Creature>() is RunningFish).ToList();
+            _poolPrefabs = pool.Except(_walkerPrefabs).ToList();
+            if (pool.Count == 0) { ChatManager.ChatMessage(L10n.T("prefix") + " " + L10n.T("noCreatures")); return; }
             _running = true;
             _wave = 0;
             _cleared = 0;
             _nextWaveAt = 0f;
             _alive.Clear();
-            Say(L10n.T("start", _poolPrefabs.Count, _bestWave.Value, _toggleKey.Value));
+            Siege.Instance.ServerStart(Player.LocalPlayer.transform.position);
+            Say(L10n.T("start", pool.Count, _bestWave.Value, _toggleKey.Value));
         }
 
         private void Stop(string why)
@@ -94,6 +108,7 @@ namespace HtfFortress
             _running = false;
             foreach (var c in _alive.Where(c => c && c.IsSpawned)) c.DestroyItem();
             _alive.Clear();
+            Siege.Instance.ServerStop();
             string record = _cleared > _bestWave.Value ? L10n.T("newRecord") : L10n.T("best", _bestWave.Value);
             if (_cleared > _bestWave.Value) _bestWave.Value = _cleared;
             Say(L10n.T("result", why, _cleared) + record);
@@ -124,19 +139,46 @@ namespace HtfFortress
         {
             int count = _baseCount.Value + _countPerWave.Value * (wave - 1);
             float hpMult = 1f + _hpPerWave.Value * (wave - 1);
-            Vector3 center = Player.LocalPlayer.transform.position;
+            int walkers = _walkerPrefabs.Count > 0 ? Mathf.RoundToInt(count * (_poolPrefabs.Count > 0 ? _walkerShare.Value : 1f)) : 0;
+            Vector3 host = Player.LocalPlayer.transform.position;
+            Vector3 core = Siege.Instance.CorePos;
             for (int i = 0; i < count; i++)
             {
-                Item prefab = _poolPrefabs[UnityEngine.Random.Range(0, _poolPrefabs.Count)];
-                Vector3 pos = FindSpawnPos(center, WalksOnLand(prefab.GetComponent<Creature>()));
+                bool walker = i < walkers;
+                var list = walker ? _walkerPrefabs : _poolPrefabs;
+                if (list.Count == 0) continue;
+                Item prefab = list[UnityEngine.Random.Range(0, list.Count)];
+                Vector3 pos;
+                if (walker) { if (!FindLandAround(core, _walkerRadius.Value, out pos)) continue; }
+                else pos = FindSpawnPos(host, _radius.Value, WalksOnLand(prefab.GetComponent<Creature>()));
                 Item item = Instantiate(prefab, pos, Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f));
                 Creature c = item.Creature;
                 c._hp.Value = Mathf.Max(1, Mathf.RoundToInt(c.MaxHp * hpMult));
                 Server.Instance.Spawn(item.gameObject);
+                if (walker) Siege.Instance.RegisterWalker(c);
                 _alive.Add(c);
-                Logger.LogInfo($"  spawned {prefab.name} at {pos} ({Vector3.Distance(center, pos):0}m)");
+                Logger.LogInfo($"  spawned {prefab.name}{(walker ? " [walker]" : "")} at {pos}");
             }
-            Say(L10n.T("wave", wave, count, hpMult.ToString("0.##")));
+            Say(L10n.T("wave", wave, _alive.Count, hpMult.ToString("0.##")));
+        }
+
+        // Walkers need ground: try the full radius first, then closer rings, so small islands still work.
+        private static bool FindLandAround(Vector3 center, float radius, out Vector3 pos)
+        {
+            for (float r = radius; r >= 8f; r -= 4f)
+                for (int i = 0; i < 8; i++)
+                {
+                    float a = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+                    Vector3 p = center + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * r;
+                    if (Physics.Raycast(new Vector3(p.x, center.y + 40f, p.z), Vector3.down, out var rh, 120f, GameInfo.LevelLayer)
+                        && rh.point.y > WaterManager.GetWaterHeight(rh.point) + 0.3f)
+                    {
+                        pos = rh.point + Vector3.up;
+                        return true;
+                    }
+                }
+            pos = default;
+            return false;
         }
 
         private static bool WalksOnLand(Creature c) => c is RunningFish || c is Crab;
@@ -144,13 +186,13 @@ namespace HtfFortress
         private static bool IsHostile(Creature c) => c is AttackingFish || c is RunningFish || c is Crab;
 
         // ponytail: random ring sampling, upgrade to authored spawn points once the fortress island exists.
-        private Vector3 FindSpawnPos(Vector3 center, bool wantLand)
+        private static Vector3 FindSpawnPos(Vector3 center, float radius, bool wantLand)
         {
-            Vector3 fallback = center + Vector3.forward * _radius.Value;
+            Vector3 fallback = center + Vector3.forward * radius;
             for (int attempt = 0; attempt < 12; attempt++)
             {
                 float a = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
-                Vector3 p = center + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * _radius.Value;
+                Vector3 p = center + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * radius;
                 float water = WaterManager.GetWaterHeight(p);
                 bool hit = Physics.Raycast(new Vector3(p.x, center.y + 40f, p.z), Vector3.down, out var rh, 120f, GameInfo.LevelLayer);
                 bool isLand = hit && rh.point.y > water + 0.3f;

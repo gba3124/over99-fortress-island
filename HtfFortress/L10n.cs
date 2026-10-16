@@ -33,6 +33,8 @@ namespace HtfFortress
             ["buildHud"] = new[] { "BUILD: {0}    [Q] switch   [hold LMB] place   [R] flip   [X] remove   [B] exit",
                                    "建造：{0}    [Q] 切換   [按住左鍵] 放置   [R] 反向   [X] 拆除   [B] 離開",
                                    "建造：{0}    [Q] 切换   [按住左键] 放置   [R] 反向   [X] 拆除   [B] 离开" },
+            ["siegeHud"] = new[] { "Wave {0}     Core {1}/{2}     Enemies left {3}", "第 {0} 波     核心 {1}/{2}     剩餘敵人 {3}", "第 {0} 波     核心 {1}/{2}     剩余敌人 {3}" },
+            ["coreDown"] = new[] { "The core was destroyed! Game over.", "核心被摧毀！遊戲結束。", "核心被摧毁！游戏结束。" },
             ["Wall"] = new[] { "Wall", "牆", "墙" },
             ["Floor"] = new[] { "Floor", "地板", "地板" },
             ["Ramp"] = new[] { "Ramp", "斜坡", "斜坡" },

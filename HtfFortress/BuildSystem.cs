@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.Linq;
 using BepInEx.Configuration;
 using BepInEx.Logging;
-using HarmonyLib;
 using TMPro;
 using FishNet;
 using FishNet.Broadcast;
@@ -20,7 +19,7 @@ namespace HtfFortress
     // Wire messages. The mod is built without FishNet codegen, so serializers are registered by hand below.
     public struct PiecePlaceRequest : IBroadcast { public PieceType Type; public Vector3 Pos; public float RotY; }
     public struct PieceRemoveRequest : IBroadcast { public int Id; }
-    public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; }
+    public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; public int Hp; public int MaxHp; }
 
     // Fortnite-style building on a fixed world grid.
     // B toggles build mode, Q cycles wall/floor/ramp, hold LMB to keep placing, R flips direction, X removes the piece you look at.
@@ -52,7 +51,11 @@ namespace HtfFortress
         private bool _ghostValid;
         private Vector3 _lastSentPos = Vector3.positiveInfinity;
 
-        private static int PieceLayer
+        public static BuildSystem Instance;
+
+        private void Awake() => Instance = this;
+
+        public static int PieceLayer
         {
             get
             {
@@ -68,8 +71,8 @@ namespace HtfFortress
             GenericReader<PiecePlaceRequest>.SetRead(r => new PiecePlaceRequest { Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle() });
             GenericWriter<PieceRemoveRequest>.SetWrite((w, v) => w.WriteInt32(v.Id));
             GenericReader<PieceRemoveRequest>.SetRead(r => new PieceRemoveRequest { Id = r.ReadInt32() });
-            GenericWriter<PieceState>.SetWrite((w, v) => { w.WriteInt32(v.Id); w.WriteByte((byte)v.Type); w.WriteVector3(v.Pos); w.WriteSingle(v.RotY); w.WriteBoolean(v.Removed); });
-            GenericReader<PieceState>.SetRead(r => new PieceState { Id = r.ReadInt32(), Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle(), Removed = r.ReadBoolean() });
+            GenericWriter<PieceState>.SetWrite((w, v) => { w.WriteInt32(v.Id); w.WriteByte((byte)v.Type); w.WriteVector3(v.Pos); w.WriteSingle(v.RotY); w.WriteBoolean(v.Removed); w.WriteInt32(v.Hp); w.WriteInt32(v.MaxHp); });
+            GenericReader<PieceState>.SetRead(r => new PieceState { Id = r.ReadInt32(), Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle(), Removed = r.ReadBoolean(), Hp = r.ReadInt32(), MaxHp = r.ReadInt32() });
         }
 
         private void Update()
@@ -207,44 +210,15 @@ namespace HtfFortress
                    && _pieceIds.TryGetValue(rh.collider.gameObject, out id);
         }
 
-        // HUD uses TextMeshPro with the game's own font asset, whose fallbacks cover Chinese (IMGUI fonts don't under Wine).
         private TextMeshProUGUI _hud;
 
         private void LateUpdate()
         {
             if (!_building) { if (_hud) _hud.gameObject.SetActive(false); return; }
-            if (!_hud) _hud = CreateHud();
+            if (!_hud) _hud = Hud.CreateText("BuildHint", new Vector2(0.5f, 0f), new Vector2(0f, 90f), 28f, TextAlignmentOptions.Bottom);
             if (!_hud) return;
             _hud.gameObject.SetActive(true);
             _hud.text = L10n.T("buildHud", L10n.T(_type.ToString()));
-        }
-
-        private static TextMeshProUGUI CreateHud()
-        {
-            var font = AccessTools.Field(typeof(LocalizationManager), "_defaultFontAsset")?.GetValue(
-                AccessTools.Field(typeof(LocalizationManager), "_instance")?.GetValue(null)) as TMP_FontAsset;
-            if (!font) return null;
-
-            var canvasGo = new GameObject("FortressHUD");
-            DontDestroyOnLoad(canvasGo);
-            var canvas = canvasGo.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 500;
-
-            var textGo = new GameObject("BuildHint");
-            textGo.transform.SetParent(canvasGo.transform, false);
-            var tmp = textGo.AddComponent<TextMeshProUGUI>();
-            tmp.font = font;
-            tmp.fontSize = 28;
-            tmp.alignment = TextAlignmentOptions.Bottom;
-            tmp.outlineWidth = 0.2f;
-            tmp.outlineColor = Color.black;
-            var rt = tmp.rectTransform;
-            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0f);
-            rt.pivot = new Vector2(0.5f, 0f);
-            rt.anchoredPosition = new Vector2(0f, 90f);
-            rt.sizeDelta = new Vector2(1400f, 60f);
-            return tmp;
         }
 
         // ---------- networking ----------
@@ -267,10 +241,24 @@ namespace HtfFortress
         {
             // ponytail: host only rejects duplicates; add cost / build-phase / reach checks with the economy step.
             if (_serverPieces.Values.Any(p => p.Type == req.Type && (p.Pos - req.Pos).sqrMagnitude < 0.01f)) return;
-            var state = new PieceState { Id = _nextId++, Type = req.Type, Pos = req.Pos, RotY = req.RotY };
+            int maxHp = req.Type == PieceType.Wall ? 150 : 100;
+            var state = new PieceState { Id = _nextId++, Type = req.Type, Pos = req.Pos, RotY = req.RotY, Hp = maxHp, MaxHp = maxHp };
             _serverPieces[state.Id] = state;
             InstanceFinder.ServerManager.Broadcast(state);
         }
+
+        // Host only: damage the piece owning this collider. Returns false if it isn't one of ours.
+        public bool ServerDamage(Collider col, int dmg)
+        {
+            if (!col || !_pieceIds.TryGetValue(col.gameObject, out int id) || !_serverPieces.TryGetValue(id, out var state)) return false;
+            state.Hp -= dmg;
+            if (state.Hp <= 0) { _serverPieces.Remove(id); state.Removed = true; }
+            else _serverPieces[id] = state;
+            InstanceFinder.ServerManager.Broadcast(state);
+            return true;
+        }
+
+        public static bool IsWall(Collider col) => col && col.gameObject.name.StartsWith("FortressPiece_Wall");
 
         private void OnRemoveRequest(NetworkConnection conn, PieceRemoveRequest req, Channel ch)
         {
@@ -286,23 +274,30 @@ namespace HtfFortress
             foreach (var p in _serverPieces.Values) InstanceFinder.ServerManager.Broadcast(conn, p);
         }
 
+        private static readonly Color PieceColor = new Color(0.6f, 0.45f, 0.3f);
+
         private void OnPieceState(PieceState s, Channel ch)
         {
-            if (_pieces.TryGetValue(s.Id, out var existing))
+            _pieces.TryGetValue(s.Id, out var go);
+            if (s.Removed)
             {
-                if (existing) { _pieceIds.Remove(existing); Destroy(existing); }
+                if (go) { _pieceIds.Remove(go); Destroy(go); }
                 _pieces.Remove(s.Id);
+                return;
             }
-            if (s.Removed) return;
-
-            var go = CreatePieceObject(s.Type);
-            go.name = "FortressPiece_" + s.Type + "_" + s.Id;
-            go.layer = PieceLayer; // same layer as the ground, so players and creatures can stand and walk on it
-            go.transform.position = s.Pos;
-            go.transform.rotation = s.Type == PieceType.Ramp ? Quaternion.Euler(-45f, s.RotY, 0f) : Quaternion.Euler(0f, s.RotY, 0f);
-            SetColor(go.GetComponent<Renderer>().material, new Color(0.6f, 0.45f, 0.3f));
-            _pieces[s.Id] = go;
-            _pieceIds[go] = s.Id;
+            if (!go)
+            {
+                go = CreatePieceObject(s.Type);
+                go.name = "FortressPiece_" + s.Type + "_" + s.Id;
+                go.layer = PieceLayer; // same layer as the ground, so players and creatures can stand and walk on it
+                go.transform.position = s.Pos;
+                go.transform.rotation = s.Type == PieceType.Ramp ? Quaternion.Euler(-45f, s.RotY, 0f) : Quaternion.Euler(0f, s.RotY, 0f);
+                _pieces[s.Id] = go;
+                _pieceIds[go] = s.Id;
+            }
+            // Darken toward red as the piece takes damage.
+            float t = s.MaxHp > 0 ? Mathf.Clamp01((float)s.Hp / s.MaxHp) : 1f;
+            SetColor(go.GetComponent<Renderer>().material, Color.Lerp(new Color(0.5f, 0.1f, 0.1f), PieceColor, t));
         }
 
         private void ClearLocalPieces()
