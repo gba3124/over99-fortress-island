@@ -13,7 +13,7 @@ namespace HtfFortress
 {
     // Teaching the mode in the game itself:
     //   tip cards  - one short card the first time something happens (first corpse, net full, a thief...), each once per player;
-    //   markers    - floating labels over the fish crate, the vault, the ready circle and a chest;
+    //   markers    - floating labels over the fish stall, the vault, the ready circle and a chest;
     //   help panel - everything on one page, I to open / close.
     public class Tips : MonoBehaviour
     {
@@ -42,12 +42,16 @@ namespace HtfFortress
                 ("netFull", () => Round() && FortressNet.Instance.ClientNetFull),
                 ("loot", () => Loot.Instance.ClientHasDrops),
                 ("chest", () => Loot.Instance.ClientChestPos != null),
+                ("scales", () => Loot.Instance.ClientHasScales),
                 ("vault", () => FortressIsland.Instance && FortressIsland.Instance.ResultsShowing),
                 ("active", () => Round() && Actives.Instance.ClientHasActive),
+                ("weapon", () => Round() && Weapons.Instance.ClientHasWeapon),
+                ("upkeep", () => Round() && BuildSystem.AimingAtPiece),
                 ("team", () => Round() && Construction.Instance.ClientOthersBuilding),
             };
             foreach (var k in new[] { EnemyKind.Spitter, EnemyKind.Bomber, EnemyKind.Tank, EnemyKind.Thief, EnemyKind.Shield, EnemyKind.Digger,
-                                      EnemyKind.Healer, EnemyKind.Splitter, EnemyKind.Boss, EnemyKind.Queen, EnemyKind.Tide })
+                                      EnemyKind.Healer, EnemyKind.Splitter, EnemyKind.Warden, EnemyKind.Urchin, EnemyKind.Angler, EnemyKind.Steed,
+                                      EnemyKind.Stonefish, EnemyKind.Skyfish, EnemyKind.Kraken, EnemyKind.Voxel, EnemyKind.Koi, EnemyKind.Eye })
             {
                 var kind = k;
                 _rules.Add(("foe" + kind, () => Round() && Enemies.Instance.ClientKindsNear(Me(), 40f).Contains(kind)));
@@ -64,8 +68,8 @@ namespace HtfFortress
         {
             if (Reset != null && Reset.Value) { Reset.Value = false; _seen.Clear(); try { File.Delete(SeenFile); } catch (Exception) { } }
             var kb = Keyboard.current;
-            if (kb != null && kb[HelpKey].wasPressedThisFrame && !ChatManager.IsTyping && !Hud.ModalOpen) ToggleHelp();
-            if (_help && _help.activeSelf && Hud.ModalOpen) _help.SetActive(false);
+            if (kb != null && kb[HelpKey].wasPressedThisFrame && !ChatManager.IsTyping && (HelpOpen || !Hud.ModalOpen && !PauseManager.IsPaused)) ToggleHelp();
+            if (HelpOpen && Hud.MenuOpen) CloseHelp(); // another menu came up over it
 
             if (Time.time >= _nextCheck && Show != null && Show.Value && Player.LocalPlayer && !Hud.ModalOpen && Time.time > _cardUntil && Hud.Font)
             {
@@ -141,11 +145,20 @@ namespace HtfFortress
                       && island.OnIsland(Player.LocalPlayer.Transform.position, FortressIsland.IslandRadius + 40f);
             bool round = Siege.Instance && Siege.Instance.ViewActive;
             bool netFull = FortressNet.Instance && FortressNet.Instance.ClientNetFull;
-            Marker("crate", ok && round, island ? island.CratePos + Vector3.up * 2f : Vector3.zero, L10n.T("markCrate"), netFull, cam);
-            Marker("vault", ok && !round, island ? island.VaultPos + Vector3.up * 3.2f : Vector3.zero, L10n.T("markVault"), false, cam);
-            Marker("circle", ok && !round, island ? island.Center + FortressIsland.ReadyLocal + Vector3.up * 2.2f : Vector3.zero, L10n.T("markCircle"), true, cam);
+            // The stations are always marked (people couldn't find the vault); the vault pulses between rounds, when it can be
+            // used, the fish stall when your net is full.
+            Marker("crate", ok, island ? island.MarketPos + Vector3.up * 3.3f : Vector3.zero, L10n.T("markCrate"), netFull, cam);
+            Marker("vault", ok, island ? island.VaultPos + Vector3.up * 3.2f : Vector3.zero, L10n.T("markVault"), !round, cam);
+            Marker("smithy", ok, island ? island.SmithyPos + Vector3.up * 4.6f : Vector3.zero, L10n.T("markSmithy"), false, cam);
+            Marker("circle", ok && !round, island ? island.LighthousePos + new Vector3(0f, 2.9f, -1.2f) : Vector3.zero, L10n.T("markCircle"), true, cam); // over the lighthouse's door
             var chest = Loot.Instance ? Loot.Instance.ClientChestPos : null;
             Marker("chest", ok && chest != null, (chest ?? Vector3.zero) + Vector3.up * 1.6f, L10n.T("markChest"), true, cam);
+            for (int i = 0; i < 4; i++) // where someone died (their things lie there)
+            {
+                bool has = i < Fx.DeathMarks.Count;
+                var d = has ? Fx.DeathMarks[i] : default;
+                Marker("death" + i, ok && has, d.pos + Vector3.up * 1.4f, L10n.T("markDeath", d.who), true, cam);
+            }
         }
 
         private void Marker(string id, bool show, Vector3 world, string text, bool pulse, Camera cam)
@@ -173,29 +186,202 @@ namespace HtfFortress
         }
 
         // ---------- help panel (I) ----------
+        // A few pictures a page and a few words each (Owen: the old two columns of text were too much to read): how to play,
+        // the village, the fish, the weapons. The mouse is free while it's open, like the vault's; I or Esc closes it.
 
         private GameObject _help;
+        private bool _iconsHooked;
+        private readonly List<(Image tab, TextMeshProUGUI label, GameObject page)> _tabs = new List<(Image, TextMeshProUGUI, GameObject)>();
+        private const float HelpW = 1440f, HelpH = 880f, Top = 136f, Bottom = 58f; // the pages sit between the tabs and the foot
 
-        public void ToggleHelp()
+        // (picture, title, line): a picture is Icons/<name>.png (tools/make_icons.py renders the Help ones).
+        private static readonly (string pic, string title, string line)[] PlayCards =
         {
-            if (!_help)
-            {
-                if (!Hud.Font) return;
-                var panel = Hud.Box(Hud.Root, new Vector2(0.5f, 0.5f), new Vector2(0f, 10f), new Vector2(1320f, 820f), Hud.PanelSolid, 26f);
-                _help = panel.gameObject;
-                var p = panel.transform;
-                Hud.Label(p, L10n.T("helpTitle"), 40f, new Vector2(0.5f, 1f), new Vector2(0f, -22f), new Vector2(1200f, 50f), TextAlignmentOptions.Center, bold: true);
-                Hud.Box(p, new Vector2(0.5f, 1f), new Vector2(0f, -78f), new Vector2(90f, 5f), Hud.Accent, 2.5f);
-                var left = Hud.Label(p, Hud.Keys(L10n.T("helpLeft")), 21f, new Vector2(0f, 1f), new Vector2(48f, -104f), new Vector2(590f, 640f), TextAlignmentOptions.TopLeft, pivot: new Vector2(0f, 1f));
-                var right = Hud.Label(p, Hud.Keys(L10n.T("helpRight")), 21f, new Vector2(0f, 1f), new Vector2(690f, -104f), new Vector2(590f, 640f), TextAlignmentOptions.TopLeft, pivot: new Vector2(0f, 1f));
-                left.lineSpacing = right.lineSpacing = 12f;
-                Hud.Label(p, Hud.Keys(L10n.T("helpFoot")), 18f, new Vector2(0.5f, 0f), new Vector2(0f, 22f), new Vector2(1200f, 30f), TextAlignmentOptions.Center, Hud.Muted);
-                _help.SetActive(false);
-            }
-            _help.SetActive(!_help.activeSelf);
-            if (_help.activeSelf) { Hud.HideBanner(); AutoTest.Count("help_opened"); }
-        }
+            ("HelpPearl", "helpPearlT", "helpPearl"), ("HelpLighthouse", "helpStartT", "helpStart"), ("HelpRevive", "helpReviveT", "helpRevive"),
+            ("PieceGun", "helpBuildT", "helpBuild"), ("GearBigNet", "helpNetT", "helpNet"), ("HelpLoot", "helpLootT", "helpLoot"),
+        };
+        private static readonly (string pic, string title, string line)[] VillageCards =
+        {
+            ("HelpStall", "helpStallT", "helpStall"), ("StallHelper", "helpHelperT", "helpHelper"), ("HelpSmithy", "helpSmithyT", "helpSmithy"),
+            ("HelpVault", "helpVaultT", "helpVault"), ("GearWarChest", "helpChestT", "helpChest"), ("HelpLadder", "helpLadderT", "helpLadder"),
+        };
+        // The special fish, each with its picture HelpFoe<kind> and its line helpFoe<kind>; the bosses come after them.
+        private static readonly EnemyKind[] Foes = { EnemyKind.Charger, EnemyKind.Tank, EnemyKind.Spitter, EnemyKind.Bomber, EnemyKind.Thief,
+                                                     EnemyKind.Shield, EnemyKind.Digger, EnemyKind.Healer, EnemyKind.Splitter };
 
         public bool HelpOpen => _help && _help.activeSelf;
+        public static bool HelpShown => Instance && Instance.HelpOpen;
+
+        public void ToggleHelp() { if (HelpOpen) CloseHelp(); else OpenHelp(); }
+
+        public void OpenHelp()
+        {
+            if (!BuildHelp()) return;
+            _help.transform.SetAsLastSibling();
+            _help.SetActive(true);
+            Hud.HideBanner();
+            PlayerCamera.ToggleMouse(true);
+            AutoTest.Count("help_opened");
+        }
+
+        public void CloseHelp()
+        {
+            if (!HelpOpen) return;
+            _help.SetActive(false);
+            PlayerCamera.ToggleMouse(false); // stays free if another menu is up (FreeMouseWhileVaultOpen)
+        }
+
+        private const int WeaponsTab = 3, SettingsTab = 4;
+        public void DebugWeaponsPage() { if (!HelpOpen) OpenHelp(); if (_tabs.Count > WeaponsTab) ShowPage(WeaponsTab); }
+
+        private bool BuildHelp()
+        {
+            if (_help) return true;
+            if (!Hud.Font) return false;
+            // The game's guns' pictures come a moment after the page asks for them: a closed page is built again with them.
+            if (!_iconsHooked) { _iconsHooked = true; ItemIcons.Ready += () => { if (_help && !_help.activeSelf) { Destroy(_help); _help = null; } }; }
+            var panel = Hud.Box(Hud.Root, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(HelpW, HelpH), Hud.PanelSolid, 26f);
+            _help = panel.gameObject;
+            _help.name = "FortressHelp";
+            var p = panel.transform;
+            Hud.Label(p, L10n.T("helpTitle"), 36f, new Vector2(0.5f, 1f), new Vector2(0f, -18f), new Vector2(1200f, 46f), TextAlignmentOptions.Center, bold: true);
+            var play = Page(p);
+            Cards(play, PlayCards, HelpH - Top - Bottom - 60f);
+            Hud.Label(play, Hud.Keys(L10n.T("helpKeys")), 22f, new Vector2(0.5f, 0f), new Vector2(0f, Bottom + 8f), new Vector2(HelpW - 80f, 40f), TextAlignmentOptions.Center, Hud.Muted);
+            var village = Page(p);
+            Cards(village, VillageCards, HelpH - Top - Bottom);
+            var foes = Page(p);
+            FoePage(foes);
+            var weapons = Page(p);
+            WeaponPage(weapons);
+            var settings = Page(p);
+            SettingsPage(settings);
+            _tabs.Clear();
+            var pages = new[] { play, village, foes, weapons, settings };
+            var names = new[] { L10n.T("helpTabPlay"), L10n.T("helpTabVillage"), L10n.T("helpTabFoes"), L10n.T("helpTabWeapons"), L10n.T("helpTabSettings") };
+            for (int i = 0; i < pages.Length; i++) Tab(p, i, pages.Length, names[i], pages[i].gameObject);
+            ShowPage(0);
+            Hud.Label(p, Hud.Keys(L10n.T("helpClose")) + "　·　" + VersionCheck.Build, 18f, new Vector2(0.5f, 0f), new Vector2(0f, 16f), new Vector2(1200f, 28f), TextAlignmentOptions.Center, Hud.Muted);
+            _help.SetActive(false);
+            return true;
+        }
+
+        private static RectTransform Page(Transform p)
+        {
+            var page = new GameObject("Page", typeof(RectTransform)).GetComponent<RectTransform>();
+            page.SetParent(p, false); page.anchorMin = Vector2.zero; page.anchorMax = Vector2.one; page.offsetMin = page.offsetMax = Vector2.zero;
+            return page;
+        }
+
+        // The tabs, a row of pills under the title; the page shown is the orange one.
+        private void Tab(Transform p, int i, int n, string text, GameObject page)
+        {
+            const float w = 210f, gap = 14f;
+            var img = Hud.Box(p, new Vector2(0.5f, 1f), new Vector2((i - (n - 1) / 2f) * (w + gap), -74f), new Vector2(w, 46f), Hud.Raised, 23f, pivot: new Vector2(0.5f, 1f));
+            img.gameObject.name = "Tab" + i;
+            img.raycastTarget = true;
+            int index = _tabs.Count;
+            img.gameObject.AddComponent<Button>().onClick.AddListener(() => ShowPage(index));
+            var label = Hud.Label(img.transform, text, 23f, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(w - 8f, 42f), TextAlignmentOptions.Center, bold: true);
+            _tabs.Add((img, label, page));
+        }
+
+        private void ShowPage(int index)
+        {
+            for (int i = 0; i < _tabs.Count; i++)
+            {
+                bool on = i == index;
+                _tabs[i].page.SetActive(on);
+                _tabs[i].tab.color = on ? Hud.Accent : Hud.Raised;
+                _tabs[i].label.color = on ? Hud.PanelSolid : Hud.Ink;
+            }
+            if (index == WeaponsTab) AutoTest.Count("help_weapons");
+            if (index == SettingsTab) foreach (var show in _settingsShown) show(); // changed meanwhile (the config, the game's own options)
+        }
+
+        // Each player's own display settings (ClientSettings.Rows): a line each, a pill that turns it on or off.
+        private readonly List<Action> _settingsShown = new List<Action>();
+        private void SettingsPage(RectTransform page)
+        {
+            const float w = 980f, h = 104f, gap = 16f;
+            _settingsShown.Clear();
+            for (int i = 0; i < ClientSettings.Rows.Count; i++)
+            {
+                var row = ClientSettings.Rows[i];
+                var box = Hud.Box(page, new Vector2(0.5f, 1f), new Vector2(0f, -Top - i * (h + gap)), new Vector2(w, h), Hud.Raised, 18f, pivot: new Vector2(0.5f, 1f)).transform;
+                Hud.Label(box, L10n.T(row.Key), 27f, new Vector2(0f, 1f), new Vector2(28f, -14f), new Vector2(w - 240f, 36f), TextAlignmentOptions.TopLeft, bold: true, pivot: new Vector2(0f, 1f));
+                var d = Hud.Label(box, L10n.T(row.Key + "D"), 19f, new Vector2(0f, 1f), new Vector2(28f, -54f), new Vector2(w - 240f, 44f), TextAlignmentOptions.TopLeft, Hud.Muted, pivot: new Vector2(0f, 1f));
+                d.enableAutoSizing = true; d.fontSizeMin = 14f; d.fontSizeMax = 19f;
+                var pill = Hud.Box(box, new Vector2(1f, 0.5f), new Vector2(-28f, 0f), new Vector2(150f, 52f), Hud.Accent, 26f, pivot: new Vector2(1f, 0.5f));
+                pill.raycastTarget = true;
+                var text = Hud.Label(pill.transform, "", 24f, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(146f, 48f), TextAlignmentOptions.Center, bold: true);
+                void Show()
+                {
+                    bool on = row.On();
+                    pill.color = on ? Hud.Accent : Hud.PanelSolid;
+                    text.text = L10n.T(on ? "setOn" : "setOff");
+                    text.color = on ? Hud.PanelSolid : Hud.Muted;
+                }
+                Show();
+                _settingsShown.Add(Show);
+                pill.gameObject.AddComponent<Button>().onClick.AddListener(() => { row.Set(!row.On()); Show(); AutoTest.Count("setting_" + row.Key); });
+            }
+            Hud.Label(page, L10n.T("setNote"), 20f, new Vector2(0.5f, 0f), new Vector2(0f, Bottom + 8f), new Vector2(HelpW - 80f, 32f), TextAlignmentOptions.Center, Hud.Muted);
+        }
+
+        // Two rows of cards across the page: a picture, a title, one line.
+        private static void Cards(RectTransform page, (string pic, string title, string line)[] cards, float height)
+        {
+            const float side = 40f, gap = 20f;
+            int cols = (cards.Length + 1) / 2;
+            float w = (HelpW - 2f * side - (cols - 1) * gap) / cols, h = (height - gap) / 2f, pic = Mathf.Min(w - 40f, h - 128f);
+            for (int i = 0; i < cards.Length; i++)
+            {
+                var (picture, title, line) = cards[i];
+                var card = Hud.Box(page, new Vector2(0f, 1f), new Vector2(side + (i % cols) * (w + gap), -Top - (i / cols) * (h + gap)), new Vector2(w, h), Hud.Raised, 18f, pivot: new Vector2(0f, 1f)).transform;
+                Hud.Picture(card, picture, new Vector2(0.5f, 1f), new Vector2(0f, -12f), new Vector2(pic, pic), new Vector2(0.5f, 1f));
+                Hud.Label(card, L10n.T(title), 28f, new Vector2(0.5f, 1f), new Vector2(0f, -pic - 20f), new Vector2(w - 24f, 36f), TextAlignmentOptions.Center, Hud.Accent, bold: true);
+                var t = Hud.Label(card, Hud.Keys(L10n.T(line)), 21f, new Vector2(0.5f, 1f), new Vector2(0f, -pic - 62f), new Vector2(w - 36f, h - pic - 68f), TextAlignmentOptions.Top);
+                t.enableAutoSizing = true; t.fontSizeMin = 15f; t.fontSizeMax = 21f;
+            }
+        }
+
+        // The fish in two columns: the kind's picture (its dye, what it wears), its name in its colour, what to do about it.
+        private static void FoePage(RectTransform page)
+        {
+            const float side = 40f, gap = 16f, vgap = 10f;
+            int n = Foes.Length + 1, rows = (n + 1) / 2;
+            float w = (HelpW - 2f * side - gap) / 2f, h = (HelpH - Top - Bottom - (rows - 1) * vgap) / rows;
+            for (int i = 0; i < n; i++)
+            {
+                bool boss = i == Foes.Length;
+                var row = Hud.Box(page, new Vector2(0f, 1f), new Vector2(side + (i % 2) * (w + gap), -Top - (i / 2) * (h + vgap)), new Vector2(w, h), Hud.Raised, 16f, pivot: new Vector2(0f, 1f)).transform;
+                Hud.Picture(row, boss ? "HelpBoss" : "HelpFoe" + Foes[i], new Vector2(0f, 0.5f), new Vector2(10f, 0f), new Vector2(h - 12f, h - 12f), new Vector2(0f, 0.5f));
+                string name = boss ? L10n.T("helpBossT") : L10n.T("enemy" + Foes[i]);
+                var color = boss ? Hud.Gold : Color.Lerp(Color.white, Enemies.DyeOf(Foes[i]), 0.8f);
+                Hud.Label(row, name, 27f, new Vector2(0f, 0.5f), new Vector2(h + 8f, 22f), new Vector2(w - h - 20f, 36f), TextAlignmentOptions.Left, color, bold: true, pivot: new Vector2(0f, 0.5f));
+                var t = Hud.Label(row, L10n.T(boss ? "helpBoss" : "helpFoe" + Foes[i]), 21f, new Vector2(0f, 0.5f), new Vector2(h + 8f, -20f), new Vector2(w - h - 20f, 48f), TextAlignmentOptions.TopLeft, pivot: new Vector2(0f, 0.5f));
+                t.enableAutoSizing = true; t.fontSizeMin = 15f; t.fontSizeMax = 21f;
+            }
+        }
+
+        // Every fortress weapon: its picture, name, what it does as a common one, its legendary number and special.
+        private static void WeaponPage(RectTransform page)
+        {
+            var list = GearCatalog.All.Where(GearCatalog.IsWeapon).ToList();
+            const int cols = 3;
+            int rows = (list.Count + cols - 1) / cols;
+            float cw = (HelpW - 80f - (cols - 1) * 15f) / cols, ch = Mathf.Min(96f, (HelpH - Top - Bottom - (rows - 1) * 6f) / rows);
+            for (int i = 0; i < list.Count; i++)
+            {
+                var g = list[i];
+                var cell = Hud.Box(page, new Vector2(0f, 1f), new Vector2(40f + (i % cols) * (cw + 15f), -Top - (i / cols) * (ch + 6f)), new Vector2(cw, ch), Hud.Raised, 12f, pivot: new Vector2(0f, 1f)).transform;
+                Hud.Picture(cell, "Gear" + g, new Vector2(0f, 0.5f), new Vector2(8f, 0f), new Vector2(ch - 14f, ch - 14f), new Vector2(0f, 0.5f));
+                string text = $"<b>{GearCatalog.Name(g)}</b>\n<size=82%>{GearCatalog.Effect(g, Rarity.Common)}"
+                              + $"\n<color=#{GearCatalog.Hex(Rarity.Legendary)}>{L10n.T("helpLegendValue", GearCatalog.FormatValue(g, Rarity.Legendary))}　★ {L10n.T("gearLegend" + g)}</color></size>";
+                var t = Hud.Label(cell, text, 16f, new Vector2(0f, 0.5f), new Vector2(ch, 0f), new Vector2(cw - ch - 8f, ch - 6f), TextAlignmentOptions.Left, pivot: new Vector2(0f, 0.5f));
+                t.enableAutoSizing = true; t.fontSizeMin = 11f; t.fontSizeMax = 16f;
+            }
+        }
     }
 }

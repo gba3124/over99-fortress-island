@@ -31,33 +31,88 @@ for x, z in ((-0.22, 0.66), (0.12, 0.67), (0.28, 0.65)):       # coins peeking o
     c.cyl(0.07, 0.025, (x, -0.33, z), gold, segs=8, axis="Y")
 chest = c.finish()
 
-# ---------- vault shed (2.4 x 1.8 footprint, ~2.6 tall; door on the front) ----------
-v = Builder("Vault", [stone, wood, dark, roof, iron, gold, spark])
-v.box((2.5, 1.9, 0.25), (0, 0, 0.125), stone)                  # foundation
-v.box((2.3, 1.7, 1.6), (0, 0, 1.05), wood)                     # walls
-for x in (-1.1, 1.1):
-    for y in (-0.8, 0.8):
-        v.box((0.16, 0.16, 1.7), (x, y, 1.1), dark)            # corner posts
-for z in (0.62, 1.22):
-    v.box((2.32, 1.72, 0.05), (0, 0, z), dark)                 # plank lines
-for y in (-0.82, 0.82):                                        # gables
-    v.prism([(-1.15, 1.85), (1.15, 1.85), (0, 2.42)], y, 0.06, wood)
-pitch = math.atan2(0.62, 1.0)
-for s in (-1, 1):                                              # roof slabs with overhang
-    v.box((1.32, 2.7, 0.1), (s * 0.58, 0, 2.17), roof, rot=(0, s * pitch, 0))
-v.box((0.12, 2.74, 0.12), (0, 0, 2.5), dark)                   # ridge beam
-# door on the front (-Y)
-v.box((0.9, 0.06, 1.3), (0, -0.87, 0.9), dark)
-for z in (0.55, 1.25):
-    v.box((0.94, 0.08, 0.08), (0, -0.88, z), iron)
-v.box((0.08, 0.08, 0.14), (0.3, -0.92, 0.9), gold)             # handle
-v.box((1.06, 0.06, 0.34), (0, -0.88, 1.72), wood)              # sign board
-v.box((0.36, 0.05, 0.18), (0, -0.92, 1.72), gold)              # chest emblem on the sign
-v.box((0.36, 0.05, 0.05), (0, -0.92, 1.84), iron)
-# lantern beside the door
-v.box((0.05, 0.22, 0.05), (0.72, -0.96, 1.62), iron)
-v.box((0.16, 0.16, 0.2), (0.72, -1.05, 1.45), iron)
-v.box((0.11, 0.11, 0.15), (0.72, -1.05, 1.45), spark)
+# ---------- the vault: a storehouse you walk into (4.0 x 3.4, walls 2.6 tall), in the game's cabin style (tools/vkit.py) ----------
+# An open doorway in the front (-Y, toward the road), a plank floor a step up, shelves of boxes and sacks round the walls,
+# barrels, and the quartermaster's counter on the left inside (FortressIsland.cs puts him behind it; keep in step).
+import vkit
+from vkit import Frame
+v = Builder("Vault", vkit.KIT)
+F = Frame((0, 0, 0))
+W, D, Z0, Z1 = 4.0, 3.4, 0.22, 2.6
+HW, HD = W / 2, D / 2
+DOOR = (-0.7, 0.7, Z0, Z0 + 2.15)                                            # the doorway: 1.4 wide, 2.15 tall
+vkit.stones(v, F, -HW - 0.08, HW + 0.08, -HD - 0.08, HD + 0.08, 0.0, Z0, rows=1)
+for k in range(int(W / 0.2)):                                                # the floor inside: boards
+    x = -HW + 0.1 + (k + 0.5) * (W - 0.2) / int(W / 0.2)
+    vkit.box(v, F, ((W - 0.2) / int(W / 0.2) - 0.01, D - 0.2, 0.04), (x, 0, Z0 + 0.02), vkit.plank if k % 2 else vkit.plank2)
+vkit.box(v, F, (1.6, 0.5, 0.11), (0, -HD - 0.3, 0.055), vkit.stone)         # a step up to the doorway
+# The walls, two boards thick (the planks face out; an inner face of boards so it reads from inside too).
+vkit.plank_wall(v, F, -HW, HW, Z0, Z1, y=-HD, skip=[DOOR, (1.52, 1.9, 1.2, 1.7)])
+vkit.plank_wall(v, F.sub((0, 0, 0), 180), -HW, HW, Z0, Z1, y=-HD)
+for yaw in (90, -90):
+    S = F.sub((0, 0, 0), yaw)
+    vkit.plank_wall(v, S, -HD, HD, Z0, Z1, y=-HW, skip=[(-0.35, 0.35, 1.2, 1.8)])
+    vkit.window(v, S, 0, 1.5, w=0.6, h=0.56, y=-HW - 0.02)
+vkit.window(v, F, 1.71, 1.45, w=0.36, h=0.48, y=-HD - 0.02, shutters=False)
+for x in (-HW, HW):
+    for y in (-HD, HD):
+        vkit.box(v, F, (0.16, 0.16, Z1 - Z0 - 0.04), (x, y, (Z0 + Z1) / 2 - 0.02), vkit.trim)
+for dx in (-0.78, 0.78):                                                    # the doorway's frame
+    vkit.box(v, F, (0.14, 0.22, 2.2), (dx, -HD, Z0 + 1.1), vkit.trim)
+vkit.box(v, F, (1.74, 0.22, 0.14), (0, -HD, Z0 + 2.22), vkit.trim)
+vkit.box(v, F, (W + 0.16, 0.12, 0.1), (0, -HD - 0.02, Z1 - 0.06), vkit.trim)
+vkit.box(v, F, (W + 0.16, 0.12, 0.1), (0, HD + 0.02, Z1 - 0.06), vkit.trim)
+vkit.gable_end(v, F, W, Z1, 0.9, -HD)
+vkit.gable_end(v, F.sub((0, 0, 0), 180), W, Z1, 0.9, -HD)
+vkit.gable_roof(v, F, W, D, Z1 + 0.05, 0.9, over=0.32, m=vkit.roofr, m2=vkit.roofr2, ridge_x=False)
+for x in (-1.0, 0.0, 1.0):                                                  # beams across inside, a lantern from the middle one
+    vkit.box(v, F, (0.12, D, 0.14), (x, 0, Z1 - 0.12), vkit.trim)
+vkit.beam(v, F, (0, 0.2, Z1 - 0.2), (0, 0.2, Z1 - 0.45), 0.008, vkit.iron, segs=4)
+vkit.lantern(v, F, (0, 0.2, Z1 - 0.62))
+# The doors stand open against the front wall outside, the sign over the doorway.
+for s_, x in ((-1, -1.1), (1, 1.1)):
+    vkit.box(v, F, (0.66, 0.05, 2.05), (x, -HD - 0.1, Z0 + 1.05), vkit.plank)
+    vkit.box(v, F, (0.6, 0.03, 0.09), (x, -HD - 0.14, Z0 + 0.3), vkit.iron)
+    vkit.box(v, F, (0.6, 0.03, 0.09), (x, -HD - 0.14, Z0 + 1.8), vkit.iron)
+vkit.box(v, F, (1.3, 0.06, 0.34), (0, -HD - 0.12, Z1 + 0.2), vkit.plank)
+vkit.box(v, F, (1.38, 0.04, 0.42), (0, -HD - 0.09, Z1 + 0.2), vkit.trim)
+vkit.box(v, F, (0.34, 0.04, 0.17), (0, -HD - 0.16, Z1 + 0.18), vkit.brass)
+vkit.box(v, F, (0.36, 0.045, 0.045), (0, -HD - 0.165, Z1 + 0.24), vkit.iron)
+vkit.box(v, F, (0.06, 0.34, 0.06), (-1.66, -HD - 0.15, 2.1), vkit.trim)  # a lantern beside the doorway
+vkit.lantern(v, F, (-1.66, -HD - 0.3, 1.86), 0.9)
+
+
+def shelf(S, x0, x1, levels=(0.5, 1.15, 1.8)):
+    # A wall of shelves (against local +y), boxes, sacks and jars on it.
+    for z in levels:
+        vkit.box(v, S, (x1 - x0, 0.42, 0.04), ((x0 + x1) / 2, 0.0, Z0 + z), vkit.plank)
+        x = x0 + 0.08
+        while x < x1 - 0.25:
+            kind = vkit.rng.random()
+            if kind < 0.45:
+                s2 = vkit.rng.uniform(0.22, 0.34)
+                vkit.box(v, S, (s2, 0.3, s2 * 0.8), (x + s2 / 2, 0.0, Z0 + z + 0.02 + s2 * 0.4), vkit.plank2 if kind < 0.25 else vkit.trim)
+                x += s2 + 0.06
+            elif kind < 0.75:
+                vkit.ball(v, S, 0.13, (x + 0.13, 0.0, Z0 + z + 0.13), vkit.cream, subdiv=1)  # a sack
+                x += 0.3
+            else:
+                vkit.cyl(v, S, 0.07, 0.06, 0.2, (x + 0.08, 0.0, Z0 + z + 0.12), vkit.glass, segs=8)  # a jar
+                x += 0.18
+    for x in (x0, x1):
+        vkit.box(v, S, (0.06, 0.42, 1.95), (x, 0.0, Z0 + 0.98), vkit.trim)
+
+
+shelf(F.sub((0, HD - 0.3, 0), 0), -1.8, 1.8)                                # the back wall
+shelf(F.sub((HW - 0.3, 0, 0), -90), -1.35, 0.9)                             # the right wall
+vkit.barrel(v, F, 0.26, 0.74, (-1.55, 1.3, Z0))
+vkit.barrel(v, F, 0.26, 0.74, (-1.0, 1.35, Z0))
+vkit.crate(v, F, 0.5, (1.45, -1.25, Z0), 8)
+# The quartermaster's counter, left inside, facing the doorway (he stands behind it at (-1.3, 0.05)).
+vkit.box(v, F, (1.3, 0.5, 1.0), (-1.35, -0.55, Z0 + 0.5), vkit.plank2)
+vkit.box(v, F, (1.42, 0.62, 0.06), (-1.35, -0.55, Z0 + 1.03), vkit.trim)
+vkit.box(v, F, (0.36, 0.26, 0.03), (-1.15, -0.6, Z0 + 1.07), vkit.cream)   # his ledger
+vkit.box(v, F, (0.16, 0.24, 0.035), (-1.3, -0.6, Z0 + 1.08), vkit.trim)
 vault = v.finish()
 
 # ---------- loot gem (tinted per rarity in game) ----------

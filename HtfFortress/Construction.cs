@@ -69,11 +69,11 @@ namespace HtfFortress
             if (nm && nm != _registeredOn)
             {
                 _registeredOn = nm;
-                nm.ServerManager.RegisterBroadcast<BuildWork>((conn, w, ch) =>
+                nm.ServerManager.RegisterBroadcast(Net.Safe<BuildWork>((conn, w, ch) =>
                 {
                     var who = PlayerManager.Players.FirstOrDefault(p => p && p.Owner == conn);
                     if (who) ServerWork(who.ObjectId, w);
-                });
+                }));
                 nm.ClientManager.RegisterBroadcast<SiteState>((s, ch) => OnSite(s));
                 nm.SceneManager.OnClientLoadedStartScenes += (conn, asServer) =>
                 {

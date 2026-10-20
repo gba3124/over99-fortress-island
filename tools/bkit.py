@@ -85,7 +85,10 @@ class Builder:
         if old:
             bpy.data.objects.remove(old, do_unlink=True)
         me = bpy.data.meshes.new(self.name)
-        bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
+        # Closed shapes get their normals made outward; faces tagged in a "keep" layer (an open sheet like the island's
+        # ground, whose winding was set by hand) are left alone: recalculating could turn a whole sheet upside down.
+        keep = self.bm.faces.layers.int.get("keep")
+        bmesh.ops.recalc_face_normals(self.bm, faces=[f for f in self.bm.faces if not (keep and f[keep])])
         self.bm.to_mesh(me)
         self.bm.free()
         for m in self.mats:
@@ -107,3 +110,70 @@ def export(objs):
         bpy.ops.wm.obj_export(filepath=os.path.join(OUT, ob.name + ".obj"), export_selected_objects=True, forward_axis="NEGATIVE_Z", up_axis="Y",
                               export_materials=True, export_triangulated_mesh=True, export_uv=False, export_normals=True, export_smooth_groups=False)
         print("EXPORTED", ob.name, tuple(round(d, 2) for d in ob.dimensions), len(ob.data.polygons), "faces")
+
+
+# ---------- shapes on top of the builder: lofts, tubes, rings, plates ----------
+
+TAU = 2 * math.pi
+UP = Vector((0, 0, 1))
+
+
+def loft(b, rings, m, mf=None, caps=None, closed=False, tri=False):
+    # Skins rings of equal size with quads (a one-point ring is a tip) and caps both ends, or joins the last ring back to the first.
+    # mf(i, j) picks the material of the quad from ring i to i + 1 at column j; caps = (first, last) cap materials.
+    # tri: rings twisted one segment each (vertex j of ring i + 1 above vertex j + 1 of ring i) split into two triangles along
+    # that diagonal, so every triangle lies flat on the untwisted prism and the spiral columns shade cleanly.
+    vs = [[b.bm.verts.new(p) for p in r] for r in rings]
+    n = max(len(r) for r in vs)
+
+    def face(vv, mm):
+        b.bm.faces.new(vv).material_index = b.mats.index(mm)
+
+    for i in range(len(vs) if closed else len(vs) - 1):
+        A, B = vs[i], vs[(i + 1) % len(vs)]
+        for j in range(n):
+            k, mm = (j + 1) % n, mf(i, j) if mf else m
+            if len(A) == 1 or len(B) == 1:
+                face((A[0], B[k], B[j]) if len(A) == 1 else (A[j], A[k], B[0]), mm)
+            elif tri:
+                face((A[j], A[k], B[j]), mm)
+                face((A[k], B[k], B[j]), mm)
+            else:
+                face((A[j], A[k], B[k], B[j]), mm)
+    if not closed:
+        c0, c1 = caps or (m, m)
+        if len(vs[0]) > 2:
+            face(vs[0][::-1], c0)
+        if len(vs[-1]) > 2:
+            face(vs[-1], c1)
+
+
+def tube(b, path, r, m, segs=6, closed=False):
+    # A round tube along a polyline (r: one radius or one per point, 0 = a point), framed by parallel transport so it doesn't twist.
+    P = [Vector(p) for p in path]
+    rs = list(r) if isinstance(r, (list, tuple)) else [r] * len(P)
+    n = len(P)
+    T = [((P[(i + 1) % n] if closed or i < n - 1 else P[i]) - (P[i - 1] if closed or i > 0 else P[i])).normalized() for i in range(n)]
+    ref = UP if abs(T[0].z) < 0.9 else Vector((1, 0, 0))
+    nrm = ref - T[0] * ref.dot(T[0])
+    rings = []
+    for p, t, rad in zip(P, T, rs):
+        nrm = (nrm - t * nrm.dot(t)).normalized()
+        bi = t.cross(nrm)
+        rings.append([p] if rad <= 0 else [p + (nrm * math.cos(k * TAU / segs) + bi * math.sin(k * TAU / segs)) * rad for k in range(segs)])
+    loft(b, rings, m, closed=closed)
+
+
+def torus(b, c, axis, R, r, m, segs=16, tsegs=6):
+    c, ax = Vector(c), Vector(axis).normalized()
+    u = ax.orthogonal().normalized()
+    v = ax.cross(u)
+    tube(b, [c + (u * math.cos(k * TAU / segs) + v * math.sin(k * TAU / segs)) * R for k in range(segs)], r, m, segs=tsegs, closed=True)
+
+
+def fin(b, pts, normal, thick, m):
+    # A flat plate: the outline pts (in order) thickened along normal; thick is one number or one per point (to taper).
+    nrm = Vector(normal).normalized()
+    ts = list(thick) if isinstance(thick, (list, tuple)) else [thick] * len(pts)
+    loft(b, [[Vector(p) - nrm * (t / 2) for p, t in zip(pts, ts)], [Vector(p) + nrm * (t / 2) for p, t in zip(pts, ts)]], m)
+

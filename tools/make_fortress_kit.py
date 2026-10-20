@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bpy
-from bkit import Builder, M, export, mat
+from bkit import Builder, M, export, loft, mat
 
 stone, rock, iron, metal, brass, dark, wood, rope, steel, copper, coil, crystal, black, gold, moss = (
     M(n) for n in ("Stone", "Rock", "Iron", "Metal", "Brass", "DarkWood", "Wood", "Rope", "Steel", "Copper", "Coil", "Crystal", "BombBlack", "Gold", "Moss"))
@@ -161,8 +161,11 @@ for z in (0.56, 0.98):
     bb.cyl(0.26, 0.03, (0, 0, z), bubble, segs=14)
 out.append(bb.finish())
 
-# ---------- the lighthouse (the core): striped tower, gallery, glowing lantern, red cap (~6.2 m) ----------
-L = Builder("Core", [stone, white, red, dark, iron, crystal])
+# ---------- the lighthouse (the core): striped tower, an arched porch at its door where the pearl sits in its clam (what
+# the fish come for), a lookout gallery with a railing, a ladder up its east side, glowing lantern, red cap (~6.2 m).
+# Siege.cs and Ladder.cs know where the porch, the gate's groove, the gallery and the ladder are: keep in step. ----------
+niche = mat("CoreNiche", (0.1, 0.11, 0.15))
+L = Builder("Core", [stone, white, red, dark, iron, crystal, wood, niche])
 L.cyl(1.08, 0.2, (0, 0, 0.1), stone, segs=8)
 L.cyl(0.98, 0.18, (0, 0, 0.29), stone, segs=8)
 z0, z1, r0, r1 = 0.38, 4.25, 0.9, 0.6
@@ -171,18 +174,46 @@ for i in range(bands):
     za, zb = z0 + (z1 - z0) * i / bands, z0 + (z1 - z0) * (i + 1) / bands
     ra, rb = r0 + (r1 - r0) * i / bands, r0 + (r1 - r0) * (i + 1) / bands
     L.cone(ra, rb, zb - za, (0, 0, (za + zb) / 2), red if i % 2 else white, segs=12)
-L.box((0.42, 0.1, 0.78), (0, -0.86, 0.78), dark)               # door
-L.box((0.5, 0.06, 0.08), (0, -0.89, 1.2), iron)
-for z, ang in ((2.0, 0.0), (3.1, math.pi)):                    # window slits
+# The porch: a step (the gate sinks into it, in a groove at y -1.42), dark inside, two jambs, an arch with a white
+# keystone, a cornice and a little red roof; the pedestal the clam sits on (its top at z 0.95).
+L.box((1.26, 0.86, 0.45), (0, -1.09, 0.225), stone)
+L.box((0.86, 0.06, 1.8), (0, -0.93, 1.3), niche)
+for s in (-1, 1):
+    L.box((0.2, 0.86, 1.2), (s * 0.53, -1.09, 1.05), stone)
+for i in range(7):
+    th = math.pi * (i + 0.5) / 7
+    L.box((0.215, 0.86, 0.2), (0.53 * math.cos(th), -1.09, 1.65 + 0.53 * math.sin(th)), white if i == 3 else stone, rot=(0, math.pi / 2 - th, 0))
+L.box((1.42, 0.96, 0.1), (0, -1.08, 2.33), stone)
+L.prism(((-0.76, 2.38), (0.76, 2.38), (0, 2.72)), -1.06, 0.92, red)
+L.cyl(0.16, 0.42, (0, -1.18, 0.66), stone, segs=10)
+L.cyl(0.27, 0.08, (0, -1.18, 0.91), white, segs=10)
+for z, ang in ((3.05, 0.0), (2.2, math.pi)):                   # window slits
     rr = r0 + (r1 - r0) * (z - z0) / (z1 - z0)
     L.box((0.12, 0.08, 0.32), (rr * math.sin(ang) * 0.98, -rr * math.cos(ang) * 0.98, z), dark, rot=(0, 0, ang))
-L.cyl(0.9, 0.1, (0, 0, 4.3), iron, segs=12)                    # gallery deck
-posts = ring_points(0.86, 12, 4.5)
-for p in posts:
-    L.box((0.04, 0.04, 0.32), p, iron)
-for i in range(12):
-    a, bpt = posts[i], posts[(i + 1) % 12]
-    L.beam((a[0], a[1], 4.64), (bpt[0], bpt[1], 4.64), 0.02, iron, segs=4)
+# The gallery: a plank floor (top at z 4.36, r 1.55) on eight iron brackets, a railing open where the ladder comes up.
+L.cyl(1.55, 0.12, (0, 0, 4.3), wood, segs=16)
+L.cyl(1.57, 0.05, (0, 0, 4.22), iron, segs=16)
+for a in range(8):
+    ang = TAU * (a + 0.5) / 8
+    L.beam((0.6 * math.cos(ang), 0.6 * math.sin(ang), 3.62), (1.45 * math.cos(ang), 1.45 * math.sin(ang), 4.22), 0.045, iron, segs=4)
+posts = ring_points(1.5, 16, 4.72)
+for i, p in enumerate(posts):
+    if i != 0:
+        L.box((0.05, 0.05, 0.72), p, iron)
+for i in range(1, 15):
+    a, bpt = posts[i], posts[i + 1]
+    for z in (4.72, 5.06):
+        L.beam((a[0], a[1], z), (bpt[0], bpt[1], z), 0.022, iron, segs=4)
+# The ladder up the east side (+x): rails from the ground to above the railing, a rung every 30 cm, stays to the tower.
+LX = 1.62
+for s in (-1, 1):
+    L.beam((LX, s * 0.25, 0.0), (LX, s * 0.25, 5.25), 0.03, iron, segs=4)
+for k in range(14):
+    L.beam((LX, -0.25, 0.32 + 0.3 * k), (LX, 0.25, 0.32 + 0.3 * k), 0.022, iron, segs=4)
+for z in (1.0, 2.2, 3.4):
+    rr = r0 + (r1 - r0) * (z - z0) / (z1 - z0)
+    for s in (-1, 1):
+        L.beam((rr - 0.03, s * 0.18, z), (LX, s * 0.25, z), 0.025, iron, segs=4)
 L.cyl(0.5, 0.12, (0, 0, 4.41), white, segs=10)
 L.cyl(0.44, 0.78, (0, 0, 4.86), crystal, segs=8)               # lantern (glows)
 for p in ring_points(0.45, 8, 4.86, math.pi / 8):
@@ -191,6 +222,63 @@ L.cone(0.6, 0.0, 0.6, (0, 0, 5.55), red, segs=10)              # cap
 L.cyl(0.07, 0.12, (0, 0, 5.9), iron, segs=6)
 L.beam((0, 0, 5.95), (0, 0, 6.25), 0.025, iron, segs=4)
 out.append(L.finish())
+
+
+# ---------- the pearl and its clam (Siege.cs puts them on the porch's pedestal and opens the lid with the gate) ----------
+def valve(name, lid):
+    # One valve of a giant clam (Owen: "蚌殼要更真實 最好有點波浪蚌"): a deep, thick fan from the hinge (the origin) toward
+    # -y, four big rounded folds running out from the hinge so the lip zigzags, a valley down the middle where the pearl
+    # lies. Both valves' lips follow the same wave, so they mesh when shut. Frilled growth ridges step out across the
+    # folds, cream and tan bands between them; pearly inside. The lid is the base's cup turned over, the same wave.
+    R, depth, A, t, n = 0.36, 0.1, 0.055, 0.026, 43
+    rhos = [0.06, 0.16, 0.28, 0.38, 0.41, 0.52, 0.61, 0.64, 0.74, 0.82, 0.85, 0.93, 1.0]
+    ridges = {4: 1, 7: 2, 10: 3}  # ring index -> growth ridge number (a step out, a new colour band after it)
+    up = -1 if lid else 1          # which way the inside faces
+    b = Builder(name, [cream, tan, nacre])
+    bm = b.bm
+    ins, outs, band = [], [], []
+    k = 0
+    for i, rho in enumerate(rhos):
+        k = ridges.get(i, k)
+        band.append(k)
+        ri, ro = [], []
+        for j in range(n):
+            u = j / (n - 1)
+            th = math.radians(-78 + 156 * u)
+            wave = math.sin(7 * math.pi * u) * A * rho ** 1.3       # 4 crests, 3 valleys (one in the middle); 0 at the sides
+            rr = R * rho * (1 + 0.035 * abs(math.sin(7 * math.pi * u)) * rho)
+            x, y = rr * math.sin(th), -rr * math.cos(th) * 0.92
+            cup = depth * math.sin(math.pi * rho ** 0.85) * math.cos(th * 90 / 78) ** 0.6  # 0 all round the lip
+            frill = 0.014 * (i in ridges) * math.cos(th * 90 / 78) ** 0.3
+            zo = -up * (cup + frill) + wave
+            ri.append(bm.verts.new((x, y, zo + up * t)))
+            ro.append(bm.verts.new((x, y, zo)))
+        ins.append(ri)
+        outs.append(ro)
+    def face(vs, m):
+        bm.faces.new(vs).material_index = b.mats.index(m)
+    last = len(rhos) - 1
+    for i in range(last):
+        for j in range(n - 1):
+            face((ins[i][j], ins[i][j + 1], ins[i + 1][j + 1], ins[i + 1][j]), nacre)
+            face((outs[i][j], outs[i + 1][j], outs[i + 1][j + 1], outs[i][j + 1]), tan if band[i + 1] % 2 else cream)
+        for j in (0, n - 1):  # the two sides
+            face((ins[i][j], ins[i + 1][j], outs[i + 1][j], outs[i][j]), cream)
+    for j in range(n - 1):    # the lip, and the hinge end
+        face((ins[last][j], outs[last][j], outs[last][j + 1], ins[last][j + 1]), cream)
+        face((ins[0][j], ins[0][j + 1], outs[0][j + 1], outs[0][j]), cream)
+    return b.finish()
+
+
+cream = mat("ClamShell", (0.88, 0.84, 0.74), force=True)
+tan = mat("ClamBand", (0.74, 0.66, 0.54), force=True)
+nacre = mat("ClamNacre", (0.95, 0.9, 0.93), force=True)
+pearl = mat("PearlGlow", (0.97, 0.94, 0.97), (0.8, 0.72, 0.86))
+out.append(valve("ClamBase", False))
+out.append(valve("ClamLid", True))
+pb = Builder("Pearl", [pearl])
+pb.ico(0.12, (0, 0, 0), pearl, subdiv=2)
+out.append(pb.finish())
 
 # ---------- walls: stone (Lv2) and iron (Lv3); Lv1 stays the wooden palisade ----------
 w = Builder("WallStone", [stone, rock, dark])

@@ -1,0 +1,9 @@
+{
+  "name": "OVER_99_Fortress_Island",
+  "version_number": "0.1.2",
+  "website_url": "https://github.com/gba3124/over99-fortress-island",
+  "description": "Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Hold the lighthouse with your friends and go OVER 99.",
+  "dependencies": [
+    "BepInEx-BepInExPack-5.4.2305"
+  ]
+}

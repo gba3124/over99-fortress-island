@@ -1,3 +1,8 @@
 decompiled/
 bin/
 obj/
+dist/
+.DS_Store
+__pycache__/
+*.blend1
+PROGRESS.md

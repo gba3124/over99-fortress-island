@@ -10,38 +10,54 @@ using UnityEngine.InputSystem;
 
 namespace HtfFortress
 {
-    // Client -> host: use my active gear. Host -> everyone: whose went off, and how long until it's ready again.
-    public struct ActiveUse : IBroadcast { }
+    // Client -> host: use this active gear. Host -> everyone: whose went off, and how long until it's ready again.
+    public struct ActiveUse : IBroadcast { public Gear Gear; }
     public struct ActiveState : IBroadcast { public int PlayerId; public float Cooldown; }
 
-    // Active gear: one slot per player, press K during a round, then it recharges. Effects run on the host.
+    // Active gear: nothing to wear (Owen: "不用去裝…每個人都可以切換k那邊的道具看要不要用 這樣才及時主動"). Every kind the
+    // team has in the vault, at its best colour, is everyone's: K uses the one you've picked, Shift+K picks the next. Each
+    // is used up (Owen: "k的技能那些要是耗材"), the best colour first, so they don't merge by themselves any more (three
+    // uses would become one); the smith's bench still forges three into one. A moment between two (Lock) so one press
+    // doesn't spend two. During a round only; the effects run on the host.
     public class Actives : MonoBehaviour
     {
         public static Actives Instance;
         public const Key UseKey = Key.K;
+        public const float Lock = 3f;
 
         // host
         private readonly Dictionary<ulong, float> _readyAt = new Dictionary<ulong, float>();
         // client
         private float _myReadyAt, _myCooldown = 1f;
-        private UnityEngine.UI.Image _panel;
-        private TextMeshProUGUI _label;
+        private static Gear? _picked;
+        private UnityEngine.UI.Image _panel, _pic;
+        private TextMeshProUGUI _label, _count;
         private Hud.Bar _bar;
         private NetworkManager _registeredOn;
 
         static Actives()
         {
-            GenericWriter<ActiveUse>.SetWrite((w, v) => w.WriteBoolean(true));
-            GenericReader<ActiveUse>.SetRead(r => { r.ReadBoolean(); return new ActiveUse(); });
+            GenericWriter<ActiveUse>.SetWrite((w, v) => w.WriteByte((byte)v.Gear));
+            GenericReader<ActiveUse>.SetRead(r => new ActiveUse { Gear = (Gear)r.ReadByte() });
             GenericWriter<ActiveState>.SetWrite((w, v) => { w.WriteInt32(v.PlayerId); w.WriteSingle(v.Cooldown); });
             GenericReader<ActiveState>.SetRead(r => new ActiveState { PlayerId = r.ReadInt32(), Cooldown = r.ReadSingle() });
         }
 
         private void Awake() => Instance = this;
-        public bool ClientHasActive => Player.LocalPlayer && Loot.Instance && Equipped(Loot.Instance.ClientVault, Player.LocalPlayer) != null;
+        public bool ClientHasActive => Loot.Instance && Owned(Loot.Instance.ClientVault).Count > 0;
 
-        private static (Gear g, Rarity r)? Equipped(VaultData v, Player p) =>
-            p && v.Personal.TryGetValue(Loot.KeyOf(p), out var l) && l.Any(x => GearCatalog.IsActive(x.Item1)) ? l.First(x => GearCatalog.IsActive(x.Item1)) : ((Gear, Rarity)?)null;
+        // The active gear the team has, each kind at its best colour.
+        public static List<(Gear g, Rarity r)> Owned(VaultData v)
+        {
+            var list = new List<(Gear, Rarity)>();
+            foreach (var g in GearCatalog.All.Where(GearCatalog.IsActive))
+                for (int r = (int)Rarity.Legendary; r >= 0; r--) // an int: a Rarity is a byte, and Common-- wraps to 255 (that hung the game)
+                    if (v.Count(g, (Rarity)r) > 0) { list.Add((g, (Rarity)r)); break; }
+            return list;
+        }
+
+        // Which of them K uses now: the one picked, while the team still has it; else the first.
+        private static int PickedIndex(List<(Gear g, Rarity r)> owned) => Mathf.Max(0, _picked is Gear p ? owned.FindIndex(x => x.g == p) : 0);
 
         private void Update()
         {
@@ -49,11 +65,11 @@ namespace HtfFortress
             if (nm && nm != _registeredOn)
             {
                 _registeredOn = nm;
-                nm.ServerManager.RegisterBroadcast<ActiveUse>((conn, u, ch) =>
+                nm.ServerManager.RegisterBroadcast(Net.Safe<ActiveUse>((conn, u, ch) =>
                 {
                     var who = PlayerManager.Players.FirstOrDefault(p => p && p.Owner == conn);
-                    if (who) ServerUse(who);
-                });
+                    if (who) ServerUse(who, u.Gear);
+                }));
                 nm.ClientManager.RegisterBroadcast<ActiveState>((s, ch) =>
                 {
                     if (!Player.LocalPlayer || s.PlayerId != Player.LocalPlayer.ObjectId) return;
@@ -62,19 +78,32 @@ namespace HtfFortress
                 });
             }
             var kb = Keyboard.current;
-            if (kb != null && kb[UseKey].wasPressedThisFrame && !ChatManager.IsTyping && !Hud.ModalOpen && Siege.Instance.ViewActive && InstanceFinder.IsClientStarted)
-                InstanceFinder.ClientManager.Broadcast(new ActiveUse());
+            if (kb != null && kb[UseKey].wasPressedThisFrame && !ChatManager.IsTyping && !Hud.ModalOpen && InstanceFinder.IsClientStarted)
+            {
+                // Say why nothing happens (the playtest pressed K with nothing worn, and outside a round).
+                var owned = Owned(Loot.Instance.ClientVault);
+                if (owned.Count == 0) Hud.Banner(Hud.Keys(L10n.T("activeNone")), 2.5f);
+                else if (kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed)
+                {
+                    int i = (PickedIndex(owned) + 1) % owned.Count;
+                    _picked = owned[i].g;
+                    Hud.Banner(Hud.Keys(L10n.T("activePicked", GearCatalog.Label(owned[i].g, owned[i].r), i + 1, owned.Count)), 1.5f);
+                    Fx.Sound("EquipItem", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Vector3.zero, 0.6f, AudioDistance.Short);
+                }
+                else if (!Siege.Instance.ViewActive) Hud.Banner(L10n.T("activeRoundOnly"), 2f);
+                else InstanceFinder.ClientManager.Broadcast(new ActiveUse { Gear = owned[PickedIndex(owned)].g });
+            }
             DrawHud();
         }
 
         // ---------- host ----------
 
-        public bool ServerUse(Player who)
+        public bool ServerUse(Player who, Gear g)
         {
             if (!Siege.Instance.ServerActive || !who || !who.Transform || !PlayerManager.AlivePlayers.Contains(who)) return false;
-            var eq = Equipped(Loot.Instance.Vault, who);
-            if (eq == null) return false;
-            var (g, r) = eq.Value;
+            int k = Owned(Loot.Instance.Vault).FindIndex(x => x.g == g);
+            if (k < 0) return false; // the team doesn't have it (any more)
+            var r = Owned(Loot.Instance.Vault)[k].r;
             ulong key = Loot.KeyOf(who);
             if (_readyAt.TryGetValue(key, out float at) && Time.time < at) return false;
             float v = Loot.Instance.Vault.ValueOf(g, r); // enhanced legendaries hit harder
@@ -82,51 +111,65 @@ namespace HtfFortress
             switch (g)
             {
                 case Gear.Overclock:
-                    Turrets.OverclockUntil = Time.time + v;
+                    Turrets.OverclockUntil = Mathf.Max(Turrets.OverclockUntil, Time.time + v); // never cuts a teammate's longer one short
                     Fx.Announce("activeOverclock", Mathf.RoundToInt(v));
                     break;
                 case Gear.FieldRepair:
-                    foreach (var p in BuildSystem.Instance.ServerRepairArea(pos, 10f, v)) Fx.Send(FxKind.Heal, pos + Vector3.up, p + Vector3.up * 0.5f);
+                    var mended = BuildSystem.Instance.ServerRepairArea(pos, 10f, v);
+                    // The lighthouse too when it's in reach, at half the share (it's worth more than any wall).
+                    if ((Siege.Instance.CorePos - pos).Flat().magnitude <= 12f && Siege.Instance.ServerHealCore(v * 0.5f) > 0) mended.Add(Siege.Instance.CorePos + Vector3.up * 2f);
+                    if (mended.Count == 0) return false; // nothing hurt in reach: it stays ready
+                    foreach (var p in mended) Fx.Send(FxKind.Heal, pos + Vector3.up, p + Vector3.up * 0.5f);
                     Fx.Send(FxKind.Sell, pos, pos);
                     break;
                 case Gear.Decoy:
                     Siege.Instance.ServerDecoy(pos + (fwd.sqrMagnitude > 0.01f ? fwd.normalized : Vector3.forward) * 2.5f, v);
                     break;
                 case Gear.NetCannon:
+                    if (FortressNet.Instance.ServerNetCount(who.ObjectId) >= FortressNet.Instance.ServerCapOf(who.ObjectId)) return false; // net already full: it stays ready
                     FortressNet.Instance.ServerScoopAround(who, v);
                     break;
                 case Gear.Shockwave:
-                    Siege.Instance.ServerShockwave(pos, 6f, v, 20);
+                    // 40 damage grows with the wave's health, so it still matters at wave 15 (a flat 40 is nothing to an 800 HP fish).
+                    if (Siege.Instance.ServerShockwave(pos, 6f, v, Mathf.RoundToInt(40f * FortressPlugin.Instance.WaveHpMult), who) == 0) return false; // nobody in reach: it stays ready
                     break;
             }
-            float cd = GearCatalog.Cooldown(g, r);
-            _readyAt[key] = Time.time + cd;
-            InstanceFinder.ServerManager.Broadcast(new ActiveState { PlayerId = who.ObjectId, Cooldown = cd });
+            Loot.Instance.Vault.Add(g, r, -1); // used up
+            Loot.Instance.SaveVault();
+            _readyAt[key] = Time.time + Lock;
+            InstanceFinder.ServerManager.Broadcast(new ActiveState { PlayerId = who.ObjectId, Cooldown = Lock });
             AutoTest.Count("active_" + g);
             return true;
         }
 
         public void DebugResetCooldown(Player who) => _readyAt.Remove(Loot.KeyOf(who));
 
-        // ---------- client: the active slot, above the net ----------
+        // ---------- client: the picked active, above the net ----------
 
         private void DrawHud()
         {
-            var eq = Player.LocalPlayer && Loot.Instance ? Equipped(Loot.Instance.ClientVault, Player.LocalPlayer) : null;
-            bool show = eq != null && Siege.Instance && Siege.Instance.ViewActive && Hud.Font;
+            var owned = Player.LocalPlayer && Loot.Instance ? Owned(Loot.Instance.ClientVault) : new List<(Gear g, Rarity r)>();
+            bool show = owned.Count > 0 && Siege.Instance && Siege.Instance.ViewActive && Hud.Font;
             if (!show) { if (_panel) _panel.gameObject.SetActive(false); return; }
             if (!_panel)
             {
                 _panel = Hud.Box(Hud.Root, new Vector2(1f, 0f), new Vector2(-24f, 264f), new Vector2(320f, 62f), Hud.Panel, 16f); // above the net and its hint line
-                _label = Hud.Label(_panel.transform, "", 21f, new Vector2(0f, 1f), new Vector2(14f, -8f), new Vector2(300f, 30f), TextAlignmentOptions.TopLeft, pivot: new Vector2(0f, 1f));
-                _bar = Hud.Bar.Make(_panel.transform, new Vector2(0f, 0f), new Vector2(14f, 12f), new Vector2(292f, 10f), Hud.Accent);
+                _pic = Hud.PictureSlot(_panel.transform, new Vector2(0f, 0.5f), new Vector2(6f, 0f), new Vector2(52f, 52f));
+                _label = Hud.Label(_panel.transform, "", 21f, new Vector2(0f, 1f), new Vector2(64f, -8f), new Vector2(200f, 30f), TextAlignmentOptions.TopLeft, pivot: new Vector2(0f, 1f));
+                _label.enableWordWrapping = false; _label.enableAutoSizing = true; _label.fontSizeMin = 14f; _label.fontSizeMax = 21f; // one line, whatever the name
+                _count = Hud.Label(_panel.transform, "", 16f, new Vector2(1f, 1f), new Vector2(-10f, -10f), new Vector2(50f, 26f), TextAlignmentOptions.TopRight, Hud.Muted, pivot: new Vector2(1f, 1f));
+                _bar = Hud.Bar.Make(_panel.transform, new Vector2(0f, 0f), new Vector2(64f, 12f), new Vector2(242f, 10f), Hud.Accent);
             }
             _panel.gameObject.SetActive(true);
-            var (g, r) = eq.Value;
+            int at = PickedIndex(owned);
+            var (g, r) = owned[at];
+            _count.text = owned.Count > 1 ? $"{at + 1}/{owned.Count}" : ""; // Shift+K for the others
+            Hud.ShowPicture(_pic, "Gear" + g);
             float left = _myReadyAt - Time.time;
             bool ready = left <= 0f;
             string state = ready ? $"<color={Hud.Hex(Hud.Good)}>{L10n.T("activeReady")}</color>" : $"<color={Hud.Hex(Hud.Muted)}>{Mathf.CeilToInt(left)}s</color>";
-            _label.text = Hud.Keys($"[K] <color=#{GearCatalog.Hex(r)}>{GearCatalog.Name(g)}</color>  {state}");
+            int uses = GearCatalog.Rarities.Sum(x => Loot.Instance.ClientVault.Count(g, x)); // what's left of it, every colour
+            _label.text = Hud.Keys($"[K] <color=#{GearCatalog.Hex(r)}>{GearCatalog.Name(g)}</color> ×{uses}  {state}");
             _bar.Set(ready ? 1f : 1f - left / _myCooldown, ready ? Hud.Good : Hud.Accent);
         }
     }

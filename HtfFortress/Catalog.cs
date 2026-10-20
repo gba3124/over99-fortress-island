@@ -2,21 +2,28 @@ using UnityEngine;
 
 namespace HtfFortress
 {
-    // Flame, Sniper and Bubble are unlocked by blueprints (from chests and bosses).
-    public enum PieceType : byte { Wall, Floor, Ramp, Gun, Cannon, Harpoon, Mortar, Tesla, Spikes, Flame, Sniper, Bubble }
+    // Flame, Sniper and Bubble are unlocked by blueprints (from chests and bosses). The repair tower (Mender) is there from the start.
+    public enum PieceType : byte { Wall, Floor, Ramp, Gun, Cannon, Harpoon, Mortar, Tesla, Spikes, Flame, Sniper, Bubble, Mender }
 
     // Every buildable thing's cost, health, turret stats and Lv3 branches. Tune balance here.
+    // Levels have no cap: Lv1-3 are the tables below (turrets pick a branch on the way to Lv3); every level after that
+    // multiplies damage by BeyondDamage and health by BeyondHp, while each step costs BeyondCost times the one before.
     public static class Catalog
     {
-        public const int MaxLevel = 3;
-        public const int TypeCount = 12;
+        public const int BranchLevel = 3;          // the last level in the tables; turrets choose A or B reaching it
+        public const float BeyondDamage = 1.2f, BeyondHp = 1.15f, BeyondCost = 1.5f, BeyondRange = 0.4f, BeyondRangeMax = 4f;
+        public const int TypeCount = 13;
+        public const float MendCore = 0.5f; // a repair tower gives the lighthouse this share of what it gives a building
 
         public static bool IsTurret(PieceType t) => (t >= PieceType.Gun && t <= PieceType.Tesla) || t >= PieceType.Flame;
-        public static bool NeedsBlueprint(PieceType t) => t >= PieceType.Flame;
+        public static bool NeedsBlueprint(PieceType t) => t >= PieceType.Flame && t != PieceType.Mender;
+        public static bool Shoots(PieceType t) => IsTurret(t) && t != PieceType.Bubble && t != PieceType.Mender;
         public static bool HasBranches(PieceType t) => IsTurret(t);
         public static string HeadModel(PieceType t) => t + "Head";
 
-        public static int BuildCost(PieceType t)
+        public static int BuildCost(PieceType t) => Siege.Money(BaseCost(t)); // in the game's dollars
+
+        private static int BaseCost(PieceType t)
         {
             switch (t)
             {
@@ -30,11 +37,17 @@ namespace HtfFortress
                 case PieceType.Flame: return 100;
                 case PieceType.Sniper: return 120;
                 case PieceType.Bubble: return 130;
+                case PieceType.Mender: return 120;
                 default: return 25; // Spikes
             }
         }
 
-        // Cost to go from `level` to level + 1.
+        // Levels past the tables, and what they multiply (capped so nothing overflows at absurd levels).
+        public static int Beyond(int level) => Mathf.Max(0, level - BranchLevel);
+        private static float Grow(float per, int level) => Mathf.Min(1e6f, Mathf.Pow(per, Beyond(level)));
+        private static int Table(int level) => Mathf.Clamp(level, 1, BranchLevel) - 1;
+
+        // Cost to go from `level` to level + 1: base x level up to Lv3, then x1.5 per level.
         public static int UpgradeCost(PieceType t, int level)
         {
             int baseCost;
@@ -50,31 +63,35 @@ namespace HtfFortress
                 case PieceType.Flame: baseCost = 70; break;
                 case PieceType.Sniper: baseCost = 80; break;
                 case PieceType.Bubble: baseCost = 90; break;
+                case PieceType.Mender: baseCost = 80; break;
                 default: baseCost = 10; break;
             }
-            return baseCost * level;
+            float coins = level < BranchLevel ? baseCost * level : baseCost * BranchLevel * Mathf.Pow(BeyondCost, level - BranchLevel);
+            return Siege.Money(Mathf.RoundToInt(Mathf.Min(coins, 1e8f)));
         }
 
-        // Repairing back to full costs 1 coin per 5 missing HP (at least 1).
-        public static int RepairCost(int hp, int maxHp) => Mathf.Max(1, Mathf.CeilToInt((maxHp - hp) / 5f));
+        // Repairing back to full costs 1 coin's worth per 10 missing HP (at least 1): the playtest found repairs ate the money.
+        public static int RepairCost(int hp, int maxHp) => Siege.Money(Mathf.Max(1, Mathf.CeilToInt((maxHp - hp) / 10f)));
 
         public static int MaxHp(PieceType t, int level)
         {
-            int i = Mathf.Clamp(level, 1, MaxLevel) - 1;
+            int i = Table(level);
+            int hp;
             switch (t)
             {
-                case PieceType.Wall: return new[] { 200, 400, 650 }[i];   // wood, stone, metal
+                case PieceType.Wall: hp = new[] { 200, 400, 650 }[i]; break;   // wood, stone, metal
                 case PieceType.Floor:
-                case PieceType.Ramp: return new[] { 100, 200, 350 }[i];
-                case PieceType.Spikes: return new[] { 120, 200, 300 }[i];
-                default: return new[] { 300, 450, 600 }[i];               // turrets
+                case PieceType.Ramp: hp = new[] { 100, 200, 350 }[i]; break;
+                case PieceType.Spikes: hp = new[] { 120, 200, 300 }[i]; break;
+                default: hp = new[] { 300, 450, 600 }[i]; break;               // turrets
             }
+            return Mathf.RoundToInt(Mathf.Min(1e8f, hp * Grow(BeyondHp, level)));
         }
 
         public struct TurretStats
         {
             public int Damage; public float Interval, Range, MinRange, Splash;
-            public int Chain, Shots; public bool Pierce; public float Slow, SlowTime, Burn;
+            public int Chain, Shots, Targets; public bool Pierce; public float Slow, SlowTime, Burn;
             public float BossMult, WaterMult;
             public float Cone, Shield; // flamethrower half-angle; bubble damage reduction
         }
@@ -82,8 +99,33 @@ namespace HtfFortress
         // Branch 1 = A, 2 = B (chosen when upgrading to Lv3).
         public static TurretStats Turret(PieceType t, int level, int branch)
         {
-            int i = Mathf.Clamp(level, 1, MaxLevel) - 1;
-            var s = new TurretStats { Shots = 1, BossMult = 1f, WaterMult = 1f };
+            var s = TableTurret(t, level, branch);
+            if (Beyond(level) == 0) return s;
+            float k = Grow(BeyondDamage, level);
+            s.Damage = Mathf.RoundToInt(Mathf.Min(1e8f, s.Damage * k));
+            s.Burn *= k;
+            s.Range += Mathf.Min(BeyondRangeMax, BeyondRange * Beyond(level));
+            if (t == PieceType.Bubble) s.Shield = Mathf.Min(0.85f, s.Shield + 0.025f * Beyond(level));
+            // Every 5th level (Lv5, Lv10...) the turret gets something new, and another barrel to show it.
+            int m = Milestones(level);
+            switch (t)
+            {
+                case PieceType.Gun: case PieceType.Sniper: s.Targets += m; break;                     // one more fish at a time
+                case PieceType.Cannon: case PieceType.Mortar: case PieceType.Harpoon: s.Shots += m; break; // one more shell / harpoon
+                case PieceType.Tesla: s.Chain += 2 * m; break;
+                case PieceType.Flame: s.Cone = Mathf.Min(90f, s.Cone + 10f * m); break;
+                case PieceType.Bubble: case PieceType.Mender: s.Range += 2f * m; break;
+            }
+            return s;
+        }
+
+        // Lv5, Lv10, Lv15... reached (capped at 3 extra barrels' worth).
+        public static int Milestones(int level) => Mathf.Min(3, level / 5);
+
+        private static TurretStats TableTurret(PieceType t, int level, int branch)
+        {
+            int i = Table(level);
+            var s = new TurretStats { Shots = 1, Targets = 1, BossMult = 1f, WaterMult = 1f };
             switch (t)
             {
                 case PieceType.Gun:
@@ -108,8 +150,8 @@ namespace HtfFortress
                     if (branch == 2) s.Shots = 3;    // Barrage
                     break;
                 case PieceType.Flame:
-                    s.Damage = new[] { 4, 6, 9 }[i]; s.Interval = new[] { 0.2f, 0.18f, 0.15f }[i]; s.Range = new[] { 7f, 8f, 9f }[i]; s.Cone = 35f;
-                    s.Burn = new[] { 3f, 5f, 8f }[i];
+                    s.Damage = new[] { 6, 9, 13 }[i]; s.Interval = new[] { 0.2f, 0.18f, 0.15f }[i]; s.Range = new[] { 7f, 8f, 9f }[i]; s.Cone = 35f;
+                    s.Burn = new[] { 5f, 8f, 12f }[i];
                     if (branch == 1) s.Burn *= 2f;                          // Inferno
                     if (branch == 2) { s.Cone = 60f; s.Range += 2f; }       // Wide
                     break;
@@ -123,8 +165,13 @@ namespace HtfFortress
                     if (branch == 1) s.Range += 4f;                         // Expanse
                     if (branch == 2) s.Shield = 0.65f;                      // Hardened
                     break;
+                case PieceType.Mender: // no attack: once a second every damaged building within Range gets Damage health back, the lighthouse MendCore of it
+                    s.Damage = new[] { 5, 8, 12 }[i]; s.Interval = 1f; s.Range = new[] { 7f, 8f, 9f }[i];
+                    if (branch == 1) s.Range += 4f;                         // Wide
+                    if (branch == 2) s.Damage *= 2;                         // Surge
+                    break;
                 case PieceType.Tesla:
-                    s.Damage = new[] { 10, 16, 24 }[i]; s.Interval = new[] { 1.2f, 1f, 0.85f }[i]; s.Range = new[] { 10f, 12f, 14f }[i];
+                    s.Damage = new[] { 14, 22, 33 }[i]; s.Interval = new[] { 1.2f, 1f, 0.85f }[i]; s.Range = new[] { 11f, 13f, 15f }[i];
                     s.Chain = new[] { 3, 4, 5 }[i]; s.WaterMult = 2f;
                     if (branch == 1) s.Chain += 3;                                   // Spread
                     if (branch == 2) { s.Damage *= 2; s.Interval *= 1.5f; }           // Overload
@@ -150,6 +197,11 @@ namespace HtfFortress
         }
 
         // Spikes: damage per tick (0.5 s) to walkers standing on them.
-        public static int SpikeDamage(int level) => new[] { 4, 7, 11 }[Mathf.Clamp(level, 1, MaxLevel) - 1];
+        public static int SpikeDamage(int level) => Mathf.RoundToInt(Mathf.Min(1e8f, new[] { 4, 7, 11 }[Table(level)] * Grow(BeyondDamage, level)));
+
+        // ★★☆ up to Lv3, then ★★★+2 for Lv5 and so on.
+        public static string Stars(int level, string dim = "#FFFFFF40") =>
+            new string('★', Mathf.Min(level, BranchLevel)) + (level < BranchLevel ? $"<color={dim}>{new string('★', BranchLevel - level)}</color>" : "")
+            + (Beyond(level) > 0 ? $"<size=85%>+{Beyond(level)}</size>" : "");
     }
 }

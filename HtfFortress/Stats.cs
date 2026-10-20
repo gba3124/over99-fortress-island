@@ -78,7 +78,7 @@ namespace HtfFortress
         }
     }
 
-    // Player weapon hits on creatures land here on the host: remember who hit last.
+    // Every player weapon hit on a creature (guns, bow, knife, fists, disc) lands here on the host: remember who hit last.
     [HarmonyPatch(typeof(Server), "RpcLogic___HitCreature___215526726")]
     internal static class RecordHandHits
     {
@@ -87,9 +87,54 @@ namespace HtfFortress
             Stats.HandHit(__0, __1);
             if (__0 && Enemies.Instance && Enemies.Instance.TryGet(__0, out _))
             {
-                __2 = Mathf.RoundToInt(__2 * (1f + Perks.Of(__1, Gear.Gauntlet)));
-                if (Perks.Legend(__1, Gear.Gauntlet)) { Siege.Instance.Slow(__0, 1f, 0.6f); Perks.Proc(Gear.Gauntlet, __0.transform.position); } // legendary: each punch stuns
+                float mult = FortressPlugin.HandDamage.Value * (1f + Perks.Of(__1, Gear.Gauntlet)) * (Siege.Instance.IsBubbled(__0) ? 1.5f : 1f);
+                // One of the game's guns as a fortress weapon: by its rarity and the wave; a legendary now and then hits three times as hard.
+                if (WeaponItems.Held(__1, out var g, out var r) && GearCatalog.IsGameGun(g))
+                {
+                    mult *= WeaponItems.GunDamage(g, r);
+                    if (r == Rarity.Legendary && Random.value < WeaponItems.GunCrit) { mult *= 3f; Perks.Proc(g, __0.transform.position); }
+                }
+                __2 = Mathf.Max(1, Mathf.RoundToInt(__2 * mult));
+                // Legendary: each punch stuns. Melee only (fists, knife, brass knuckles): on an SMG's 20 hits a second it would hold any fish, bosses too, still for good.
+                if (Perks.Legend(__1, Gear.Gauntlet) && IsMelee(__1)) { Siege.Instance.Slow(__0, 1f, 0.6f); Perks.Proc(Gear.Gauntlet, __0.transform.position); }
             }
+        }
+
+        private static bool IsMelee(Player p)
+        {
+            var held = p && p.Holding ? p.Holding.HeldItem : null;
+            return !held || held is Melee;
+        }
+    }
+
+    // Dynamite hurts fish through its own path (no hit RPC): credit the thrower for fortress fish in the blast, so the kill,
+    // the stats and the thrower's lucky charm count.
+    [HarmonyPatch(typeof(ExplosionManager), nameof(ExplosionManager.ServerExplode))]
+    internal static class CreditExplosions
+    {
+        private static void Prefix(Item item, ExplosionInfo info)
+        {
+            if (!item || info == null || !Siege.Instance || !Siege.Instance.ServerActive) return;
+            Player p = item.Explosive && item.Explosive.PlayerWhoForcedExplosion ? item.Explosive.PlayerWhoForcedExplosion : item.LastPlayer;
+            if (!p) return;
+            float r2 = info.DamageRadius * info.DamageRadius;
+            foreach (var c in FortressPlugin.Alive)
+                if (c && (c.transform.position - item.transform.position).sqrMagnitude <= r2) Stats.HandHit(c, p);
+        }
+    }
+
+    // Each hand kill queues the game's 2-3 s kill-score popup; thirty kills in a wave would keep playing into the next one.
+    // During a round at most one waits.
+    [HarmonyPatch(typeof(PlayerKillScore), nameof(PlayerKillScore.AddKillScore))]
+    internal static class FewerKillScorePopups
+    {
+        private static System.Reflection.FieldInfo _queue;
+
+        private static bool Prefix(PlayerKillScore __instance)
+        {
+            if (!(Siege.Instance && Siege.Instance.ViewActive)) return true;
+            _queue = _queue ?? AccessTools.Field(typeof(PlayerKillScore), "_killScoreQueue");
+            return !(_queue?.GetValue(__instance) is System.Collections.ICollection waiting && waiting.Count > 0);
         }
     }
 }

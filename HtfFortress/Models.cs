@@ -12,7 +12,7 @@ namespace HtfFortress
     {
         public static string Dir;
 
-        private class Model { public Mesh Mesh; public Color[] Colors; public Color[] Emits; }
+        private class Model { public Mesh Mesh; public Color[] Colors; public Color[] Emits; public string[] Names; }
         private static readonly Dictionary<string, Model> Cache = new Dictionary<string, Model>();
         private static Material _template;
         private static readonly Dictionary<Renderer, Color[]> BaseColors = new Dictionary<Renderer, Color[]>();
@@ -66,7 +66,17 @@ namespace HtfFortress
             return m;
         }
 
-        private static void SetMatColor(Material m, Color c)
+        // A model's colours as authored, and changing one of them for good (tints then start from the new one).
+        public static Color[] ColorsOf(Renderer r) => BaseColors.TryGetValue(r, out var c) ? c : new Color[0];
+        public static void Recolor(Renderer r, int i, Color c)
+        {
+            if (BaseColors.TryGetValue(r, out var cols) && i < cols.Length) cols[i] = c;
+            if (Originals.TryGetValue(r, out var orig) && i < orig.Length) orig[i] = c;
+            var mats = r.sharedMaterials;
+            if (i < mats.Length && mats[i]) SetMatColor(mats[i], c);
+        }
+
+        internal static void SetMatColor(Material m, Color c)
         {
             if (Painted.TryGetValue(m, out var prev) && prev == c) return;
             Painted[m] = c;
@@ -102,6 +112,7 @@ namespace HtfFortress
                 go.transform.localScale = fallbackSize;
                 go.GetComponent<Renderer>().sharedMaterial = Make(new Color(0.6f, 0.45f, 0.3f));
             }
+            go.AddComponent<OwnMaterials>().Mats.AddRange(go.GetComponent<Renderer>().sharedMaterials);
             go.transform.SetParent(parent, false);
             go.transform.localPosition = model != null ? Vector3.zero : fallbackOffset;
             go.layer = parent.gameObject.layer;
@@ -110,6 +121,43 @@ namespace HtfFortress
             BaseColors[r] = cols;
             Originals[r] = cols.ToArray();
             return go;
+        }
+
+        // A model's mesh without the parts in these materials, for its collider: what only decorates stays out of the way (the
+        // fortress island's buoys off the pier pinned the boat). Made once per model.
+        private static readonly Dictionary<string, Mesh> Colliders = new Dictionary<string, Mesh>();
+        public static Mesh ColliderOf(string name, params string[] notSolid)
+        {
+            string key = name + "|" + string.Join(",", notSolid);
+            if (Colliders.TryGetValue(key, out var done)) return done;
+            var model = Load(name);
+            if (model == null) return null;
+            var src = model.Mesh;
+            var mesh = new Mesh { name = src.name + "Collider", indexFormat = src.indexFormat };
+            mesh.SetVertices(src.vertices);
+            mesh.SetTriangles(Enumerable.Range(0, src.subMeshCount).Where(i => !notSolid.Contains(model.Names[i])).SelectMany(i => src.GetTriangles(i)).ToArray(), 0);
+            mesh.RecalculateBounds();
+            return Colliders[key] = mesh;
+        }
+
+        // Materials made for one object (every model has its own, for tinting; dyed fish get copies) go with it,
+        // or a long session piles up thousands (every piece, site, preview, drop, enemy and its gear makes some).
+        internal class OwnMaterials : MonoBehaviour
+        {
+            public readonly List<Material> Mats = new List<Material>();
+
+            private void OnDestroy()
+            {
+                var r = GetComponent<Renderer>();
+                if (r) { BaseColors.Remove(r); Originals.Remove(r); }
+                foreach (var m in Mats)
+                {
+                    if (!m) continue;
+                    if (Swatch.TryGetValue(m, out var tex)) { if (tex) Object.Destroy(tex); Swatch.Remove(m); }
+                    Painted.Remove(m);
+                    Object.Destroy(m);
+                }
+            }
         }
 
         // t = 1 healthy, 0 nearly destroyed: fade the model's colours toward dark red.
@@ -215,6 +263,7 @@ namespace HtfFortress
                 Mesh = mesh,
                 Colors = matNames.Select(n => kd.TryGetValue(n, out var c) ? c : Color.gray).ToArray(),
                 Emits = matNames.Select(n => ke.TryGetValue(n, out var c) ? c : Color.black).ToArray(),
+                Names = matNames.ToArray(),
             };
         }
 

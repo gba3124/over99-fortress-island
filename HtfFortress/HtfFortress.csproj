@@ -6,7 +6,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <!-- Pixel Port install of How to Fish -->
-    <GameDir>$(HOME)/Library/Application Support/PixelPort/GameData/prefixes/free-steam/drive_c/Program Files (x86)/Steam/steamapps/common/How to Fish/How to Fish</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">$(HOME)/Library/Application Support/PixelPort/GameData/prefixes/free-steam/drive_c/Program Files (x86)/Steam/steamapps/common/How to Fish/How to Fish</GameDir>
     <Managed>$(GameDir)/How to Fish_Data/Managed</Managed>
   </PropertyGroup>
 
@@ -23,6 +23,10 @@
     <Reference Include="UnityEngine.TextRenderingModule" HintPath="$(Managed)/UnityEngine.TextRenderingModule.dll" Private="false" />
     <Reference Include="UnityEngine.ScreenCaptureModule" HintPath="$(Managed)/UnityEngine.ScreenCaptureModule.dll" Private="false" />
     <Reference Include="UnityEngine.UIModule" HintPath="$(Managed)/UnityEngine.UIModule.dll" Private="false" />
+    <Reference Include="UnityEngine.ParticleSystemModule" HintPath="$(Managed)/UnityEngine.ParticleSystemModule.dll" Private="false" />
+    <Reference Include="UnityEngine.AudioModule" HintPath="$(Managed)/UnityEngine.AudioModule.dll" Private="false" />
+    <Reference Include="UnityEngine.AnimationModule" HintPath="$(Managed)/UnityEngine.AnimationModule.dll" Private="false" />
+    <Reference Include="UnityEngine.ImageConversionModule" HintPath="$(Managed)/UnityEngine.ImageConversionModule.dll" Private="false" />
     <Reference Include="UnityEngine.UI" HintPath="$(Managed)/UnityEngine.UI.dll" Private="false" />
     <Reference Include="Unity.TextMeshPro" HintPath="$(Managed)/Unity.TextMeshPro.dll" Private="false" />
     <Reference Include="Unity.Localization" HintPath="$(Managed)/Unity.Localization.dll" Private="false" />
@@ -30,13 +34,15 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ModelFiles Include="Models/*.obj;Models/*.mtl" />
+    <ModelFiles Include="Models/*.obj;Models/*.mtl;Models/*.decor.txt" />
+    <IconFiles Include="Icons/*.png" Exclude="Icons/_*.png" />
   </ItemGroup>
 
-  <!-- Copy the built plugin straight into the game's BepInEx/plugins -->
-  <Target Name="Deploy" AfterTargets="Build">
+  <!-- Copy the built plugin straight into the game's BepInEx/plugins (skip with -p:Deploy=false, e.g. for the headless tests) -->
+  <Target Name="Deploy" AfterTargets="Build" Condition="'$(Deploy)' != 'false'">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins/HtfFortress" />
     <Copy SourceFiles="@(ModelFiles)" DestinationFolder="$(GameDir)/BepInEx/plugins/HtfFortress/Models" />
+    <Copy SourceFiles="@(IconFiles)" DestinationFolder="$(GameDir)/BepInEx/plugins/HtfFortress/Icons" />
   </Target>
 
 </Project>

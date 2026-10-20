@@ -1,0 +1,12 @@
+# Blender 5.1.0 MTL File: 'fortress_models.blend'
+# www.blender.org
+
+newmtl PearlGlow
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.970000 0.940000 0.970000
+Ks 0.500000 0.500000 0.500000
+Ke 0.800000 0.720000 0.860000
+Ni 1.500000
+d 1.000000
+illum 2

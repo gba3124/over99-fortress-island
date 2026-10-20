@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Runs the mod's real code without the game: see tests/run.sh. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NoWarn>CS0618;MSB3277</NoWarn>
+    <GameDir>$(HOME)/Library/Application Support/PixelPort/GameData/prefixes/free-steam/drive_c/Program Files (x86)/Steam/steamapps/common/How to Fish/How to Fish</GameDir>
+    <Managed>$(GameDir)/How to Fish_Data/Managed</Managed>
+    <ModDll>$(MSBuildThisFileDirectory)../../HtfFortress/bin/Release/netstandard2.1/HtfFortress.dll</ModDll>
+  </PropertyGroup>
+
+  <!-- Nothing is copied: Program.cs loads these from the game folder, and a rewritten copy of the mod. -->
+  <ItemGroup>
+    <Reference Include="HtfFortress" HintPath="$(ModDll)" Private="false" />
+    <Reference Include="Mono.Cecil" HintPath="$(GameDir)/BepInEx/core/Mono.Cecil.dll" Private="false" />
+    <Reference Include="BepInEx" HintPath="$(GameDir)/BepInEx/core/BepInEx.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(GameDir)/BepInEx/core/0Harmony.dll" Private="false" />
+    <Reference Include="Assembly-CSharp" HintPath="$(Managed)/Assembly-CSharp.dll" Private="false" />
+    <Reference Include="FishNet.Runtime" HintPath="$(Managed)/FishNet.Runtime.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(Managed)/UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(Managed)/UnityEngine.CoreModule.dll" Private="false" />
+  </ItemGroup>
+
+</Project>

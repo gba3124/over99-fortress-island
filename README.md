@@ -1,181 +1,46 @@
-# HTF Fortress：How to Fish 要塞島
+# OVER 99 Fortress Island
 
-打完最後魔王之後，海上會出現一座「要塞島」。開船過去，和朋友一起蓋防禦、守住燈塔，一波一波撐下去，看能走多遠。
+![OVER 99](img/banner.png)
 
-BepInEx 5 模組，C#，在 Mac 的 Pixel Port 上開發與自動測試。完整設計見 [DESIGN.md](DESIGN.md)。
+A co-op fortress mode for *How to Fish*, as a BepInEx 5 mod. Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Hold the lighthouse with your friends and go OVER 99.
 
-## 怎麼玩
+**Get it:** [Thunderstore](https://thunderstore.io/c/how-to-fish/p/gba3124/OVER_99_Fortress_Island/) · **Languages:** English, Traditional Chinese, Simplified Chinese (follows the game) · **Full guide (Traditional Chinese):** [docs/README.zh-TW.md](docs/README.zh-TW.md) · **Design notes:** [DESIGN.md](DESIGN.md)
 
-1. **找到要塞島**：打完最後魔王後，雷達上會多一個橘色的點，它在你目前所在的島外海約 230 公尺。（測試期間可以在 Mod Settings 把 `Island / Unlock` 設成 `Always`）
-2. **開始一局**：島上所有人站進燈塔前的**藍色光圈**，倒數 5 秒就開始
-3. **建造時間**（開局 45 秒，之後每波之間 25 秒）：花金幣蓋牆和砲塔。房主按 **N** 可以提早開始下一波
-4. **戰鬥**：敵人分三批從三個沙灘缺口登陸，直衝燈塔。牆擋住它們，砲塔負責輸出。**靠太近會被咬**，自爆河豚也會炸到人
-5. **撿魚**：擊殺只給一點錢，大部分收入在魚屍上。走到死魚旁邊會自動收進漁網，滿了就拿到碼頭旁的**魚箱**賣掉換金幣
-6. **倒下**：隊友可以把你扶起來（遊戲原本的機制）。全員倒下就輸，大家會在要塞碼頭重生，船也會停在旁邊
-7. **結束**：燈塔被打爆或全員倒下。結算畫面會顯示撐過幾波、最高紀錄，以及每個人的擊殺、砲塔擊殺、捕魚收入、建造、倒下次數和 MVP（擊殺王、建築大師、漁夫王、不倒翁）。場地重置後站進光圈就能再挑戰
+## What it adds
 
-### 按鍵
+- A fortress island that rises out of the sea after the final boss, with a lighthouse to defend
+- 100 waves of fish in sneakers, in 10 kinds that each have their own trick
+- 10 original bosses, one every 10 waves
+- Walls, 7 turrets, a spike trap and 2 support towers, with no cap on upgrades
+- 17 new weapons and 20 kinds of gear you keep between runs
+- A village on the pier with a fish stall, a smithy and a shared vault
+- Solo or co-op. Everyone must run the same version; the mod checks and warns you
 
-| 按鍵 | 作用 |
-|---|---|
-| **G** | 進出建造模式（只能在要塞島、開局後使用） |
-| **T** / **Shift+T** | 下一個／上一個建築 |
-| **按住左鍵** | 施工：預覽處搭起鷹架、慢慢長出來（牆 0.4 秒、陷阱 0.6 秒、砲塔 1 秒），放開就取消並退錢。看著隊友的工地按住左鍵可以幫忙，每多一人快 60% |
-| **右鍵**（看著建築） | 打開選單：看升級後的傷害／射速／射程／耐久、Lv3 兩個分支並排比較、修理、拆除 |
-| **Y** | 反轉方向 |
-| **U** / **Shift+U** | 快捷升級（Lv3 時 U 選分支 A、Shift+U 選 B） |
-| **J** | 快捷修理 |
-| **按住 H** | 拆除（建築會搖晃下沉，0.6 秒後拆掉，退一半金幣） |
-| **U**（在魚箱旁） | 升級全隊的漁網 |
-| **K** | 使用主動裝備（有冷卻） |
-| **I** | 打開／關閉說明面板（所有按鍵和機制） |
-| **N** | 房主：建造時間提早開始下一波 |
-| **F10** | 截圖（存到 `BepInEx/fortress-shots/`） |
+## Build
 
-### 裝備與儲藏庫（打完還留著）
-
-一局裡的升級每局歸零；**裝備會留下來**，越玩越強。
-
-- **拿到裝備**：打怪有機會掉（發光的水晶，走過去就撿；精英 25%、魔王必掉史詩以上），每清完第 5、10、15… 波燈塔旁會出現**寶箱**，站上去就打開。寶箱還有 30% 機率噴出**遊戲原本的道具**（小刀、手槍、霰彈槍、狙擊槍、突擊步槍…），撿起來帶回主遊戲也能用
-- **儲藏庫**：碼頭左邊的紅屋頂小屋，站在門口按 **U** 打開（只有沒開局時能用）。全隊共用，存在房主的存檔裡
-- **配裝**：要塞裝備全隊 4 格（強化火藥、精準瞄具、穿甲彈、燃燒彈、寒冰核心、雷擊線圈、鋼筋、燈塔護盾、戰爭基金），個人被動裝備每人 2 格（鯊皮護甲、大漁網、魚販手套、鬥士拳套、工具腰帶、幸運符），**主動裝備每人 1 格**
-- **主動裝備**（開局中按 **K**，用完要冷卻，稀有度越高越強、冷卻越短）：超頻晶片（全砲塔射速 ×2 數秒）、急救工具箱（10 公尺內建築回血）、誘餌鴨（放一隻橡皮鴨把附近的魚引走，自爆河豚會炸在鴨子上）、捕魚砲（大範圍魚屍全吸進漁網）、震波錘（震開附近的魚、暈眩、扣血）
-- **傳說特效**：每件被動裝備到傳說都會多一個獨特效果，例如砲塔擊殺會爆開、10% 爆擊、穿甲無視盾牌、火焰會延燒、燈塔自動回血、每波利息、反咬護甲、漁網滿了自動賣、施工速度 ×2、掉寶高一級。儲藏庫裡點裝備就看得到
-- **合成**：3 個同名同稀有度 → 1 個高一級（普通 → 稀有 → 史詩 → 傳說）
-- **魚鱗**：不要的裝備在儲藏庫「拆成魚鱗」（普通 1、稀有 3、史詩 8、傳說 20）。魚鱗可以**升階**（普通 → 稀有 4、稀有 → 史詩 10；史詩升傳說只能靠找到或 3 合 1），傳說裝備則可以**強化** +1～+5（每級數值 +10%，花費 15／25／40／60／90）
-- **掉落節奏**：從第 2 波起，每局第一隻被打死的怪一定會掉；一般怪 6%、精英 35%、魔王必掉
-- **看得到的裝備**：撿到裝備或開寶箱時右側會跳出卡片（名稱、效果、去哪裝）；開局中右下角列出要塞和你的配裝，傳說特效觸發時會亮起，現場飄出「★ 爆裂」之類的字
-
-每件裝備的數值見 [DESIGN.md](DESIGN.md) 第 10 節，或 [`HtfFortress/Gear.cs`](HtfFortress/Gear.cs)。
-
-### 教學
-
-- **提示卡**：第一次遇到新東西（魚屍、漁網滿了、掉裝備、寶箱、每種特殊怪…）時，畫面左邊會跳出一張說明卡，每張只出現一次。Mod 設定 → Tips 可以關掉，或打開 `ResetTips` 重看
-- **地圖標記**：魚箱、儲藏庫、開局光圈、寶箱頭上有浮動標籤和距離；漁網滿了魚箱標記會閃
-- **說明面板**：按 **I** 隨時打開
-
-### 測試鍵（房主）
-
-在 Mod Settings 打開 `Debug / DebugKeys`，畫面右上角會列出測試鍵。Mac 鍵盤要按住 **Fn** 再按 F 鍵。
-
-| 按鍵 | 作用 |
-|---|---|
-| **F4** | 傳送到要塞島的光圈，船也移到碼頭旁 |
-| **F5** | +500 金幣（一局進行中） |
-| **F6** | 無敵 開／關（遊戲本身的無敵模式） |
-| **F7** | 清除所有敵人 |
-| **F8** | 跳過建造時間；**Shift+F8** 直接跳 5 波 |
-| **F9** | 開始／結束一局 |
-
-遊戲本身已經佔用 B、Q、R、X、E、F、C、V、Z、1–9，所以模組改用 G、T、Y、U、J、H。建造模式中左右鍵不會揮動手上的道具。
-
-### 建築
-
-| 建築 | 花費 | 說明 | Lv3 分支 A / B |
-|---|---|---|---|
-| 牆 | 10 | 擋住登陸的魚，升級 木 → 石 → 鐵 | |
-| 地板、斜坡 | 8 | 可以疊高、走上去 | |
-| 機槍塔 | 50 | 射速快、單體 | 暴風（射速 ×2）／穿甲（對坦克、魔王 ×3） |
-| 大砲 | 80 | 拋物線砲彈、範圍傷害 | 集束（3 顆）／重砲（傷害 ×2.5） |
-| 魚叉塔 | 70 | 貫穿一整排、命中減速 | 多重（3 支）／冰凍（強力減速） |
-| 迫擊砲 | 110 | 超遠射程、不能打近距離 | 燃燒（地面持續燒）／連發（3 發） |
-| 電網塔 | 90 | 連鎖電擊，對水中敵人 ×2 | 擴散（連鎖更多）／超載（傷害 ×2） |
-| 尖刺陷阱 | 25 | 踩到持續扣血、減速 | |
-| 火焰噴射塔 🔒 | 100 | 短距離錐形噴火、燃燒 | 烈焰（燃燒 ×2）／廣角（角度更大、射程 +2） |
-| 狙擊塔 🔒 | 120 | 超遠射程，專打血最多的 | 破甲（對坦克、魔王 ×2）／速射（射速 ×1.7） |
-| 泡泡護盾 🔒 | 130 | 不攻擊；範圍內建築減傷 30–50%，地上有光圈 | 擴張（範圍 +4）／硬化（減傷 65%） |
-
-🔒 要先拿到**藍圖**：第 10 波後的寶箱（60%）和每隻魔王會掉，解鎖後存在儲藏庫、永久可用。
-
-所有數值都在 [`HtfFortress/Catalog.cs`](HtfFortress/Catalog.cs) 和 [`HtfFortress/Enemies.cs`](HtfFortress/Enemies.cs)。
-
-### 敵人
-
-| 敵人 | 登場 | 行為 |
-|---|---|---|
-| 登陸魚 | 第 1 波 | 穿鞋的魚，衝向燈塔，擋路的牆和砲塔會被拆 |
-| 衝鋒魚 | 第 3 波 | 紅色、戴角盔，小、快、血少 |
-| 小偷魚 | 第 4 波 | 紫色、背錢袋。跳過牆去叼魚屍（沒有就去魚箱偷錢），再從沙灘跑回海裡；**要有人去追**，打死會掉回贓物 |
-| 砲擊魚 | 第 5 波 | 浮在岸邊海面吐水彈打建築和人，登陸的魚全滅（或 75 秒）就潛回深海 |
-| 分裂魚 | 第 5 波 | 黃綠色、背上一團泡泡，死掉裂成 3 隻小魚 |
-| 自爆河豚 | 第 6 波 | 背著炸彈，貼到牆或人就爆炸 |
-| 治療魚 | 第 6 波 | 綠色、拿發光法杖，幫 6 公尺內受傷的魚補血，**要優先打掉** |
-| 盾牌魚 | 第 7 波 | 藍色、舉圓盾，正面擋掉砲塔 80% 傷害；**從側面放砲塔或親手打** |
-| 坦克蟹 | 第 8 波 | 背石殼，又慢又硬，拆牆傷害 ×2 |
-| 鑽地魚 | 第 9 波 | 戴礦工帽，碰到牆就從地底鑽過去（地底下砲塔打不到），**內圈也要有防守** |
-| 精英 | 每 5 波 | 戴金冠、頭上有金色名牌，更大、更硬、獎勵 ×3 |
-| 魔王 | 每 10 波 | 輪流出現：**深海巨獸**（每 10 秒衝鋒，撞牆 ×3 傷害）、**珊瑚女王**（召喚護衛）、**喚潮者**（警告 2 秒後巨浪打上一個沙灘） |
-
-每種怪有自己的顏色和配件；精英、魔王和特殊怪頭上有名牌和血條，受傷的怪會顯示血條。海裡也會混一些原版的攻擊魚騷擾水邊的玩家。敵人數量會隨玩家人數增加（每多一人 +40%）。
-
-## 安裝
-
-1. 遊戲裝好 BepInEx 5.4.23.5
-2. 把 `HtfFortress/` 資料夾（含 `HtfFortress.dll` 和 `Models/`）放進 `How to Fish/BepInEx/plugins/`
-3. 建議一起裝 [ModMenu](https://thunderstore.io/c/how-to-fish/p/evansvl/ModMenu/)，可以在遊戲裡調設定
-4. **一起玩的每個人都要裝同一版**
-
-## 開發
-
-```
-htf-fortress/
-├── README.md / DESIGN.md
-├── HtfFortress/
-│   ├── FortressPlugin.cs    進入點、設定、波次組成、刷怪、獎勵、結算
-│   ├── FortressIsland.cs    要塞島：生成、碰撞、雷達點、解鎖、集合圈、結算畫面、碼頭重生
-│   ├── Siege.cs             燈塔核心、金幣、敵人 AI（Harmony 接管 RunningFish）、上方 HUD
-│   ├── Enemies.cs           敵人種類與數值、外觀同步（縮放、配件）、畫面邊緣敵人標記
-│   ├── BuildSystem.cs       建造：格線、預覽、放置、升級分支、修理、拆除、建造列
-│   ├── Turrets.cs           砲塔與陷阱的攻擊邏輯
-│   ├── FortressNet.cs       漁網：撿屍體、魚箱賣出、漁網升級
-│   ├── Gear.cs              裝備種類、稀有度數值、儲藏庫資料、裝備效果（Perks）
-│   ├── Loot.cs              掉落、寶箱、遊戲道具獎勵、儲藏庫存檔與同步
-│   ├── VaultUI.cs           儲藏庫滑鼠介面
-│   ├── Catalog.cs           建築數值（平衡在這裡調）
-│   ├── Fx.cs                特效、音效（沿用遊戲音效）、傷害數字、橫幅
-│   ├── Models.cs            OBJ 載入、遊戲材質上色、升級外觀、受損變紅
-│   ├── Hud.cs / L10n.cs     遊戲字型的 HUD、三語字串
-│   ├── AutoTest.cs          自動測試（見下）
-│   └── Models/              Blender 模型（.obj/.mtl）＋原始檔 fortress_models.blend
-├── tools/
-│   ├── autotest.sh          設定下一次啟動要跑的測試情境
-│   ├── run_test.sh          跑一個情境：啟動、等報告、印出結果
-│   ├── bkit.py              Blender 腳本共用的方塊／圓柱／梁等工具
-│   ├── make_fortress_kit.py 用 Blender 產生砲塔、燈塔、石牆鐵牆、敵人配件
-│   ├── make_vault_models.py 用 Blender 產生儲藏庫、寶箱、掉落水晶模型
-│   └── launch.sh            直接用 Pixel Port 的 Wine 啟動遊戲
-└── decompiled/              遊戲反編譯碼（.gitignore，只供查閱）
-```
+You need the .NET SDK, the game with BepInEx 5.4.23.5 installed, and `dotnet build` pointed at your game folder:
 
 ```bash
-cd ~/Desktop/Project/htf-fortress/HtfFortress
+dotnet build HtfFortress -c Release -p:GameDir="/path/to/How to Fish"
 ```
+
+The default `GameDir` in `HtfFortress.csproj` is a Pixel Port (Mac) install, so on any other setup pass your own. `tools/pack.sh` makes the zips for friends (it also assumes the Pixel Port path).
+
+## Test
 
 ```bash
-dotnet build -c Release
+tests/run.sh          # headless checks on the real code, no game window
+tests/run.sh sim      # plus economy, turret and gear simulations
 ```
 
-編譯完會自動複製到遊戲資料夾，重開遊戲才會載入新版。
+The headless tests need the game's DLLs next to your install. The in-game scenarios (`tools/autotest.sh <scenario>`) are described in [docs/README.zh-TW.md](docs/README.zh-TW.md).
 
-### 自動測試
+## Contributing
 
-```bash
-cd ~/Desktop/Project/htf-fortress
-```
+Bug reports, translations and small fixes are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and open an issue before starting anything big.
 
-```bash
-tools/autotest.sh island && tools/launch.sh
-```
+## License and credit
 
-情境：`probe`（環境資訊、音效清單）、`island`（完整流程）、`enemies`（敵人圖鑑＋各波）、`build`（所有砲塔與分支）、`balance`（AI 建造者真實打到失敗）、`coop`（不開無敵站在缺口被咬、撿魚、全滅、碼頭重生、結算表）、`cheats`（每個測試鍵）、`loot`（掉落、寶箱、合成、裝備、存檔、儲藏庫介面）、`gear`（每件裝備的效果）、`ui`（每個介面畫面的截圖）、`construct`（施工時間、隊友加速、取消退錢、右鍵選單、按住拆除）、`newfoes`（新怪與魔王招式）、`gear2`（藍圖砲塔、主動裝備、傳說特效）、`tips`（提示卡、標記、說明面板）。
-測試會用一個獨立的 `FortressTest` 存檔，跑完自動關遊戲。報告在 `BepInEx/fortress-test-report.txt`，截圖在 `BepInEx/fortress-shots/`。
+[MIT](LICENSE). You may use, modify and redistribute it, but you must keep the copyright notice and the license in every copy. On top of that, please keep visible credit when you publish a fork or a derived mod: **"Based on OVER 99 Fortress Island by gba3124"** with a link to this repo, on your page or in your README.
 
-## 技術筆記
-
-- **連線**：FishNet 廣播訊息（手動註冊序列化），房主決定一切，客戶端只畫畫面；中途加入的玩家會收到完整狀態
-- **要塞島**：每台電腦依同樣的規則，在目前主島外海自己生成同一座島（不需要網路同步），地面是 MeshCollider（同地面 Layer）
-- **敵人**：全部是遊戲的 `dripper`（RunningFish），Harmony 攔截 `UpdateMovement` 換成我們的 AI，血量用自訂的絕對值（遊戲原本 350 太高）
-- **傷害**：`Creature.ServerChangeHp`（房主），死亡效果由遊戲處理
-- **材質**：遊戲的 `Shader Graphs/DefaultShader` 從 `_Colors` 調色盤貼圖取色，所以每個材質用一張 2×2 純色貼圖
-- **玩家位置**用 `Player.LocalPlayer.Transform`（`transform` 永遠是原點）
-- **Wine/Pixel Port**：只能 D3D11；Steam 卡住時用 `tools/launch.sh` 直接啟動 exe；從 shell 跑 Wine 需要 `WINEMSYNC=1` 等環境變數
+This is a fan mod, not affiliated with the makers of *How to Fish*. The repo has no game files. You need your own copy of the game to build and run it.

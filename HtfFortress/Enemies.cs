@@ -10,8 +10,11 @@ using UnityEngine;
 
 namespace HtfFortress
 {
-    // New kinds go on the end (the byte goes over the wire).
-    public enum EnemyKind : byte { Runner, Charger, Spitter, Bomber, Tank, Boss, Thief, Shield, Digger, Healer, Splitter, Mini, Queen, Tide }
+    // The byte goes over the wire (host and friends run the same mod). From Warden on: the ten bosses in the order they
+    // come (one every tenth wave), then what they summon. All of those are puppets: the game's creatures moved by us (Bosses).
+    public enum EnemyKind : byte { Runner, Charger, Spitter, Bomber, Tank, Thief, Shield, Digger, Healer, Splitter, Mini,
+                                   Warden, Urchin, Angler, Steed, Stonefish, Skyfish, Kraken, Voxel, Koi, Eye,
+                                   Squadron, Glitch }
 
     // Host -> everyone: what a spawned walker is, so every client scales it and adds its gear.
     public struct EnemyTag : IBroadcast { public int ObjectId; public EnemyKind Kind; public bool Elite; }
@@ -35,10 +38,9 @@ namespace HtfFortress
             {
                 case EnemyKind.Charger: return new EnemyStats { BaseHp = 15f, Speed = 1.8f, Hp = 0.5f, Damage = 0.6f, WallMult = 1f, Scale = 0.75f, Reward = 2, Gear = "Helmet", FirstWave = 3 };
                 case EnemyKind.Spitter: return new EnemyStats { BaseHp = 40f, Speed = 0f, Hp = 1.2f, Damage = 1f, WallMult = 1f, Scale = 1.1f, Reward = 5, Gear = "SpitterCannon", FirstWave = 5 };
-                case EnemyKind.Bomber: return new EnemyStats { BaseHp = 20f, Speed = 1.2f, Hp = 0.6f, Damage = 8f, WallMult = 1f, Scale = 1f, Reward = 4, Gear = "Bomb", FirstWave = 6 };
+                case EnemyKind.Bomber: return new EnemyStats { BaseHp = 40f, Speed = 1.2f, Hp = 1.1f, Damage = 8f, WallMult = 1f, Scale = 1f, Reward = 4, Gear = "Bomb", FirstWave = 6 };
                 case EnemyKind.Tank: return new EnemyStats { BaseHp = 150f, Speed = 0.5f, Hp = 5f, Damage = 2.5f, WallMult = 2f, Scale = 1.8f, Reward = 10, Gear = "Shell", FirstWave = 8 };
-                case EnemyKind.Boss: return new EnemyStats { BaseHp = 700f, Speed = 0.45f, Hp = 40f, Damage = 6f, WallMult = 2f, Scale = 3.5f, Reward = 120, Gear = "BossShell", FirstWave = 10 };
-                // Grabs a corpse (or coins at the crate), hops walls, runs for the sea: someone has to chase it.
+                // Grabs a corpse (or coins at the fish stall), hops walls, runs for the sea: someone has to chase it.
                 case EnemyKind.Thief: return new EnemyStats { BaseHp = 25f, Speed = 2.0f, Hp = 0.8f, Damage = 0.3f, WallMult = 1f, Scale = 0.8f, Reward = 6, Gear = "ThiefSack", FirstWave = 4 };
                 // Its shield takes 80% of turret damage from the front; players and side turrets hit it full.
                 case EnemyKind.Shield: return new EnemyStats { BaseHp = 60f, Speed = 0.8f, Hp = 2f, Damage = 1f, WallMult = 1f, Scale = 1.15f, Reward = 6, Gear = "ShieldBoard", FirstWave = 7 };
@@ -49,18 +51,44 @@ namespace HtfFortress
                 // Bursts into three minis when it dies.
                 case EnemyKind.Splitter: return new EnemyStats { BaseHp = 45f, Speed = 0.9f, Hp = 1.5f, Damage = 1f, WallMult = 1f, Scale = 1.25f, Reward = 4, Gear = "SplitterBubbles", FirstWave = 5 };
                 case EnemyKind.Mini: return new EnemyStats { BaseHp = 8f, Speed = 1.6f, Hp = 0.3f, Damage = 0.4f, WallMult = 1f, Scale = 0.55f, Reward = 1, Gear = null, FirstWave = 999 };
-                // Wave 20 boss: calls in minions.
-                case EnemyKind.Queen: return new EnemyStats { BaseHp = 900f, Speed = 0.4f, Hp = 40f, Damage = 5f, WallMult = 2f, Scale = 3.0f, Reward = 160, Gear = "QueenCrown", FirstWave = 20 };
-                // Wave 30 boss: sends a breaker crashing over one beach.
-                case EnemyKind.Tide: return new EnemyStats { BaseHp = 1100f, Speed = 0.4f, Hp = 40f, Damage = 6f, WallMult = 2f, Scale = 3.2f, Reward = 200, Gear = "TideHorn", FirstWave = 30 };
+                // The bosses (BossBrains.cs): health at wave 1 (times the wave's health like everything), size (times the creature).
+                case EnemyKind.Warden: return Boss(650f, 18f, 120);
+                case EnemyKind.Urchin: return Boss(750f, 22f, 160);
+                case EnemyKind.Angler: return Boss(900f, 10f, 200);
+                case EnemyKind.Steed: return Boss(950f, 4.2f, 240); // 2.4 looked small next to the others (the playtest: 「真小啊」)
+                case EnemyKind.Stonefish: return Boss(1000f, 9f, 280);
+                case EnemyKind.Skyfish: return Boss(1050f, 11f, 320);
+                case EnemyKind.Kraken: return Boss(1150f, 14f, 360);
+                case EnemyKind.Voxel: return Boss(1200f, 10f, 420);
+                case EnemyKind.Koi: return Boss(1300f, 12f, 500);
+                case EnemyKind.Eye: return Boss(1600f, 95f, 1000);
+                // What they summon: the flying fish's squadron, the voxel fish's copies.
+                case EnemyKind.Squadron: return new EnemyStats { BaseHp = 14f, Speed = 1f, Hp = 0.5f, Damage = 1f, WallMult = 1f, Scale = 3f, Reward = 3, Gear = null, FirstWave = 999 };
+                case EnemyKind.Glitch: return new EnemyStats { BaseHp = 40f, Speed = 1f, Hp = 1f, Damage = 1f, WallMult = 1f, Scale = 6f, Reward = 4, Gear = null, FirstWave = 999 };
                 default: return new EnemyStats { BaseHp = 30f, Speed = 1f, Hp = 1f, Damage = 1f, WallMult = 1f, Scale = 1f, Reward = 3, Gear = null, FirstWave = 1 };
             }
         }
 
-        public static bool IsBoss(EnemyKind k) => k == EnemyKind.Boss || k == EnemyKind.Queen || k == EnemyKind.Tide;
+        private static EnemyStats Boss(float baseHp, float scale, int reward) =>
+            new EnemyStats { BaseHp = baseHp, Speed = 1f, Hp = 40f, Damage = 1f, WallMult = 2f, Scale = scale, Reward = reward, Gear = null, FirstWave = 999 };
 
-        // Every 10th wave a boss; they take turns: Behemoth, Coral Queen, Tidecaller.
-        public static EnemyKind BossFor(int wave) => (wave / 10 % 3) == 2 ? EnemyKind.Queen : (wave / 10 % 3) == 0 ? EnemyKind.Tide : EnemyKind.Boss;
+        public static bool IsBoss(EnemyKind k) => k >= EnemyKind.Warden && k <= EnemyKind.Eye;
+        public static bool IsPuppet(EnemyKind k) => k >= EnemyKind.Warden; // moved by Bosses, not by the game or Siege
+
+        // Where a boss turns up: on a beach, out of the sea off one, or in the air over one.
+        public enum Body { Land, Sea, Sky }
+        public static Body BodyOf(EnemyKind k) =>
+            k == EnemyKind.Kraken ? Body.Sea
+            : k == EnemyKind.Angler || k == EnemyKind.Skyfish || k == EnemyKind.Voxel || k == EnemyKind.Koi || k == EnemyKind.Eye || k == EnemyKind.Squadron || k == EnemyKind.Glitch ? Body.Sky
+            : Body.Land;
+
+        // OVER 99: a hundred waves, a boss every 10th, never the same one twice. Past 100 (testing, practice) they come
+        // round again.
+        public const int FinalWave = 100;
+        public static readonly EnemyKind[] BossOrder =
+            { EnemyKind.Warden, EnemyKind.Urchin, EnemyKind.Angler, EnemyKind.Steed, EnemyKind.Stonefish,
+              EnemyKind.Skyfish, EnemyKind.Kraken, EnemyKind.Voxel, EnemyKind.Koi, EnemyKind.Eye };
+        public static EnemyKind BossFor(int wave) => BossOrder[(Mathf.Max(1, wave / 10) - 1) % BossOrder.Length];
 
         public const float EliteHp = 3f, EliteDamage = 1.5f, EliteScale = 1.3f;
         public const int EliteReward = 3;
@@ -86,6 +114,19 @@ namespace HtfFortress
         private void Awake() => Instance = this;
 
         public bool TryGet(Creature c, out EnemyTag tag) => _tags.TryGetValue(c, out tag);
+        public bool ClientIsFortress(int objectId) => _clientTags.ContainsKey(objectId); // client: one of the host's fortress fish
+        public EnemyTag? ClientTagOf(int objectId) => _clientTags.TryGetValue(objectId, out var t) ? t : (EnemyTag?)null;
+
+        // Client: a fortress enemy of this kind that's here now (the boss on stage for its entrance).
+        public Transform ClientFind(EnemyKind kind)
+        {
+            var cm = InstanceFinder.ClientManager;
+            if (cm == null) return null;
+            foreach (var kv in _clientTags)
+                if (kv.Value.Kind == kind && cm.Objects.Spawned.TryGetValue(kv.Key, out NetworkObject nob) && nob && !(nob.GetComponent<Creature>() is Creature c && c.IsDead))
+                    return nob.transform;
+            return null;
+        }
 
         public static EnemyStats StatsOf(EnemyTag t)
         {
@@ -177,6 +218,7 @@ namespace HtfFortress
         // Over elites, bosses and the special kinds: name and health bar; over anything hurt: just the bar.
         private readonly List<(RectTransform root, TMPro.TextMeshProUGUI name, Hud.Bar bar)> _plates = new List<(RectTransform, TMPro.TextMeshProUGUI, Hud.Bar)>();
         private readonly Dictionary<int, int> _seenMax = new Dictionary<int, int>();
+        private readonly Dictionary<int, (float above, float next)> _tops = new Dictionary<int, (float, float)>();
 
         private static bool Named(EnemyTag t) => t.Elite || EnemyCatalog.IsBoss(t.Kind) || t.Kind >= EnemyKind.Thief && t.Kind != EnemyKind.Mini;
 
@@ -196,9 +238,14 @@ namespace HtfFortress
                     bool named = Named(tag), hurt = hp < max;
                     float dist = Vector3.Distance(cam.transform.position, nob.transform.position);
                     if (!(named && dist < 35f) && !(hurt && dist < 22f)) continue;
-                    var rends = nob.GetComponentsInChildren<Renderer>();
-                    float top = rends.Length > 0 ? rends.Max(r => r.bounds.max.y) : nob.transform.position.y + 1f;
-                    Vector3 sp = cam.WorldToScreenPoint(new Vector3(nob.transform.position.x, top + 0.35f, nob.transform.position.z));
+                    // Its top over its feet, looked up once a second (every renderer's bounds, for 24 plates every frame, added up).
+                    if (!_tops.TryGetValue(id, out var top) || Time.time >= top.next)
+                    {
+                        var rends = nob.GetComponentsInChildren<Renderer>().Where(r => !r.forceRenderingOff && !r.GetComponentInParent<BossGear>()).ToArray(); // (not the Eye's turning corona: the plate would hop)
+                        top = (rends.Length > 0 ? rends.Max(r => r.bounds.max.y) - nob.transform.position.y : 1f, Time.time + 1f);
+                        _tops[id] = top;
+                    }
+                    Vector3 sp = cam.WorldToScreenPoint(nob.transform.position + Vector3.up * (top.above + 0.35f));
                     if (sp.z < 0f) continue;
                     if (used >= _plates.Count)
                     {
@@ -238,7 +285,16 @@ namespace HtfFortress
                 var (tag, until) = _pending[i];
                 if (TryDress(tag) || Time.time > until) _pending.RemoveAt(i);
             }
+            // Forget fish that are gone (the lists are walked every frame for markers, plates and tips).
+            var cm = InstanceFinder.ClientManager;
+            if (cm != null && Time.time >= _nextPrune)
+            {
+                _nextPrune = Time.time + 5f;
+                _dressed.RemoveWhere(id => !cm.Objects.Spawned.ContainsKey(id));
+                foreach (int id in _clientTags.Keys.Where(id => !_dressed.Contains(id)).ToList()) { _clientTags.Remove(id); _seenMax.Remove(id); _tops.Remove(id); }
+            }
         }
+        private float _nextPrune;
 
         // Client: scale the fish and give it its gear. The tag can arrive a frame before the object spawns, so it is retried.
         private bool TryDress(EnemyTag tag)
@@ -248,67 +304,99 @@ namespace HtfFortress
             if (cm == null || !cm.Objects.Spawned.TryGetValue(tag.ObjectId, out NetworkObject nob) || !nob) return false;
             var stats = StatsOf(tag);
             var root = nob.transform;
-            root.localScale = Vector3.one * stats.Scale;
-
-            // Fit gear to the fish: sit on top of its renderers, sized to its width.
-            var rends = root.GetComponentsInChildren<Renderer>().Where(r => r.enabled).ToArray();
-            Bounds b = rends.Length > 0 ? rends[0].bounds : new Bounds(root.position, Vector3.one);
-            foreach (var r in rends) b.Encapsulate(r.bounds);
-            float width = Mathf.Max(0.3f, Mathf.Min(b.size.x, b.size.z));
-            Vector3 topLocal = root.InverseTransformPoint(new Vector3(b.center.x, b.max.y, b.center.z));
+            root.localScale = (EnemyCatalog.IsPuppet(tag.Kind) ? Vector3.one : ShapeOf(tag.Kind)) * stats.Scale;
+            if (EnemyCatalog.IsPuppet(tag.Kind))
+            {
+                // A boss (or its summons): the game's creature made over (BossLooks), moved by the host's brain.
+                _clientTags[tag.ObjectId] = tag;
+                if (nob.GetComponent<Creature>() is Creature pc) Bosses.Puppets.Add(pc);
+                BossLooks.Dress(root, tag.Kind);
+                _dressed.Add(tag.ObjectId);
+                AutoTest.Count("dressed_" + tag.Kind);
+                return true;
+            }
 
             _clientTags[tag.ObjectId] = tag;
-            Tint(root, tag.Kind); // before the gear goes on, so only the fish is dyed
-            if (stats.Gear != null) Wear(root, stats.Gear, topLocal - Vector3.up * (stats.Gear.EndsWith("Shell") ? 0.35f * b.size.y / stats.Scale : 0.05f), width / stats.Scale);
-            if (tag.Elite) Wear(root, "Crown", topLocal, width * 0.7f / stats.Scale);
+            if (!FoeBodies.Dress(root, tag.Kind, tag.Elite, stats.Gear)) // our own fish's body (Foes.cs); else the game's, dyed and dressed
+            {
+                // Fit gear to the fish: sit on top of its renderers, sized to its width.
+                var rends = root.GetComponentsInChildren<Renderer>().Where(r => r.enabled).ToArray();
+                Bounds b = rends.Length > 0 ? rends[0].bounds : new Bounds(root.position, Vector3.one);
+                foreach (var r in rends) b.Encapsulate(r.bounds);
+                float width = Mathf.Max(0.3f, Mathf.Min(b.size.x, b.size.z));
+                Vector3 topLocal = root.InverseTransformPoint(new Vector3(b.center.x, b.max.y, b.center.z));
+                Tint(root, tag.Kind, tag.Elite); // before the gear goes on, so only the fish is dyed
+                if (stats.Gear != null) Wear(root, stats.Gear, topLocal - Vector3.up * (stats.Gear.EndsWith("Shell") ? 0.35f * b.size.y / stats.Scale : 0.05f), width / stats.Scale);
+                if (tag.Elite) Wear(root, "Crown", topLocal, width * 0.7f / stats.Scale);
+            }
             _dressed.Add(tag.ObjectId);
             AutoTest.Count("dressed_" + tag.Kind);
             return true;
         }
 
-        // ---------- look: a dye per kind (a tinted copy of the fish's palette texture) ----------
+        // ---------- look: a build and a dye per kind (a tinted copy of the fish's palette texture) ----------
 
         private readonly Dictionary<int, EnemyTag> _clientTags = new Dictionary<int, EnemyTag>();
-        private static readonly Dictionary<(Texture, EnemyKind), Texture> Tinted = new Dictionary<(Texture, EnemyKind), Texture>();
+        private static readonly Dictionary<(Texture, EnemyKind, bool), Texture> Tinted = new Dictionary<(Texture, EnemyKind, bool), Texture>();
         private static Material _blit;
+
+        // Every walker is the game's one walking fish, so each kind is built differently on top of its size (the playtest:
+        // "they all look the same, just bigger"): a charger long and low, a tank broad, a thief thin, a healer tall...
+        // x across, y up, z nose to tail.
+        public static Vector3 ShapeOf(EnemyKind k)
+        {
+            switch (k)
+            {
+                case EnemyKind.Charger: return new Vector3(0.85f, 0.8f, 1.35f);
+                case EnemyKind.Tank: return new Vector3(1.3f, 1.05f, 1.1f);
+                case EnemyKind.Thief: return new Vector3(0.75f, 1.1f, 0.95f);
+                case EnemyKind.Shield: return new Vector3(1.25f, 1f, 0.95f);
+                case EnemyKind.Digger: return new Vector3(1.15f, 0.75f, 1.15f);
+                case EnemyKind.Healer: return new Vector3(0.85f, 1.3f, 0.85f);
+                case EnemyKind.Bomber: return new Vector3(1.15f, 1.1f, 1f);
+                case EnemyKind.Splitter: return new Vector3(1.15f, 0.9f, 1.15f);
+                default: return Vector3.one;
+            }
+        }
 
         public static Color DyeOf(EnemyKind k)
         {
             switch (k)
             {
-                case EnemyKind.Charger: return new Color(1f, 0.7f, 0.66f);
-                case EnemyKind.Bomber: return new Color(0.72f, 0.72f, 0.8f);
-                case EnemyKind.Tank: return new Color(0.82f, 0.8f, 0.72f);
-                case EnemyKind.Thief: return new Color(0.82f, 0.7f, 1f);
-                case EnemyKind.Shield: return new Color(0.72f, 0.84f, 1f);
-                case EnemyKind.Digger: return new Color(0.92f, 0.78f, 0.58f);
-                case EnemyKind.Healer: return new Color(0.68f, 1f, 0.72f);
-                case EnemyKind.Splitter: case EnemyKind.Mini: return new Color(0.84f, 1f, 0.52f);
-                case EnemyKind.Queen: return new Color(1f, 0.74f, 0.84f);
-                case EnemyKind.Tide: return new Color(0.62f, 0.84f, 1f);
-                case EnemyKind.Boss: return new Color(0.78f, 0.74f, 0.7f);
+                case EnemyKind.Charger: return new Color(1f, 0.5f, 0.44f);
+                case EnemyKind.Bomber: return new Color(0.55f, 0.55f, 0.66f);
+                case EnemyKind.Tank: return new Color(0.88f, 0.76f, 0.52f);
+                case EnemyKind.Thief: return new Color(0.74f, 0.52f, 1f);
+                case EnemyKind.Shield: return new Color(0.55f, 0.74f, 1f);
+                case EnemyKind.Digger: return new Color(0.96f, 0.68f, 0.38f);
+                case EnemyKind.Healer: return new Color(0.5f, 1f, 0.58f);
+                case EnemyKind.Splitter: case EnemyKind.Mini: return new Color(0.78f, 1f, 0.34f);
                 default: return Color.white;
             }
         }
+        private static readonly Color EliteDye = new Color(1f, 0.85f, 0.42f); // an elite's dye is gilded on top of its kind's
 
-        private static void Tint(Transform root, EnemyKind kind)
+        private static void Tint(Transform root, EnemyKind kind, bool elite)
         {
-            Color c = DyeOf(kind);
+            Color c = DyeOf(kind) * (elite ? EliteDye : Color.white);
+            c.a = 1f;
             if (c == Color.white) return;
             if (!_blit) { var sh = Shader.Find("UI/Default"); if (!sh) return; _blit = new Material(sh); }
+            var own = root.gameObject.AddComponent<Models.OwnMaterials>(); // the copies go when the fish does
             foreach (var r in root.GetComponentsInChildren<Renderer>())
             {
                 var mats = r.materials; // per-fish instances
+                own.Mats.AddRange(mats);
                 foreach (var m in mats)
                     foreach (string prop in new[] { "_Colors", "_BaseMap", "_MainTex" })
                     {
                         if (!m.HasProperty(prop) || !(m.GetTexture(prop) is Texture src)) continue;
-                        if (!Tinted.TryGetValue((src, kind), out var dst))
+                        if (!Tinted.TryGetValue((src, kind, elite), out var dst))
                         {
                             var rt = new RenderTexture(src.width, src.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { filterMode = src.filterMode, wrapMode = src.wrapMode };
                             _blit.color = c;
                             Graphics.Blit(src, rt, _blit);
-                            Tinted[(src, kind)] = dst = rt;
+                            Tinted[(src, kind, elite)] = dst = rt;
                         }
                         m.SetTexture(prop, dst);
                         break;
@@ -317,7 +405,7 @@ namespace HtfFortress
             }
         }
 
-        private static void Wear(Transform root, string model, Vector3 localPos, float size)
+        internal static void Wear(Transform root, string model, Vector3 localPos, float size)
         {
             var holder = new GameObject(model + "Gear");
             holder.transform.SetParent(root, false);
