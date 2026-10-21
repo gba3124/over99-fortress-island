@@ -254,6 +254,7 @@ htf-fortress/
 │   ├── make_island.py       用 Blender 產生整座要塞島和植物位置（加 `-- preview <資料夾>` 只出圖）
 │   ├── make_station_models.py 用 Blender 產生魚攤和鐵匠鋪（用 vkit 的零件）
 │   ├── pack.sh              打包給朋友的 zip（DLL＋模型＋圖示，檔名帶版本編號）
+│   ├── release.sh           上架用：同一顆 DLL 打出 Thunderstore 和 Nexus 兩個 zip（--from 從已上架的 Thunderstore 包重打 Nexus 版）
 │   └── launch.sh            直接用 Pixel Port 的 Wine 啟動遊戲
 ├── thunderstore/            Thunderstore 上架用：manifest、商店頁 README（英文）、CHANGELOG、icon；art/ 是畫商店圖的腳本
 └── decompiled/              遊戲反編譯碼（.gitignore，只供查閱）

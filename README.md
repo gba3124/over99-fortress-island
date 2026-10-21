@@ -24,7 +24,7 @@ You need the .NET SDK, the game with BepInEx 5.4.23.5 installed, and `dotnet bui
 dotnet build HtfFortress -c Release -p:GameDir="/path/to/How to Fish"
 ```
 
-The default `GameDir` in `HtfFortress.csproj` is a Pixel Port (Mac) install, so on any other setup pass your own. `tools/pack.sh` makes the zips for friends (it also assumes the Pixel Port path).
+The default `GameDir` in `HtfFortress.csproj` is a Pixel Port (Mac) install, so on any other setup pass your own. `tools/pack.sh` makes the zips for friends (it also assumes the Pixel Port path). `tools/release.sh` makes the Thunderstore and Nexus zips from one build, so both stores carry the same DLL and players from each can play together.
 
 ## Test
 
