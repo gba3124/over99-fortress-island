@@ -3,7 +3,7 @@
 # and warns when a friend's differs, so Thunderstore and Nexus players can only play together on the very same DLL:
 # never build twice for one release.
 #   tools/release.sh                       build once, then both zips into dist/<version>/
-#   tools/release.sh --from <thunderstore.zip>
+#   tools/release.sh --from <thunderstore.zip, or the folder Safari unzipped it to>
 #                                          no build: the Nexus zip from the package already on Thunderstore (its DLL as is)
 # Thunderstore: manifest.json, README.md, CHANGELOG.md and icon.png at the root, the mod beside them (the mod manager
 # puts it all in BepInEx/plugins/<package>/). Nexus: laid out like the game folder, unzip where How to Fish.exe is.
@@ -23,8 +23,9 @@ trap 'rm -rf "$stage"' EXIT
 mod="$stage/mod" # HtfFortress.dll, Models/ and Icons/: what both zips carry
 mkdir -p "$mod"
 if [ "${1:-}" = "--from" ]; then
-  [ -f "${2:-}" ] || { echo "usage: tools/release.sh --from <thunderstore.zip>" >&2; exit 1; }
-  unzip -q "$2" -d "$stage/ts"
+  if [ -d "${2:-}" ]; then cp -R "$2" "$stage/ts"
+  elif [ -f "${2:-}" ]; then unzip -q "$2" -d "$stage/ts"
+  else echo "Not found: ${2:-} (usage: tools/release.sh --from <thunderstore.zip or its unzipped folder>)" >&2; exit 1; fi
   dll=$(find "$stage/ts" -name HtfFortress.dll | head -1)
   [ -n "$dll" ] || { echo "No HtfFortress.dll in $2" >&2; exit 1; }
   got=$(grep -o '"version_number": *"[^"]*"' "$stage/ts/manifest.json" | cut -d'"' -f4)
