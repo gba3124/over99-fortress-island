@@ -6,6 +6,8 @@ using FishNet;
 using FishNet.Broadcast;
 using FishNet.Connection;
 using FishNet.Managing;
+using FishNet.Managing.Logging;
+using FishNet.Managing.Server;
 using FishNet.Serializing;
 using FishNet.Transporting;
 using UnityEngine;
@@ -16,8 +18,9 @@ namespace HtfFortress
     // how two different builds still recognise each other (FishNet keys a broadcast by its type name and skips unknown keys).
     public struct ModHello : IBroadcast { public string Build; }
 
-    // Everyone must run the very same HtfFortress.dll: the mod's messages are read field by field, so a friend on another
-    // build misreads them and the game goes wrong in odd ways. This says so up front, on the host's screen and on theirs.
+    // Everyone must run the very same HtfFortress.dll (Owen: "版本一致性要同樣才能玩"): the mod's messages are read field by
+    // field, so a friend on another build misreads them and the game goes wrong in odd ways. A mismatch is no longer just a
+    // banner: the host removes them (and they leave on their own side too), after both screens have said which builds they run.
     public class VersionCheck : MonoBehaviour
     {
         // Plugin version plus the first 6 hex digits of the DLL's SHA-256 (tools/pack.sh names its zip the same way).
@@ -26,10 +29,10 @@ namespace HtfFortress
 
         private NetworkManager _registeredOn;
         private float _sentAt = -1f;
-        private bool _answered, _warnedHost;
+        private bool _answered, _warnedHost, _leaving;
         private readonly Dictionary<int, string> _heard = new Dictionary<int, string>(); // host: client id -> its build
         private readonly Dictionary<int, float> _seen = new Dictionary<int, float>();    // host: client id -> when its player showed up
-        private readonly HashSet<int> _warned = new HashSet<int>();
+        private readonly HashSet<int> _kicking = new HashSet<int>(); // host: clients already being removed for a mismatch
 
         static VersionCheck()
         {
@@ -60,17 +63,17 @@ namespace HtfFortress
                 {
                     _heard[conn.ClientId] = h.Build;
                     InstanceFinder.ServerManager.Broadcast(conn, new ModHello { Build = Build }); // so they can check too
-                    if (h.Build != Build) Warn(conn.ClientId, L10n.T("versionOther", NameOf(conn.ClientId), h.Build, Build));
+                    if (h.Build != Build) Reject(conn, h.Build);
                 });
                 nm.ClientManager.RegisterBroadcast<ModHello>((h, ch) =>
                 {
                     _answered = true;
-                    if (!InstanceFinder.IsServerStarted && h.Build != Build) Say(L10n.T("versionMine", Build, h.Build));
+                    if (!InstanceFinder.IsServerStarted && h.Build != Build) Mismatch(h.Build);
                 });
                 nm.ServerManager.OnRemoteConnectionState += (conn, a) =>
                 {
                     if (a.ConnectionState != RemoteConnectionState.Stopped) return;
-                    _heard.Remove(conn.ClientId); _seen.Remove(conn.ClientId); _warned.Remove(conn.ClientId);
+                    _heard.Remove(conn.ClientId); _seen.Remove(conn.ClientId); _kicking.Remove(conn.ClientId);
                 };
                 nm.ClientManager.OnClientConnectionState += a => { if (a.ConnectionState == LocalConnectionState.Stopped) { _sentAt = -1f; _answered = _warnedHost = false; } };
             }
@@ -91,7 +94,11 @@ namespace HtfFortress
                 if (!p || p.Owner == null || p.Owner.IsLocalClient) continue;
                 int id = p.Owner.ClientId;
                 if (!_seen.TryGetValue(id, out float since)) _seen[id] = since = Time.time;
-                if (!_heard.ContainsKey(id) && Time.time - since > AnswerWithin) Warn(id, L10n.T("versionNone", Loot.NameOf(p)));
+                if (!_heard.ContainsKey(id) && Time.time - since > AnswerWithin)
+                {
+                    var conn = p.Owner;
+                    if (conn != null && _kicking.Add(id)) { Say(L10n.T("versionNoneKick", Loot.NameOf(p))); StartCoroutine(KickSoon(conn)); }
+                }
             }
         }
 
@@ -101,7 +108,36 @@ namespace HtfFortress
             return p ? Loot.NameOf(p) : "Player " + clientId;
         }
 
-        private void Warn(int clientId, string text) { if (_warned.Add(clientId)) Say(text); }
+        // Same DLL or no game. The host sends its own build first (above), so the other side's banner names both builds during
+        // the short wait before the kick; the client also leaves on its own if it got there first.
+        private void Reject(NetworkConnection conn, string build)
+        {
+            if (conn == null || !_kicking.Add(conn.ClientId)) return;
+            Say(L10n.T("versionKick", NameOf(conn.ClientId), build, Build));
+            StartCoroutine(KickSoon(conn));
+        }
+
+        private System.Collections.IEnumerator KickSoon(NetworkConnection conn)
+        {
+            yield return new WaitForSeconds(2f);
+            try { if (conn != null && conn.IsActive) conn.Kick(KickReason.UnusualActivity, LoggingType.Warning, "OVER 99: build mismatch"); }
+            catch (System.Exception e) { BuildSystem.Log.LogWarning("Version kick failed: " + e.Message); }
+        }
+
+        private void Mismatch(string hostBuild)
+        {
+            if (_leaving) return;
+            _leaving = true;
+            Say(L10n.T("versionLeave", Build, hostBuild));
+            StartCoroutine(LeaveSoon());
+        }
+
+        private System.Collections.IEnumerator LeaveSoon()
+        {
+            yield return new WaitForSeconds(1.5f);
+            try { InstanceFinder.NetworkManager.ClientManager.StopConnection(); }
+            catch (System.Exception e) { BuildSystem.Log.LogWarning("Leaving on a version mismatch failed: " + e.Message); }
+        }
 
         private static void Say(string text)
         {

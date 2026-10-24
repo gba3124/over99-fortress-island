@@ -32,6 +32,9 @@ namespace HtfFortress
 
         // host
         private readonly Dictionary<Creature, (int value, float until)> _corpses = new Dictionary<Creature, (int, float)>();
+        private readonly Queue<Creature> _corpseOrder = new Queue<Creature>();
+        // A late wave is about 200 fish (wave 100); 160 leaves a whole wave's bodies plus a backlog for the net and helpers.
+        private static int CorpseCap => FortressPlugin.Instance != null ? FortressPlugin.Instance.CorpseCapValue : 160;
         private readonly Dictionary<int, (int count, int value)> _nets = new Dictionary<int, (int, int)>();
         private int _netLevel;
         private float _nextTick;
@@ -69,7 +72,17 @@ namespace HtfFortress
 
         public void ServerAddCorpse(Creature c, int value)
         {
-            if (c && c.IsSpawned) _corpses[c] = (value, Time.time + CorpseLife);
+            if (!c || !c.IsSpawned) return;
+            _corpses[c] = (value, Time.time + CorpseLife);
+            _corpseOrder.Enqueue(c);
+            while (_corpses.Count > CorpseCap && _corpseOrder.Count > 0)
+            {
+                var old = _corpseOrder.Dequeue();
+                if (!old || !_corpses.ContainsKey(old)) continue;
+                _corpses.Remove(old);
+                if (old.IsSpawned) old.DestroyItem();
+                AutoTest.Count("corpses_swept");
+            }
         }
 
         // Thieves: the nearest corpse, and taking it away (returns what it was worth).

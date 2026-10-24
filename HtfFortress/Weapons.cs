@@ -21,6 +21,8 @@ namespace HtfFortress
     public struct WeaponFire : IBroadcast { public byte Phase; public Vector3 Origin; public Vector3 Dir; }
     // Host -> everyone: one player's laser heat (0..1) and the seconds until their weapon is ready again.
     public struct WeaponState : IBroadcast { public int PlayerId; public Gear Gear; public float Heat; public float ReadyIn; }
+    // Host -> the hook's shooter: a missed hook yanks them to where it bit (a grapple, Owen: "鉤子把自己拉過去").
+    public struct HookYank : IBroadcast { public Vector3 To; }
 
     // Fortress weapons: game items (WeaponItems) fired with the left mouse button anywhere, round or not, at the fortress's
     // enemies and the game's own creatures alike. The client only sends where it aims; the host finds the fish, deals the
@@ -59,7 +61,43 @@ namespace HtfFortress
         public const float RocketRange = 40f, RocketRadius = 3f, RocketSpeed = 32f, RocketSpread = 14f;
         // The gatling: its top rate (rounds a second), seconds for the barrels to spin up and to run down, the share of the top
         // rate as they start turning, and how far a legendary's bullet glances on to the next fish.
-        public const float GatlingRange = 30f, GatlingRate = 12f, GatlingSpinUp = 1.2f, GatlingSpinDown = 1.5f, GatlingFloor = 0.25f, GatlingBounce = 6f;
+        public const float GatlingRange = 30f, GatlingRate = 12f, GatlingSpinUp = 2f, GatlingSpinDown = 1.5f, GatlingFloor = 0.25f, GatlingBounce = 6f;
+        // Owen: "同時射出的子彈至少 *10，蜂窩圓筒狀，有點隨機不是同時". Ten barrels at common, ten more at each rarity, packed in a
+        // hex (honeycomb) cylinder round the aim; the bullets leave in a short random order, not all on one frame.
+        public const int GatlingBarrelBase = 10;
+        public const float GatlingSpread = 0.6f;
+        public static int GatlingBarrels(Rarity r) => GatlingBarrelBase * (1 + (int)r);
+
+        // Where barrel i of `barrels` sits in the honeycomb cylinder round direction d: an axial hex spiral, scaled to fit.
+        public static Vector3 GatlingOffset(int i, int barrels, Vector3 d)
+        {
+            Vector2 ax = HexAxial(i);
+            int ring = Mathf.CeilToInt(Mathf.Sqrt(barrels / 3f));            // the outermost ring for this many barrels
+            float spacing = GatlingSpread / Mathf.Max(1f, ring + 0.5f);
+            Vector3 f = d.sqrMagnitude > 1e-6f ? d.normalized : Vector3.forward;
+            Vector3 u = Vector3.Cross(Vector3.up, f);
+            u = u.sqrMagnitude > 1e-4f ? u.normalized : Vector3.right;
+            Vector3 w = Vector3.Cross(f, u).normalized;
+            return (u * (ax.x + ax.y * 0.5f) + w * (ax.y * 0.8660254f)) * spacing;
+        }
+
+        private static Vector2 HexAxial(int i)
+        {
+            int r = 0;
+            while (3 * r * (r + 1) + 1 <= i) r++;
+            if (r == 0) return Vector2.zero;
+            int start = 3 * r * (r - 1) + 1;
+            int k = i - start, side = k / r, step = k % r;
+            switch (side)
+            {
+                case 0: return new Vector2(r - step, step);
+                case 1: return new Vector2(-step, r);
+                case 2: return new Vector2(-r, r - step);
+                case 3: return new Vector2(-r + step, -step);
+                case 4: return new Vector2(step, -r);
+                default: return new Vector2(r, -r + step);
+            }
+        }
 
         // One more boomerang each rarity up (playtest): 1, 2, 3 side by side; a legendary throws four in a wider fan (it was
         // +-21 degrees: the outer two flew wide of any crowd ahead, and it hit a crowd no harder than an epic).
@@ -160,6 +198,8 @@ namespace HtfFortress
             GenericReader<WeaponFire>.SetRead(r => new WeaponFire { Phase = r.ReadByte(), Origin = r.ReadVector3(), Dir = r.ReadVector3() });
             GenericWriter<WeaponState>.SetWrite((w, v) => { w.WriteInt32(v.PlayerId); w.WriteByte((byte)v.Gear); w.WriteSingle(v.Heat); w.WriteSingle(v.ReadyIn); });
             GenericReader<WeaponState>.SetRead(r => new WeaponState { PlayerId = r.ReadInt32(), Gear = (Gear)r.ReadByte(), Heat = r.ReadSingle(), ReadyIn = r.ReadSingle() });
+            GenericWriter<HookYank>.SetWrite((w, v) => w.WriteVector3(v.To));
+            GenericReader<HookYank>.SetRead(r => new HookYank { To = r.ReadVector3() });
         }
 
         private void Update()
@@ -174,6 +214,14 @@ namespace HtfFortress
                     if (who) ServerFire(who, f);
                 }));
                 nm.ClientManager.RegisterBroadcast<WeaponState>((s, ch) => OnState(s));
+                nm.ClientManager.RegisterBroadcast<HookYank>((h, ch) =>
+                {
+                    var me = Player.LocalPlayer;
+                    if (!me || !me.Transform) return;
+                    me.LocalTeleport(h.To, me.Transform.eulerAngles.y, true);
+                    Fx.SoundRandom("PickUp_V", 1, 3, h.To, 0.8f, AudioDistance.Short);
+                    AutoTest.Count("hook_yank");
+                });
                 nm.ClientManager.OnClientConnectionState += a => { if (a.ConnectionState == LocalConnectionState.Stopped) ClearViews(); };
             }
             if (InstanceFinder.IsServerStarted) ServerTick();
@@ -186,13 +234,14 @@ namespace HtfFortress
 
         private class Gun { public Gear Gear; public float ReadyAt, Heat, LastTick = -10f, RampStart, NextState, NumberDmg, NextNumber, Rounds; public bool Overheated; }
         private class Cloud { public Vector3 At; public float Radius, Until, Dps; public int Owner; public bool Legend; }
-        private class Poison { public int Stacks, Owner; public float Until, NextStack, Dps; public bool Legend; }
+        private class Poison { public int Stacks, Owner; public float Until, NextStack, Dps, NextNumber; public bool Legend; }
         private class Vortex { public Vector3 At; public float Until, Dps; public int Owner; public bool Legend; }
         private class Shark { public int Id, Owner; public Vector3 Pos, Face; public float Until, NextBite, Dmg, Sight = SharkSight; }
         private class Jelly { public Vector3 At; public float Radius, Until, Dps; public int Owner; public bool Legend; }
 
         private readonly Dictionary<(int, Gear), Gun> _guns = new Dictionary<(int, Gear), Gun>(); // each weapon keeps its own heat and cooldown
         private readonly List<Cloud> _clouds = new List<Cloud>();
+        private readonly Dictionary<Creature, float> _bubbleDamage = new Dictionary<Creature, float>(); // what a rising bubble has collected
         private readonly Dictionary<Creature, Poison> _poison = new Dictionary<Creature, Poison>();
         private readonly List<Vortex> _vortices = new List<Vortex>();
         private readonly List<Shark> _sharks = new List<Shark>();
@@ -213,16 +262,34 @@ namespace HtfFortress
         private bool _wasActive;
 
         // In a round damage keeps up with that wave's fish; outside one it's the wave-1 numbers.
-        internal static float Scale => (FortressPlugin.Instance && Siege.Instance && Siege.Instance.ServerActive ? FortressPlugin.Instance.WaveHpMult : 1f) * (DamageMultiplier?.Value ?? 1f);
+        internal static float Scale
+        {
+            get
+            {
+                var v = Loot.Instance ? (InstanceFinder.IsServerStarted ? Loot.Instance.Vault : Loot.Instance.ClientVault) : null;
+                return (DamageMultiplier?.Value ?? 1f) * (v != null ? v.DamageMult : 1f); // souls' permanent damage tree
+            }
+        } // Owen: weapons are fixed; growth comes from mods, rarity, later weapons and the keeper's tree, not the wave
         private static Player PlayerById(int id) => PlayerManager.Players.FirstOrDefault(p => p && p.ObjectId == id);
         // Everything alive the weapons can hit: the fortress's enemies and, round or not, the game's own creatures (not one
         // somebody is carrying).
         private static readonly AccessTools.FieldRef<CreatureManager, List<Creature>> Wild = AccessTools.FieldRefAccess<CreatureManager, List<Creature>>("_aliveCreatures");
+        // Rebuilt at most ten times a second and shared by every weapon, cloud, jelly and shark: the old one made a new list
+        // and ran a handful of LINQ lambdas for every shot (thousands of allocations a second on a late wave).
+        private static readonly List<Creature> _targets = new List<Creature>(256);
+        private static readonly HashSet<Creature> _targetSeen = new HashSet<Creature>();
+        private static float _nextTargets;
         private static List<Creature> Targets()
         {
-            IEnumerable<Creature> all = FortressPlugin.Alive;
-            if (CreatureManager.Instance) all = all.Concat(Wild(CreatureManager.Instance));
-            return all.Where(c => c && c.IsSpawned && c._hp.Value > 0 && !c.Holder && !Siege.Instance.IsHidden(c) && !Bosses.Entering(c)).Distinct().ToList();
+            if (Time.time < _nextTargets) return _targets;
+            _nextTargets = Time.time + 0.1f;
+            _targets.Clear(); _targetSeen.Clear();
+            foreach (var c in FortressPlugin.Alive)
+                if (c && c.IsSpawned && c._hp.Value > 0 && !c.Holder && !Siege.Instance.IsHidden(c) && !Bosses.Entering(c) && _targetSeen.Add(c)) _targets.Add(c);
+            if (CreatureManager.Instance)
+                foreach (var c in Wild(CreatureManager.Instance))
+                    if (c && c.IsSpawned && c._hp.Value > 0 && !c.Holder && !Siege.Instance.IsHidden(c) && !Bosses.Entering(c) && _targetSeen.Add(c)) _targets.Add(c);
+            return _targets;
         }
         private static Vector3 Body(Creature c) => c.transform.position + Vector3.up * 0.5f;
         // How big a fortress fish is drawn (a tank 1.8, an elite 1.3 times more, a boss far more): a thrown thing that reaches
@@ -298,6 +365,8 @@ namespace HtfFortress
             if (!IsBoss(c) && HoldsAbsorber(by)) dmg *= AbsorberBoost; // the final gun into fortress fish (a boss takes it as it is)
             if (Siege.Instance.IsBubbled(c)) dmg *= 1.5f;
             if (IsNetted(c)) dmg *= NettedMult;
+            var sv = Loot.Instance ? (InstanceFinder.IsServerStarted ? Loot.Instance.Vault : Loot.Instance.ClientVault) : null;
+            if (sv != null && sv.CritChance > 0f && Random.value < sv.CritChance) dmg *= 2f; // the keeper's crit tree
             int d = Mathf.Max(1, Mathf.RoundToInt(dmg));
             c.ServerChangeHp(d);
             return d;
@@ -330,7 +399,7 @@ namespace HtfFortress
             var gun = GunOf(who, g);
             if (g == Gear.Laser) { LaserTick(who, gun, phase, o, d, v, legend, r, rate, tr, reach); return; }
             if (g == Gear.WaterCannon) { WaterTick(who, gun, phase, o, d, v, legend, r, rate, tr, reach); return; }
-            if (g == Gear.Gatling) { GatlingTick(who, gun, phase, o, d, v, legend, rate, tr, reach); return; }
+            if (g == Gear.Gatling) { GatlingTick(who, gun, phase, o, d, v, legend, r, rate, tr, reach); return; }
             if (phase == 2 || Time.time < gun.ReadyAt) return;
             if (WeaponMods.Lingers(g)) v /= WeaponMods.TimeMult(rate); // fire rate: a cloud or a jellyfish stings faster (more of them wouldn't add: stacks and overlaps cap out)
             float cd = Fire(g, who, o, d, v, legend, r, WeaponMods.TraitAdd(g, tr), reach);
@@ -375,14 +444,25 @@ namespace HtfFortress
                 }
                 case Gear.SharkWhistle:
                 {
-                    Vector3 aim = Land(o, d, 30f);
-                    for (int i = 0; i < (legend ? 2 : 1); i++)
+                    // Owen: "打到的地方直接一灘水，鯊魚從下面跳上來咬". A pool opens where it lands; the shark leaps out of it.
+                    Vector3 at = Land(o, d, 30f);
+                    Fx.Send(FxKind.Water, at, at); // the pool
+                    int bites = legend ? 2 : 1;
+                    float bite = v * s * (1f + trait);
+                    int id = _nextShark++;
+                    var owner = who; float radius = 2.8f;
+                    for (int i = 0; i < bites; i++)
                     {
-                        var sh = new Shark { Id = _nextShark++, Owner = who.ObjectId, Until = Time.time + SharkLife[(int)r] + trait, Dmg = v, Sight = SharkSight * reach };
-                        sh.Pos = OnSea(aim + Quaternion.Euler(0f, 90f, 0f) * d.Flat().normalized * (i == 0 ? 0f : 4f));
-                        sh.Face = sh.Pos + d.Flat();
-                        _sharks.Add(sh);
-                        SendShark(sh, true);
+                        Vector3 spot = at + Quaternion.Euler(0f, i * 120f, 0f) * Vector3.forward * (i == 0 ? 0f : 1.8f);
+                        StartCoroutine(After(0.25f + i * 0.25f, () =>
+                        {
+                            Fx.Send(FxKind.Shark, spot + Vector3.down * 3.2f, spot, id + i, 1, owner.ObjectId);
+                            Fx.Send(FxKind.Water, spot, spot);
+                            foreach (var c in Targets().Where(x => (x.transform.position - spot).Flat().sqrMagnitude <= radius * radius))
+                                HitNumber(c, Hurt(c, bite, owner));
+                            StartCoroutine(After(0.6f, () => Fx.Send(FxKind.Shark, spot, spot, id + i, 0, owner.ObjectId)));
+                            AutoTest.Count("shark_jump");
+                        }));
                     }
                     return GearCatalog.Cooldown(g, r);
                 }
@@ -392,7 +472,20 @@ namespace HtfFortress
                     var c = Along(o, end, ShotRadius).FirstOrDefault();
                     Fx.Send(FxKind.Bubble, muzzle, c ? Body(c) : end, c && !IsBoss(c) ? c.ObjectId : 0, Mathf.RoundToInt(v * 1000f), who.ObjectId);
                     float pop = (legend ? BubblePop : 0f) + trait; // a legendary's burst; the trait makes any bubble burst
-                    if (c) Siege.Instance.ServerBubble(c, v, pop > 0f ? at => Pop(at, pop * s, who, legend) : (System.Action<Vector3>)null);
+                    if (c)
+                    {
+                        // Stacked shots: keep the fish up, float it higher, and remember everything the bubble has taken.
+                        _bubbleDamage.TryGetValue(c, out float stored);
+                        stored += v * s;
+                        _bubbleDamage[c] = stored;
+                        float rise = Mathf.Min(9f, Siege.Instance.BubbleRiseOf(c) + 1.2f);
+                        var fish = c; var dmg = stored;
+                        Siege.Instance.ServerBubble(c, v, rise, at =>
+                        {
+                            _bubbleDamage.Remove(fish);
+                            Pop(at, dmg + pop * s, who, legend);
+                        });
+                    }
                     return GearCatalog.Cooldown(g, r);
                 }
                 case Gear.Hook:
@@ -415,7 +508,14 @@ namespace HtfFortress
                         return 0.6f;
                     }
                     Fx.Send(FxKind.Hook, muzzle, c ? Body(c) : end, c ? c.ObjectId : 0, 0, who.ObjectId);
-                    if (!c) return 0.5f; // a miss reels back fast
+                    if (!c)
+                    {
+                        // Nothing to grab: the hook holds the wall and pulls the shooter to it (up to 9 m).
+                        Vector3 to = o + d * Mathf.Min(9f, (end - o).magnitude);
+                        if (Loot.Ground(to + Vector3.up * 3f, 20f, out var gnd)) to = gnd + Vector3.up * 0.2f;
+                        if ((to - o).sqrMagnitude > 4f) InstanceFinder.ServerManager.Broadcast(who.Owner, new HookYank { To = to });
+                        return 0.6f;
+                    }
                     HookFish(c, who, v * s, who.Transform.position + d.Flat().normalized * 2.5f, trait);
                     if (legend)
                     {
@@ -479,11 +579,22 @@ namespace HtfFortress
                     for (int i = 0; i < n; i++)
                     {
                         Vector3 dir = Quaternion.AngleAxis((i - (n - 1) * 0.5f) * StarSpread, Vector3.up) * d;
-                        Vector3 end = Reach(o, dir, StarRange * reach);
-                        var hit = Along(o, end, ShotRadius).Take(pierce).ToList();
-                        foreach (var c in hit) HitNumber(c, Hurt(c, v * s, who));
-                        if (legend && hit.Count > 2) Perks.Proc(Gear.StarThrower, hit[2].transform.position);
-                        Fx.Send(FxKind.Star, muzzle, hit.Count > 0 ? Body(hit[hit.Count - 1]) : end, 0, 0, who.ObjectId);
+                        // A thrown starfish bounces off walls (Owen: "反彈"): three legs at most, each one still cuts fish.
+                        int left = pierce;
+                        var seen = new HashSet<Creature>();
+                        Vector3 from = o;
+                        for (int bounce = 0; bounce < 3 && left > 0; bounce++)
+                        {
+                            Vector3 end = Reach(from, dir, StarRange * reach);
+                            var hit = Along(from, end, ShotRadius).Where(c => seen.Add(c)).Take(left).ToList();
+                            foreach (var c in hit) { HitNumber(c, Hurt(c, v * s, who)); left--; }
+                            if (legend && hit.Count > 1) Perks.Proc(Gear.StarThrower, hit[hit.Count - 1].transform.position);
+                            Fx.Send(FxKind.Star, bounce == 0 ? muzzle : from, hit.Count > 0 ? Body(hit[hit.Count - 1]) : end, 0, 0, who.ObjectId);
+                            if (left <= 0) break;
+                            if (!WallBounce(from, end, out var normal)) break;
+                            dir = Vector3.Reflect(dir, normal);
+                            from = end + dir * 0.1f;
+                        }
                     }
                     return GearCatalog.Cooldown(g, r);
                 }
@@ -660,18 +771,66 @@ namespace HtfFortress
         }
 
         // A rocket bursts: everything within `radius` takes the blast (the effect is the rocket's own event, at its end).
+        // Fire/explosions meeting a poison cloud burn it off: a burst in the cloud's place (Owen: elemental reactions).
+        // The normal of the first ground/wall a shot meets (fortress pieces, the lighthouse and items don't count: Reach's rule).
+        private static bool WallBounce(Vector3 a, Vector3 b, out Vector3 normal)
+        {
+            normal = Vector3.up;
+            Vector3 d = b - a;
+            float len = d.magnitude;
+            if (len < 1e-3f) return false;
+            foreach (var h in Physics.RaycastAll(a, d / len, len, GameInfo.LevelLayer).OrderBy(h => h.distance))
+            {
+                string n = h.collider.gameObject.name;
+                if (n.StartsWith("FortressPiece") || n == "FortressCore" || ItemManager.Get(h.collider)) continue;
+                normal = h.normal;
+                return true;
+            }
+            return false;
+        }
+
+        private void IgnitePoison(Vector3 at, float radius, Player who)
+        {
+            List<Cloud> lit = null;
+            foreach (var cl in _clouds)
+                if ((cl.At - at).Flat().sqrMagnitude <= (radius + cl.Radius) * (radius + cl.Radius)) (lit ??= new List<Cloud>()).Add(cl);
+            if (lit == null) return;
+            foreach (var cl in lit)
+            {
+                _clouds.Remove(cl);
+                foreach (var c in Targets().Where(x => (Body(x) - cl.At).Flat().sqrMagnitude <= cl.Radius * cl.Radius).ToList())
+                    HitNumber(c, Hurt(c, cl.Dps * 2.5f, who));
+                Fx.Send(FxKind.Blast, cl.At, cl.At);
+                AutoTest.Count("poison_ignited");
+            }
+        }
+
         private void RocketBlast(Vector3 at, float dmg, Player who, float radius)
         {
-            foreach (var c in Targets().Where(x => (Body(x) - at).sqrMagnitude <= radius * radius)) HitNumber(c, Hurt(c, dmg, who));
+            IgnitePoison(at, radius, who);
+            foreach (var c in Targets().Where(x => (Body(x) - at).sqrMagnitude <= radius * radius))
+            {
+                // Frozen fish shatter (Owen: elemental reactions).
+                HitNumber(c, Hurt(c, dmg * (Siege.Instance.IsFrozen(c) ? 1.5f : 1f), who));
+                // Dynamite throws things; the rocket's blast does too (Owen): further out, less of a shove.
+                if (IsBoss(c)) continue; // a boss holds its ground
+                Vector3 d = Body(c) - at;
+                float fall = 1f - Mathf.Clamp01(Mathf.Sqrt(d.sqrMagnitude) / Mathf.Max(0.01f, radius));
+                Vector3 dir = d.Flat().sqrMagnitude > 0.01f ? d.Flat().normalized : Vector3.forward;
+                Siege.Instance.ServerPush(c, dir * (2f + 4f * fall)); // 2 m at the rim, 6 m at the middle
+                Siege.Instance.Slow(c, 0.3f * fall, 0.5f);
+            }
+            Fx.Send(FxKind.Blast, at, at); // the explosion everyone sees (and the game's boom)
             AutoTest.Count("rocket_blast");
         }
 
         // The pufferfish bursts: spines into everything round it, and two stacks of poison (which then works like the gas's).
         private void PufferBurst(Vector3 at, float dmg, Player who, int again, float radius)
         {
+            IgnitePoison(at, radius, who);
             foreach (var c in Targets().Where(x => (x.transform.position - at).sqrMagnitude <= radius * radius))
             {
-                HitNumber(c, Hurt(c, dmg, who));
+                HitNumber(c, Hurt(c, dmg * (Siege.Instance.IsFrozen(c) ? 1.5f : 1f), who));
                 Envenom(c, 2, dmg, who);
             }
             Fx.Send(FxKind.Puffer, at, at, 0, 0, who ? who.ObjectId : 0); // Arg 0: the burst
@@ -766,7 +925,7 @@ namespace HtfFortress
         // top rate as they start, all of it once they're up (its trait mod: sooner); let go and they run down over
         // GatlingSpinDown, so the next burst starts where that left them. A legendary's bullets glance off into the nearest
         // other fish for half.
-        private void GatlingTick(Player who, Gun gun, byte phase, Vector3 o, Vector3 d, float v, bool legend, int rate, int trait, float reach)
+        private void GatlingTick(Player who, Gun gun, byte phase, Vector3 o, Vector3 d, float v, bool legend, Rarity rarity, int rate, int trait, float reach)
         {
             float now = Time.time, dt = now - gun.LastTick;
             if (phase == 2) { gun.LastTick = now; SendState(who, gun); return; } // let go: they run down from here
@@ -782,32 +941,39 @@ namespace HtfFortress
             dt = Mathf.Min(dt, 0.5f);
             gun.Heat = Mathf.Min(1f, gun.Heat + dt / Mathf.Max(0.15f, GatlingSpinUp - WeaponMods.TraitAdd(Gear.Gatling, trait)));
             gun.Rounds += GatlingShots(gun.Heat) / WeaponMods.TimeMult(rate) * dt;
-            int shots = (int)gun.Rounds;
+            int shots = (int)gun.Rounds; // the barrels fire together; the fraction carries to the next tick
             gun.Rounds -= shots;
+            shots *= GatlingBarrels(rarity);
             Vector3 end = Reach(o, d, GatlingRange * reach);
-            Creature first = null, glance = null;
+            Creature first = null, lastGlance = null;
             bool glanced = false;
             if (shots > 0)
             {
-                var hits = Along(o, end, ShotRadius);
+                var hits = Along(o, end, ShotRadius + GatlingSpread + 1f); // everything a cylinder can reach, once
                 float dmg = v * Scale;
+                int barrels = GatlingBarrels(rarity), bounces = 0;
                 for (int i = 0; i < shots; i++)
                 {
-                    var c = hits.FirstOrDefault(x => x && x._hp.Value > 0); // each bullet at the first one still alive
-                    if (!c) break;
-                    if (c != first)
-                    {
-                        first = c;
-                        glance = legend ? Targets().Where(x => x != c && (x.transform.position - c.transform.position).sqrMagnitude < GatlingBounce * GatlingBounce)
-                                                   .OrderBy(x => (x.transform.position - c.transform.position).sqrMagnitude).FirstOrDefault() : null;
-                    }
+                    // Each barrel fires along the aim from its own place in the honeycomb, with a little jitter.
+                    Vector3 off = GatlingOffset(i % barrels, barrels, d) + Random.insideUnitSphere * 0.03f;
+                    Vector3 bo = o + off, be = bo + (end - o);
+                    Creature c = null;
+                    for (int j = 0; j < hits.Count; j++)
+                        if (hits[j] && hits[j]._hp.Value > 0 && Touches(hits[j], bo, be, ShotRadius)) { c = hits[j]; break; }
+                    if (!c) continue;
+                    if (c != first) first = c;
                     gun.NumberDmg += Hurt(c, dmg, who);
-                    if (glance && glance._hp.Value > 0) { gun.NumberDmg += Hurt(glance, dmg * 0.5f, who); glanced = true; }
+                    if (legend && bounces < 8 / Mathf.Max(1, (int)rarity) && Random.value < 0.35f)
+                    {
+                        var glance = Targets().Where(x => x != c && x._hp.Value > 0 && (x.transform.position - c.transform.position).sqrMagnitude < GatlingBounce * GatlingBounce)
+                                              .OrderBy(x => (x.transform.position - c.transform.position).sqrMagnitude).FirstOrDefault();
+                        if (glance) { gun.NumberDmg += Hurt(glance, dmg * 0.5f, who); bounces++; glanced = true; lastGlance = glance; }
+                    }
                 }
             }
             // PieceId: the bullets (0 while it's still spinning up), Arg: how far it's spun up (%), for everyone's view of it.
             Fx.Send(FxKind.Gatling, Muzzle(o, d), first ? Body(first) : end, shots, Mathf.RoundToInt(gun.Heat * 100f), who.ObjectId);
-            if (glanced && first && glance) { Fx.Send(FxKind.Gatling, Body(first), Body(glance), -1, 0, who.ObjectId); Perks.Proc(Gear.Gatling, glance.transform.position); }
+            if (glanced && first && lastGlance) { Fx.Send(FxKind.Gatling, Body(first), Body(lastGlance), -1, 0, who.ObjectId); Perks.Proc(Gear.Gatling, lastGlance.transform.position); }
             if (now >= gun.NextNumber && gun.NumberDmg > 0f && first) { HitNumber(first, Mathf.RoundToInt(gun.NumberDmg)); gun.NumberDmg = 0f; gun.NextNumber = now + 0.5f; }
             if (now >= gun.NextState) { gun.NextState = now + 0.25f; SendState(who, gun); }
         }
@@ -822,6 +988,7 @@ namespace HtfFortress
             {
                 if (!back && t > BoomerangLeg) { back = true; hit.Clear(); } // each fish can be hit again on the way back
                 Vector3 p = BoomerangAt(a, b, t);
+                if (Time.time >= _nextBoomerangPick) { _nextBoomerangPick = Time.time + 0.12f; if (Loot.Instance) Loot.Instance.ServerBoomerangPick(p, 1.8f); }
                 foreach (var c in Targets())
                     if (!hit.Contains(c) && Touches(c, p, BoomerangHitRadius))
                     {
@@ -906,17 +1073,24 @@ namespace HtfFortress
             if (_clouds.Count > 0)
                 foreach (var c in Targets())
                 {
-                    var cl = _clouds.FirstOrDefault(x => (c.transform.position - x.At).Flat().sqrMagnitude <= x.Radius * x.Radius);
+                    // A cloud is a volume, not a floor circle: a fish flying over it stays clean (Owen: "毒的判定範圍").
+                    var cl = _clouds.FirstOrDefault(x => InCloud(c, x));
                     if (cl == null) continue;
                     if (!_poison.TryGetValue(c, out var p)) _poison[c] = p = new Poison();
                     if (now >= p.NextStack) { p.Stacks = Mathf.Min(MaxPoisonStacks, p.Stacks + 1); p.NextStack = now + 1f; }
                     p.Until = now + PoisonLinger; p.Dps = Mathf.Max(p.Dps, cl.Dps); p.Owner = cl.Owner; p.Legend |= cl.Legend;
+                    Siege.Instance.Slow(c, Mathf.Min(0.35f, 0.07f * p.Stacks), 0.7f); // each stack a little slower
                 }
             foreach (var kv in _poison.ToList())
             {
                 var c = kv.Key; var p = kv.Value;
                 if (!c || now > p.Until) { _poison.Remove(c); continue; }
-                if (c._hp.Value > 0) Hurt(c, p.Dps * p.Stacks * s * 0.5f, PlayerById(p.Owner));
+                if (c._hp.Value > 0)
+                {
+                    int dmg = Mathf.Max(1, Mathf.RoundToInt(p.Dps * p.Stacks * s * 0.5f));
+                    Hurt(c, dmg, PlayerById(p.Owner));
+                    if (now >= p.NextNumber) { p.NextNumber = now + 1f; HitNumber(c, Mathf.RoundToInt(p.Dps * p.Stacks * s)); }
+                }
                 if (c._hp.Value <= 0)
                 {
                     _poison.Remove(c);
@@ -1007,6 +1181,11 @@ namespace HtfFortress
 
         public static bool IsNetted(Creature c) => Instance && c && Instance._netted.TryGetValue(c, out float until) && Time.time <= until;
 
+        private static bool InCloud(Creature c, Cloud x)
+        {
+            Vector3 d = c.transform.position - x.At;
+            return d.Flat().sqrMagnitude <= x.Radius * x.Radius && Mathf.Abs(d.y) <= 2.4f; // the dome over the ground
+        }
         public static bool IsPoisoned(Creature c) => Instance && c && Instance._poison.TryGetValue(c, out var p) && p.Stacks > 0 && Time.time <= p.Until;
 
         private void ServerTick()
@@ -1015,7 +1194,7 @@ namespace HtfFortress
             if (!active && _wasActive) // round over: what was out in it goes (the weapons themselves work round or not)
             {
                 foreach (var sh in _sharks) SendShark(sh, false);
-                _sharks.Clear(); _clouds.Clear(); _poison.Clear(); _vortices.Clear(); _guns.Clear(); _jellies.Clear(); _netted.Clear();
+                _sharks.Clear(); _clouds.Clear(); _poison.Clear(); _bubbleDamage.Clear(); _vortices.Clear(); _guns.Clear(); _jellies.Clear(); _netted.Clear();
             }
             _wasActive = active;
             float now = Time.time;
@@ -1221,7 +1400,25 @@ namespace HtfFortress
         private UnityEngine.UI.Image _hud, _hudPic;
         private TextMeshProUGUI _hudText;
         private Hud.Bar _hudBar;
+        private float _hudShownAt = -10f;
+        private (Gear, Rarity)? _hudShownGear;
+        private bool _hudCompact;
         private const float HudPic = 64f; // room for the picture
+
+        // What a weapon actually does a second with this player's mods and this wave (the card used to show the bare value:
+        // Owen "DPS 計算好像每把槍顯示的都不太準").
+        public static int DpsNow(ulong key, Gear g, Rarity r, bool atFull = false)
+        {
+            var v = Loot.Instance ? (InstanceFinder.IsServerStarted ? Loot.Instance.Vault : Loot.Instance.ClientVault) : null;
+            if (v == null) return 0;
+            float val = v.WeaponValue(key, g, r) * (DamageMultiplier != null ? DamageMultiplier.Value : 1f);
+            float pour = 1f / WeaponMods.TimeMult(v.ModOf(key, g, WeaponMods.Rate));
+            if (g == Gear.Gatling) return Mathf.RoundToInt(val * GatlingRate * GatlingBarrels(r) * pour);
+            if (g == Gear.Laser) return Mathf.RoundToInt(val * pour * (atFull ? 3f : 2f)); // mid ramp, or the top of it
+            float cd = GearCatalog.Cooldown(g, r);
+            if (cd <= 0.01f || g == Gear.WaterCannon) return 0; // held sprays and lingering clouds say their own numbers
+            return Mathf.RoundToInt(val / (cd / pour));
+        }
 
         private void DrawHud((Gear g, Rarity r)? eq)
         {
@@ -1239,6 +1436,12 @@ namespace HtfFortress
             _hud.gameObject.SetActive(true);
             if (_drawn) { Hud.ShowPicture(_hudPic, "GearBigNet"); NetHud(); return; }
             var (g, r) = eq.Value;
+            if (!_hudShownGear.HasValue || _hudShownGear.Value != (g, r)) { _hudShownGear = (g, r); _hudShownAt = Time.time; }
+            bool compact = Time.time - _hudShownAt > 3f; // the card is for the moment you switch, not a forever overlay
+            if (_hudCompact != compact) { _hudCompact = compact; if (!compact) _hudText.text = ""; }
+            _hudText.gameObject.SetActive(!compact);
+            _hudPic.gameObject.SetActive(!compact);
+            if (compact) _hud.rectTransform.sizeDelta = new Vector2(470f, 32f);
             Hud.ShowPicture(_hudPic, "Gear" + g);
             // Its name and keys, then what it does at this rarity (with your mods), and a legendary's special.
             var vault = Loot.Instance ? Loot.Instance.ClientVault : null;
@@ -1247,6 +1450,20 @@ namespace HtfFortress
                           + $"\n<size=78%><color=#c9d1db>{(g == Gear.Absorber && vault != null ? AbsorberLines(r, out banner) : vault != null ? vault.EffectFor(Loot.MyKey, g, r) : GearCatalog.Effect(g, r))}</color></size>"
                           + (vault != null && WeaponMods.Summary(vault, Loot.MyKey, g) is string mods && mods.Length > 0 ? $"\n<size=78%><color={Hud.Hex(Hud.Gold)}>{L10n.T("modCard", mods)}</color></size>" : "")
                           + (r == Rarity.Legendary ? $"\n<size=78%><color=#{GearCatalog.Hex(r)}>★ {L10n.T("gearLegend" + g)}</color></size>" : "");
+            if (GearCatalog.IsWeapon(g) && g != Gear.WaterCannon && g != Gear.Laser && g != Gear.Gatling)
+            {
+                float cd0 = GearCatalog.Cooldown(g, r);
+                if (cd0 > 0.01f && vault != null)
+                {
+                    float per = 1f / (cd0 / (1f / WeaponMods.TimeMult(vault.ModOf(Loot.MyKey, g, WeaponMods.Rate))));
+                    text += $"\n<size=78%><color=#9aa4b0>{L10n.T("weaponRate", per.ToString("0.##"))}</color></size>";
+                }
+            }
+            if (GearCatalog.IsWeapon(g) && g != Gear.WaterCannon)
+            {
+                if (g == Gear.Laser) text += $"\n<size=78%><color=#9aa4b0>{L10n.T("weaponDpsLaser", DpsNow(Loot.MyKey, g, r), DpsNow(Loot.MyKey, g, r, atFull: true))}</color></size>";
+                else { int dps = DpsNow(Loot.MyKey, g, r); if (dps > 0) text += $"\n<size=78%><color=#9aa4b0>{L10n.T("weaponDpsNow", dps)}</color></size>"; }
+            }
             // The hook with something hanging on it: what it is, what it's worth and how hard it'll hit when it's flung.
             if (g == Gear.Hook && _onHook != 0)
             {
@@ -1259,7 +1476,7 @@ namespace HtfFortress
             if (GearCatalog.IsGameGun(g) && Player.LocalPlayer.Holding.HeldItem is Weapon w)
             {
                 var siege = Siege.Instance;
-                float now = WeaponMods.ShotDamage(w) * WeaponItems.GunDamage(GearCatalog.Value(g, r), g, siege && siege.ViewActive ? FortressPlugin.HpMult(siege.View.Wave) : 1f);
+                float now = WeaponMods.ShotDamage(w) * WeaponItems.GunDamage(GearCatalog.Value(g, r), g, Scale);
                 text += $"\n<size=78%><color=#c9d1db>{L10n.T("gunNow", Mathf.RoundToInt(now))}</color></size>";
             }
             if (g == Gear.Absorber) AbsorberTop(banner);
@@ -1270,6 +1487,7 @@ namespace HtfFortress
                 _hudText.rectTransform.sizeDelta = new Vector2(1200f, size.y + 4f);
                 _hud.rectTransform.sizeDelta = new Vector2(Mathf.Max(460f, size.x + 48f) + HudPic, Mathf.Max(70f, size.y + 36f));
             }
+            if (compact) _hud.rectTransform.sizeDelta = new Vector2(470f, 32f);
             g = BarGear(g); // an absorber copying a weapon: that weapon's heat and cooldown
             _mine.TryGetValue(g, out var st);
             float left = st.readyAt - Time.time;
@@ -1287,6 +1505,7 @@ namespace HtfFortress
 
         private class BeamView { public Transform Beam, Core, Hit, HaloIn, HaloOut; public Transform[] Streaks, Bands; public Material Sheath, Glow, HaloInMat, HaloOutMat; public Material[] BandMats; public Vector3 A, B; public float Width, Until, NextFlash, NextSmoke, Heat; }
         private readonly Dictionary<int, BeamView> _beams = new Dictionary<int, BeamView>();
+        private float _nextBoomerangPick;
         private readonly Dictionary<int, (Transform t, Vector3 pos, Vector3 face, float seen)> _sharkViews = new Dictionary<int, (Transform, Vector3, Vector3, float)>();
         private float _nextBeamSound, _nextWake;
 
@@ -1319,6 +1538,7 @@ namespace HtfFortress
                     Fx.Sound("PunchSwoosh", from, 0.9f);
                     StartCoroutine(BoomerangView(from, e.To));
                     break;
+                case FxKind.Soul: SoulView(e.From, e.To, Mathf.Clamp(e.Arg, 1, 12)); break;
                 case FxKind.Shark:
                     OnSharkFx(e);
                     break;
@@ -1362,10 +1582,10 @@ namespace HtfFortress
                     _spins[e.Who] = (e.Arg / 100f, Time.time);
                     if (e.PieceId == 0) break; // still spinning up
                     Vector3 aim = e.To - from;
-                    for (int i = 0; i < Mathf.Min(e.PieceId, 3); i++) Bullet(from, e.To + Random.insideUnitSphere * aim.magnitude * 0.02f);
+                    StartCoroutine(GatlingVolley(from, e.To, e.PieceId));
                     if (Time.time >= _nextGatlingSound) { _nextGatlingSound = Time.time + 0.07f; Fx.SoundRandom("SMGFireOutside_V", 1, 4, from, 0.5f); }
                     WeaponFx.Game("PistolFire", from, aim.normalized);
-                    WeaponFx.Emit(WeaponFx.Sparks("Gold"), e.To, Mathf.Min(e.PieceId, 3), -aim.normalized + Vector3.up * 0.5f);
+                    WeaponFx.Emit(WeaponFx.Sparks("Gold"), e.To, Mathf.Min(e.PieceId, 8), -aim.normalized + Vector3.up * 0.5f);
                     break;
                 }
                 case FxKind.Rocket:
@@ -1798,6 +2018,7 @@ namespace HtfFortress
             for (float t = 0f; t < BoomerangLeg * 2f && root; t += Time.deltaTime)
             {
                 Vector3 p = BoomerangAt(a, b, t);
+                if (Time.time >= _nextBoomerangPick) { _nextBoomerangPick = Time.time + 0.12f; if (Loot.Instance) Loot.Instance.ServerBoomerangPick(p, 1.8f); }
                 root.transform.position = p;
                 root.transform.rotation = Quaternion.Euler(0f, t * 1300f, 0f);
                 if (t >= next)
@@ -1960,6 +2181,30 @@ namespace HtfFortress
 
         // ---------- shark: bursts out of the sea (the game's water explosion), a foaming V of a wake, a splash as it dives ----------
 
+        private void SoulView(Vector3 from, Vector3 to, int n)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                var root = new GameObject("FortressSoul").transform;
+                DontDestroyOnLoad(root.gameObject);
+                Models.Attach("SoulOrb", root, Vector3.one * 0.2f);
+                var t = root;
+                t.position = from + Quaternion.Euler(0f, i * 37f, 0f) * Vector3.forward * Random.Range(0.3f, 1.4f);
+                StartCoroutine(SoulFloat(t, to, 1.2f + i * 0.08f));
+            }
+        }
+        private System.Collections.IEnumerator SoulFloat(Transform t, Vector3 to, float seconds)
+        {
+            Vector3 start = t.position;
+            for (float k = 0f; k < 1f && t; k += Time.deltaTime / seconds)
+            {
+                t.position = Vector3.Lerp(start, to, k * k) + Vector3.up * Mathf.Sin(k * Mathf.PI) * 0.4f;
+                t.Rotate(0f, 180f * Time.deltaTime, 0f);
+                yield return null;
+            }
+            if (t) Destroy(t.gameObject);
+        }
+
         private void OnSharkFx(FxEvent e)
         {
             if (e.Arg == 0)
@@ -2032,6 +2277,20 @@ namespace HtfFortress
 
         // Every gatling in someone's hand turns its barrels (WeaponItems.Gatling) as fast as they're spun up: mine while I hold
         // the button, a friend's as their bullets say, running down once they stop.
+        // The volley's tracers: one per barrel (capped: it's a look, not the damage), honeycomb round the aim, leaving in a
+        // short random order instead of every one on the same frame (Owen: "有點隨機發射不是同時").
+        private System.Collections.IEnumerator GatlingVolley(Vector3 from, Vector3 to, int count)
+        {
+            int n = Mathf.Clamp(count, 1, 12), barrels = Mathf.Max(1, count);
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 off = GatlingOffset(i, barrels, to - from);
+                Bullet(from + off, to + Random.insideUnitSphere * 0.35f);
+                if (Random.value < 0.5f) yield return null; // stagger
+                else yield return new WaitForSeconds(Random.value * 0.05f);
+            }
+        }
+
         private void GatlingViews(bool firing)
         {
             float dt = Time.deltaTime;

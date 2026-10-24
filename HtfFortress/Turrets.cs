@@ -35,7 +35,7 @@ namespace HtfFortress
             Firing = true;
             try
             {
-                foreach (var p in BuildSystem.Instance.ServerPieces.ToList())
+                foreach (var p in BuildSystem.Instance.ServerPieces)
                     if (Catalog.IsTurret(p.Type) && !Bosses.Instance.IsSilenced(p.Id)) Fire(p, alive);
                 if (Time.time >= _nextSpikeTick) { _nextSpikeTick = Time.time + 0.5f; Spikes(alive); BurnTick(); }
             }
@@ -51,9 +51,11 @@ namespace HtfFortress
         private int Dmg(int baseDmg, Creature c, Catalog.TurretStats s)
         {
             Stats.TurretHit(c, _owner);
-            float d = baseDmg * DamageMultiplier.Value * (1f + Perks.Team(Gear.Gunpowder));
+            var sv = Loot.Instance ? Loot.Instance.Vault : null;
+            float d = baseDmg * DamageMultiplier.Value * (sv != null ? sv.DamageMult : 1f) * (1f + Perks.Team(Gear.Gunpowder));
+            if (sv != null && sv.CritChance > 0f && Random.value < sv.CritChance) d *= 2f;
             if (Perks.TeamLegend(Gear.Scope) && Random.value < 0.1f) { d *= 3f; AutoTest.Count("legend_crits"); Perks.Proc(Gear.Scope, c.transform.position); } // legendary: 10% crits
-            if (Perks.TeamLegend(Gear.FrostCore) && Random.value < 0.06f) { Siege.Instance.Slow(c, 1f, 1.5f); AutoTest.Count("legend_freezes"); Perks.Proc(Gear.FrostCore, c.transform.position); } // legendary: freeze
+            if (Perks.TeamLegend(Gear.FrostCore) && Random.value < 0.06f && Siege.Instance.TryFreeze(c)) { AutoTest.Count("legend_freezes"); Perks.Proc(Gear.FrostCore, c.transform.position); } // legendary: freeze (capped per target, bosses only slowed: Siege.TryFreeze)
             if (Enemies.Instance.TryGet(c, out var st) && st.Kind == EnemyKind.Shield)
             {
                 Vector3 toTurret = _from - c.transform.position; toTurret.y = 0f;
@@ -97,7 +99,16 @@ namespace HtfFortress
             }
             // The sniper picks the toughest fish in range instead of the nearest.
             if (p.Type == PieceType.Sniper)
-                target = alive.Where(c => Alive(c) && Flat2(c.transform.position - muzzle) < s.Range * s.Range).OrderByDescending(c => c._hp.Value).FirstOrDefault() ?? target;
+            {
+                int hp = -1;
+                for (int i = 0; i < alive.Count; i++)
+                {
+                    var c = alive[i];
+                    if (!Alive(c)) continue;
+                    if (Flat2(c.transform.position - muzzle) >= s.Range * s.Range) continue;
+                    if (c._hp.Value > hp) { hp = c._hp.Value; target = c; }
+                }
+            }
             if (!target) return;
             _nextFire[p.Id] = Time.time + s.Interval;
             Vector3 hit = target.transform.position;
@@ -222,7 +233,10 @@ namespace HtfFortress
             if (s.Targets <= 1) return Enumerable.Empty<Creature>();
             var inRange = alive.Where(c => c != first && Alive(c) && Flat2(c.transform.position - muzzle) < s.Range * s.Range
                                            && Flat2(c.transform.position - muzzle) >= s.MinRange * s.MinRange);
-            return (toughest ? inRange.OrderByDescending(c => c._hp.Value) : inRange.OrderBy(c => Flat2(c.transform.position - muzzle))).Take(s.Targets - 1).ToList();
+            var sorted = toughest ? inRange.OrderByDescending(c => c._hp.Value) : inRange.OrderBy(c => Flat2(c.transform.position - muzzle));
+            var result = new List<Creature>(s.Targets - 1);
+            foreach (var c in sorted) { if (result.Count >= s.Targets - 1) break; result.Add(c); }
+            return result;
         }
 
         private static float Flat2(Vector3 v) => v.x * v.x + v.z * v.z;
@@ -348,12 +362,22 @@ namespace HtfFortress
                 foreach (var c in alive)
                 {
                     if (!Alive(c)) continue;
+                    float scale = 1f;
+                    if (Enemies.Instance.TryGet(c, out var tag))
+                    {
+                        if (EnemyCatalog.BodyOf(tag.Kind) == EnemyCatalog.Body.Sky) continue; // spikes are on the ground
+                        scale = Enemies.StatsOf(tag).Scale;
+                    }
+                    // The cell is 3 m; a fish's own width counts too, so a tank's body touches the mat (Owen: "地刺的判定範圍").
+                    float reach = 1.5f + 0.45f * (Mathf.Max(1f, scale) - 1f);
                     Vector3 d = c.transform.position - p.Pos;
-                    if (Mathf.Abs(d.x) < 1.6f && Mathf.Abs(d.z) < 1.6f && d.y > -0.5f && d.y < 2f)
+                    if (Mathf.Abs(d.x) <= reach && Mathf.Abs(d.z) <= reach && d.y > -0.6f && d.y < 2.5f)
                     {
                         Stats.TurretHit(c, BuildSystem.Instance.OwnerOf(p.Id));
-                        c.ServerChangeHp(Mathf.RoundToInt(Catalog.SpikeDamage(p.Level) * DamageMultiplier.Value));
-                        Siege.Instance.Slow(c, 0.3f, 0.6f);
+                        int dmg = Mathf.RoundToInt(Catalog.SpikeDamage(p.Level) * DamageMultiplier.Value);
+                        c.ServerChangeHp(dmg);
+                        Siege.Instance.Slow(c, 0.45f, 0.9f);
+                        Fx.Send(FxKind.WeaponHit, c.transform.position, c.transform.position, 0, dmg); // number, sparks, the game's hit sound
                         AutoTest.Count("spike_hits");
                     }
                 }

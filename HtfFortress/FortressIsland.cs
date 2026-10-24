@@ -18,7 +18,7 @@ namespace HtfFortress
     public struct GateRequest : IBroadcast { public byte Pull; }
 
     // Host -> everyone when a round ends.
-    public struct RoundResult : IBroadcast { public int Waves; public int Kills; public int Built; public int Best; public bool NewRecord; public bool CoreLost; public bool Victory; public string Table; }
+    public struct RoundResult : IBroadcast { public int Waves; public int Kills; public int Built; public int Best; public bool NewRecord; public bool CoreLost; public bool Victory; public string Table; public int Souls, SoulsTotal, SoulsFrom; public string SoulLines; }
 
     // The fortress island: a Blender-made island every client builds locally off the coast of the current island,
     // shown on the radar once unlocked. E at the lighthouse's door pulls its gate: 5 seconds later the round starts.
@@ -106,10 +106,10 @@ namespace HtfFortress
 
         static FortressIsland()
         {
-            GenericWriter<RoundResult>.SetWrite((w, v) => { w.WriteInt32(v.Waves); w.WriteInt32(v.Kills); w.WriteInt32(v.Built); w.WriteInt32(v.Best); w.WriteBoolean(v.NewRecord); w.WriteBoolean(v.CoreLost); w.WriteBoolean(v.Victory); w.WriteString(v.Table ?? ""); });
+            GenericWriter<RoundResult>.SetWrite((w, v) => { w.WriteInt32(v.Waves); w.WriteInt32(v.Kills); w.WriteInt32(v.Built); w.WriteInt32(v.Best); w.WriteBoolean(v.NewRecord); w.WriteBoolean(v.CoreLost); w.WriteBoolean(v.Victory); w.WriteString(v.Table ?? ""); w.WriteInt32(v.Souls); w.WriteInt32(v.SoulsTotal); w.WriteInt32(v.SoulsFrom); w.WriteString(v.SoulLines ?? ""); });
             GenericWriter<GateRequest>.SetWrite((w, v) => w.WriteByte(v.Pull));
             GenericReader<GateRequest>.SetRead(r => new GateRequest { Pull = r.ReadByte() });
-            GenericReader<RoundResult>.SetRead(r => new RoundResult { Waves = r.ReadInt32(), Kills = r.ReadInt32(), Built = r.ReadInt32(), Best = r.ReadInt32(), NewRecord = r.ReadBoolean(), CoreLost = r.ReadBoolean(), Victory = r.ReadBoolean(), Table = r.ReadString() });
+            GenericReader<RoundResult>.SetRead(r => new RoundResult { Waves = r.ReadInt32(), Kills = r.ReadInt32(), Built = r.ReadInt32(), Best = r.ReadInt32(), NewRecord = r.ReadBoolean(), CoreLost = r.ReadBoolean(), Victory = r.ReadBoolean(), Table = r.ReadString(), Souls = r.ReadInt32(), SoulsTotal = r.ReadInt32(), SoulsFrom = r.ReadInt32(), SoulLines = r.ReadString() });
         }
 
         private void Awake() => Instance = this;
@@ -156,21 +156,53 @@ namespace HtfFortress
             _wasUnlocked = unlocked; _wasUnlockedKnown = known;
 
             if (!unlocked) { Despawn(); return; }
-            // Sit offshore of whichever island is loaded; only move between rounds.
+            // Sit offshore of whichever island is loaded; only move between rounds. A client that joins while a round is
+            // running still has to place it once: skipping the move just because a round was on left a client that had
+            // never built the island with Center at the world origin, a kilometre from the host's island (and F4, the
+            // spawn point and the lighthouse all went there).
             Vector3 anchor = MainIslandPos();
-            if (!(Siege.Instance && Siege.Instance.ViewActive) && (float.IsNaN(_anchor.x) || (anchor - _anchor).sqrMagnitude > 1f))
+            bool anchorOk = !float.IsNaN(anchor.x) && !float.IsNaN(anchor.z);
+            bool liveRound = Siege.Instance && Siege.Instance.ViewActive;
+            bool moved = float.IsNaN(_anchor.x) || (anchor - _anchor).sqrMagnitude > 1f;
+            if (anchorOk && (!_root || (!liveRound && moved)))
             {
                 _anchor = anchor;
                 Center = PickCenter(_anchor);
                 Despawn();
             }
-            if (!_root) Spawn();
+            if (!_root)
+            {
+                if (!anchorOk) return; // the main island isn't loaded yet: never build at the origin
+                Spawn();
+            }
+
+            // Joining a round that is already on spawns you at the main island's dock, 230 m away; bring you to the
+            // fortress with the others (only right after this client built the island = a fresh join, and only once).
+            BringJoinersIn();
 
             RescueFromBelow();
             // First time you come near the island: a welcome banner.
             if (!_welcomed && Player.LocalPlayer && Player.LocalPlayer.Transform && OnIsland(Player.LocalPlayer.Transform.position, IslandRadius + 12f))
             { _welcomed = true; Banner(L10n.T("islandWelcome"), 4f); }
             if (InstanceFinder.IsServerStarted) ServerReadyCheck();
+        }
+
+        private float _placedAt;
+        private bool _broughtIn;
+
+        private void BringJoinersIn()
+        {
+            var me = Player.LocalPlayer;
+            if (_broughtIn || !_root || !me || !me.Transform) return;
+            bool roundOn = InstanceFinder.IsServerStarted ? (Siege.Instance && Siege.Instance.ServerActive)
+                                                          : (Siege.Instance && Siege.Instance.ViewActive);
+            if (!roundOn) { _broughtIn = true; return; }                      // no round: the game's own spawn is fine
+            if (Time.time - _placedAt > 60f) { _broughtIn = true; return; }  // not a join: you walked out there yourself
+            if ((me.Transform.position - Center).sqrMagnitude < 150f * 150f) { _broughtIn = true; return; } // already here
+            _broughtIn = true;
+            me.LocalTeleport(RespawnPos, 0f, true);
+            Banner(L10n.T("islandWelcome"), 3f);
+            BuildSystem.Log.LogInfo($"Joined a round in progress: brought the player to the island at {RespawnPos}.");
         }
         private bool _wasUnlockedKnown;
         private bool _welcomed;
@@ -227,6 +259,7 @@ namespace HtfFortress
             _root = new GameObject("FortressIsland");
             _root.layer = BuildSystem.PieceLayer;
             _root.transform.position = Center;
+            _placedAt = Time.time; _broughtIn = false; // a fresh island here: if a round is on, this is a join (see BringJoinersIn)
             _sink = 0f;
             DontDestroyOnLoad(_root);
             var model = Models.Attach("FortressIsland", _root.transform, new Vector3(60f, 2f, 60f), new Vector3(0f, 0.2f, 0f));
@@ -295,7 +328,7 @@ namespace HtfFortress
             Keeper(smithy.transform, new Vector3(-0.4f, 0.12f, -0.55f), SmithyYaw, "_gunStoreClerc", "Smith", () => VaultUI.Instance.Open(VaultUI.Desk.Smith));
             Keeper(vault.transform, new Vector3(1.3f, 0.26f, -0.05f), VaultYaw, "_military", "Vault", () => VaultUI.Instance.Open(VaultUI.Desk.Quartermaster)); // behind his counter inside
             var plaza = Ground(Center + KeeperLocal);
-            Keeper(_root.transform, _root.transform.InverseTransformPoint(plaza), 200f, "_lighthouseKeeper", "Lighthouse", () => Tips.Instance.ToggleHelp());
+            Keeper(_root.transform, _root.transform.InverseTransformPoint(plaza), 200f, "_lighthouseKeeper", "Lighthouse", () => { if (KeeperMenu.Instance) KeeperMenu.Instance.Toggle(); });
 
             var board = new GameObject("RecordBoard");
             board.layer = BuildSystem.PieceLayer;
@@ -383,8 +416,10 @@ namespace HtfFortress
         {
             for (int i = 0; i < 10; i++)
             {
-                float a = (GapAngles[gap >= 0 ? gap % GapAngles.Length : Random.Range(0, GapAngles.Length)] + Random.Range(-6f, 6f)) * Mathf.Deg2Rad;
-                float r = Random.Range(23.5f, 26f);
+                // A wide spread: at ±6° on a 25 m beach, a burst of walkers was a handful of metres of sand and the fish
+                // spawned inside one another (they shoved apart like they had exploded: Owen). ±20° and a deeper band.
+                float a = (GapAngles[gap >= 0 ? gap % GapAngles.Length : Random.Range(0, GapAngles.Length)] + Random.Range(-20f, 20f)) * Mathf.Deg2Rad;
+                float r = Random.Range(22f, 29f);
                 Vector3 p = Center + new Vector3(Mathf.Cos(a) * r, 10f, Mathf.Sin(a) * r);
                 if (Physics.Raycast(p, Vector3.down, out var rh, 20f, GameInfo.LevelLayer) && rh.point.y > WaterManager.GetWaterHeight(rh.point) + 0.2f)
                 {
@@ -426,7 +461,7 @@ namespace HtfFortress
             Vector2 C = new Vector2(0.5f, 0.5f), T = new Vector2(0.5f, 1f);
             var rows = Stats.Parse(r.Table).OrderByDescending(x => x.Kills + x.TurretKills).ToList();
             var mvps = Mvps(rows);
-            float h = 132f + 128f + 46f + 52f + 40f * rows.Count + (mvps.Count > 0 ? 64f : 0f) + 66f;
+            float h = 132f + 128f + 154f + 46f + 52f + 40f * rows.Count + (mvps.Count > 0 ? 64f : 0f) + 66f;
             var panel = Hud.Box(Hud.Root, C, new Vector2(0f, 20f), new Vector2(1000f, h), Hud.PanelSolid, 26f);
             _results = panel.gameObject;
             var p = panel.transform;
@@ -446,6 +481,20 @@ namespace HtfFortress
                 Hud.Label(tile.transform, tiles[i].Item2, 21f, new Vector2(0.5f, 0f), new Vector2(0f, 10f), new Vector2(290f, 30f), TextAlignmentOptions.Bottom, Hud.Muted);
             }
             y -= 128f;
+
+            // The souls settlement: what the run paid and exactly how (Owen: "結算的表單應該要有那種計算爽感").
+            {
+                var box = Hud.Box(p, T, new Vector2(0f, y), new Vector2(940f, 144f), new Color(0.16f, 0.13f, 0.05f, 0.95f), 16f, pivot: T);
+                var bt = box.transform;
+                Hud.Label(bt, L10n.T("soulSettleTitle"), 24f, new Vector2(0f, 1f), new Vector2(18f, -10f), new Vector2(420f, 30f), TextAlignmentOptions.Left, Hud.Gold, bold: true);
+                string left = r.Souls > 0
+                    ? L10n.T("soulSettleFrom", r.SoulsFrom, r.Waves) + "\n" + r.SoulLines + "\n" + L10n.T("soulSettleHint")
+                    : L10n.T("soulSettleNone");
+                Hud.Label(bt, left, 16f, new Vector2(0f, 1f), new Vector2(18f, -46f), new Vector2(580f, 92f), TextAlignmentOptions.TopLeft, Hud.Ink);
+                Hud.Label(bt, $"<size=165%><color={Hud.Hex(Hud.Gold)}><b>+{r.Souls}</b></color></size>", 34f, new Vector2(1f, 1f), new Vector2(-24f, -34f), new Vector2(320f, 66f), TextAlignmentOptions.Center);
+                Hud.Label(bt, L10n.T("soulSettleHave", r.SoulsTotal), 18f, new Vector2(1f, 0f), new Vector2(-24f, 22f), new Vector2(320f, 26f), TextAlignmentOptions.Center, Hud.Muted);
+                y -= 154f;
+            }
 
             // Player table: fixed columns (percent of the row), the header is the six cells of "tableHeader".
             int[] cols = { 3, 36, 49, 66, 80, 91 };

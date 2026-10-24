@@ -17,7 +17,7 @@ namespace HtfFortress
     // Host -> everyone: the whole vault (VaultData text).
     public struct VaultState : IBroadcast { public string Data; }
 
-    public enum VaultAction : byte { Merge, EquipFortress, EquipPersonal, UnequipFortress, UnequipPersonal, Salvage, Ascend, Enhance, Deposit, Take, Expand, TakeItem, Buy, StoreSlot, Mod, SellAll, BuyItem }
+    public enum VaultAction : byte { Merge, EquipFortress, EquipPersonal, UnequipFortress, UnequipPersonal, Salvage, Ascend, Enhance, Deposit, Take, Expand, TakeItem, Buy, StoreSlot, Mod, SellAll, BuyItem, MergeAll }
     // Client -> host: one vault action. Take / TakeItem: Slot is the desk it's handed out at (0 the vault's door, 1 the
     // smithy's counter), Item the game item's id, Count how many. Expand / Enhance / Mod: Count is the level the player saw,
     // so two players clicking at once (or a click repeated on a slow link) buy one step, not two. Mod: Slot is the line.
@@ -294,9 +294,10 @@ namespace HtfFortress
             var killer = PlayerManager.Players.FirstOrDefault(p => p && p.ObjectId == killerId);
             float chance = DropChance(kind, elite, wave, _roundDrops, killer ? Vault.PersonalValue(KeyOf(killer), Gear.LuckyCharm) : 0f);
             if (EnemyCatalog.IsBoss(kind)) ServerUnlockRandom(killer); // every boss leaves a blueprint while any are left
-            if (elite && !EnemyCatalog.IsBoss(kind) && Random.value < EliteScaleChance) ServerDropScales(pos, 1, 1, 0f);
+            if (elite && !EnemyCatalog.IsBoss(kind) && Random.value < EliteScaleChance)
+                ServerDropScales(pos, 1 + Mathf.Max(0, wave) / 10, 1, 0f); // an elite's scales grow with the wave too
             if (Random.value >= chance) return;
-            Rarity r = GearCatalog.Roll(wave, EnemyCatalog.IsBoss(kind) ? Rarity.Epic : Rarity.Common);
+            Rarity r = EnemyCatalog.IsBoss(kind) ? Rarity.Legendary : GearCatalog.Roll(wave, Rarity.Common); // a boss always leaves its best
             if (killer && Perks.Legend(killer, Gear.LuckyCharm) && r < Rarity.Legendary) { r++; Perks.Proc(Gear.LuckyCharm, pos); } // legendary: one rarity better
             Drop(GearCatalog.RandomGear(), r, pos);
             _roundDrops++;
@@ -383,7 +384,7 @@ namespace HtfFortress
                 if (GearCatalog.IsWeapon(g.Item1) && WeaponItems.ServerSpawn(g.Item1, g.Item2, _chest.pos + Quaternion.Euler(0f, 90f * pop++, 0f) * Vector3.forward * 0.8f + Vector3.up * 1.2f) is Item ci && ci) { _lootWeapons.Add(ci); continue; }
                 ServerStore(g.Item1, g.Item2);
             }
-            ServerDropScales(_chest.pos, 2 + Mathf.Clamp(_chest.wave / 10, 0, 6), 3, 1.6f);
+            ServerDropScales(_chest.pos, 2 + Mathf.Max(0, _chest.wave) / 4, 3, 1.6f); // chests: 2 at wave 1, 27 at wave 100
             SaveVault();
             if (_chest.wave >= 10 && (Random.value < 0.6f || AutoTest.ForceGameItem)) ServerUnlockRandom(who);
             string item = "";
@@ -439,11 +440,15 @@ namespace HtfFortress
         private readonly Dictionary<int, (Vector3 pos, int n)> _scales = new Dictionary<int, (Vector3, int)>();
         private readonly HashSet<Item> _lootWeapons = new HashSet<Item>(); // weapons that dropped (kills, the chest): walked over, into the vault
         public const float ScaleRadius = 1.5f, EliteScaleChance = 0.25f;
-        public static int BossScales(int wave) => 6 + 3 * Mathf.Clamp(wave / 10, 1, 10); // 9 at wave 10, 36 at wave 100
+        // Scales are the late game's reward: a flat 36 at wave 100 felt like nothing when a vault step costs 220. Grows
+        // geometrically (6 at wave 1, 10 at 10, 32 at 30, 110 at 50, about 2000 at 100: Owen, "越給越誇張").
+        public static int BossScales(int wave) => Mathf.Max(6, Mathf.RoundToInt(6f * Mathf.Pow(1.06f, Mathf.Max(0, wave - 1))));
 
         public void ServerDropScales(Vector3 at, int total, int pieces, float spread)
         {
             if (total <= 0) return;
+            var sv = Instance ? (InstanceFinder.IsServerStarted ? Vault : ClientVault) : null;
+            if (sv != null) total = Mathf.Max(1, Mathf.RoundToInt(total * sv.ScaleMult));
             pieces = Mathf.Clamp(pieces, 1, total);
             for (int i = 0; i < pieces; i++)
             {
@@ -519,7 +524,7 @@ namespace HtfFortress
         // ---------- host: what the stall's helpers pick up besides the bodies (Owen: "小幫手…應該要什麼都撿") ----------
 
         // Something lying on the island: a gear drop or a pile of scales (Id), or an item (a weapon, one of the game's things).
-        public struct Lying { public int Id; public Item Item; public Vector3 Pos; public object Key => (object)Item ?? Id; }
+        public struct Lying { public int Id; public Item Item; public Vector3 Pos; public bool Last; public object Key => (object)Item ?? Id; }
         public const string HelperWho = "\u0001helper"; // LootEvent.Who for a helper (each screen says it in its own language)
         // An item waits this long lying still (and only if it fits in the vault): what you drop for a friend stays for them.
         public const float LieStill = 15f;
@@ -531,7 +536,7 @@ namespace HtfFortress
         private readonly Dictionary<Item, float> _helpersWait = new Dictionary<Item, float>();
         private void Wait(Item it) { if (it) _helpersWait[it] = Time.time + 180f; }
 
-        private bool FitsVault(Item it) => WeaponItems.AsFortress(it, out var g, out var r) ? Vault.Fits(g, r) : Vault.FitsItem(it.ID);
+        private bool FitsVault(Item it) => BossTrophies.Is(it, out _) || (WeaponItems.AsFortress(it, out var g, out var r) ? Vault.Fits(g, r) : Vault.FitsItem(it.ID));
 
         // Looked over twice a second: not on a boat, not a fish's body (those are the baskets'), on the island or in its shallows.
         public List<Lying> ServerLying()
@@ -552,10 +557,22 @@ namespace HtfFortress
                 Vector3 p = it.transform.position;
                 var s = _still.TryGetValue(it, out var was) && (was.at - p).sqrMagnitude < 0.25f ? was : (since: Time.time, at: p);
                 still[it] = s;
-                if (Time.time - s.since >= LieStill) _lying.Add(new Lying { Item = it, Pos = p });
+                if (Time.time - s.since >= LieStill) _lying.Add(new Lying { Item = it, Pos = p, Last = BossTrophies.Is(it, out _) });
             }
             _still = still;
             return _lying;
+        }
+
+        // The boomerang picks up the drops and scales it passes (Owen): into the vault like a helper's hands would.
+        public void ServerBoomerangPick(Vector3 at, float radius)
+        {
+            float r2 = radius * radius;
+            List<int> drops = null, scales = null;
+            foreach (var kv in _drops) if ((kv.Value.pos - at).Flat().sqrMagnitude <= r2) (drops ??= new List<int>()).Add(kv.Key);
+            foreach (var kv in _scales) if ((kv.Value.pos - at).Flat().sqrMagnitude <= r2) (scales ??= new List<int>()).Add(kv.Key);
+            if (drops != null) foreach (int id in drops) if (_drops.TryGetValue(id, out var d)) { _drops.Remove(id); ServerStore(d.g, d.r); Broadcast(new LootEvent { Id = id, What = LootWhat.DropGone, Pos = d.pos, Gear = d.g, Rarity = d.r }); AutoTest.Count("boomerang_loot"); }
+            if (scales != null) foreach (int id in scales) ServerPickScales(id, null);
+            if (drops != null || scales != null) SaveVault();
         }
 
         // A helper reached it (`basket`: where it goes): into the vault as if a player had walked over it (gear that doesn't
@@ -600,6 +617,15 @@ namespace HtfFortress
         {
             if (!who) return;
             EnsureLoaded();
+            // A one-click sale throws the whole tab away (Owen: a friend emptied the stash): only the host may do it, unless the
+            // team turns VaultSellAllAnyPlayer on. The host log records who tried / who sold.
+            if (req.Action == VaultAction.SellAll && !(FortressPlugin.SellAllAnyPlayer != null && FortressPlugin.SellAllAnyPlayer.Value)
+                && !(who.Owner != null && who.Owner.IsLocalClient))
+            {
+                Fx.Announce("vaultSellAllHostOnly");
+                BuildSystem.Log.LogWarning($"{NameOf(who)} tried 'sell all': blocked (only the host may do that)");
+                return;
+            }
             if (req.Action == VaultAction.Expand && req.Count != Vault.BoughtOf((Expansion)req.Slot)) return;
             if (req.Action == VaultAction.Enhance && req.Count != Vault.EnhanceOf(req.Gear)) return;
             ulong key = KeyOf(who);
@@ -610,7 +636,8 @@ namespace HtfFortress
             else if (req.Action == VaultAction.StoreSlot) { if (!ServerStoreSlot(who, req.Slot)) return; }
             else if (req.Action == VaultAction.Buy) { if (!ServerBuy(who, req.Gear)) return; }
             else if (req.Action == VaultAction.BuyItem) { if (!ServerBuyItem(who, req.Item)) return; }
-            else if (req.Action == VaultAction.SellAll) { if (!ServerSellAll(req.Slot, req.Count == 1 ? (Rarity?)null : req.Rarity)) return; }
+            else if (req.Action == VaultAction.SellAll) { if (!ServerSellAll(who, req.Slot, req.Count == 1 ? (Rarity?)null : req.Rarity)) return; }
+            else if (req.Action == VaultAction.MergeAll) { if (Vault.MergeAll() <= 0) return; }
             else if (!Vault.Apply(req.Action, req.Gear, req.Rarity, req.Slot, key)) return;
             if (req.Action == VaultAction.EquipPersonal || req.Action == VaultAction.Mod) Vault.Names[key] = NameOf(who);
             SaveVault();
@@ -650,7 +677,12 @@ namespace HtfFortress
         {
             if (!Storable(item)) return;
             EnsureLoaded();
-            if (WeaponItems.AsFortress(item, out var g, out var r)) // one of the game's guns becomes a common of its kind
+            if (BossTrophies.Is(item, out var trophy))
+            {
+                if (SavedOf(item) is SavedItem ts) Vault.AddItem(new StoredItem { Saved = ts }); // always: the vault keeps its relics
+                else { BuildSystem.Log.LogWarning("Couldn't turn " + item.name + " into a stored item"); return; }
+            }
+            else if (WeaponItems.AsFortress(item, out var g, out var r)) // one of the game's guns becomes a common of its kind
             {
                 if (!Vault.Fits(g, r)) { VaultFullNotice(); return; }
                 Vault.Add(g, r);
@@ -718,7 +750,12 @@ namespace HtfFortress
             if (!who.Inventory || !who.Inventory._items.TryGetValue(slot, out var item) || !item || item.IsDestroying || item.IsQuestItem || item.DeadPlayer
                 || (item.Creature && !item.Creature.IsDead)) return false;
             EnsureLoaded();
-            if (WeaponItems.AsFortress(item, out var g, out var r))
+            if (BossTrophies.Is(item, out var trophy))
+            {
+                if (SavedOf(item) is SavedItem ts) Vault.AddItem(new StoredItem { Saved = ts }); // always: the vault keeps its relics
+                else return false;
+            }
+            else if (WeaponItems.AsFortress(item, out var g, out var r))
             {
                 if (!Vault.Fits(g, r)) { VaultFullNotice(); return false; }
                 Vault.Add(g, r);
@@ -816,16 +853,36 @@ namespace HtfFortress
         }
 
         // The quartermaster's one-click sale: the money is the crew's (round or not), as if carried to the stall's counter.
-        private bool ServerSellAll(int tab, Rarity? colour)
+        private bool ServerSellAll(Player who, int tab, Rarity? colour)
         {
             var island = FortressIsland.Instance;
             if (!island || !island.Exists) return false;
-            var (money, _, n) = Vault.SellAll(tab, colour, ItemWorth);
+            Snapshot("pre-sell"); // a click of "sell all" is a lot to undo: keep the vault as it was just before it
+            var (money, scales, n) = Vault.SellAll(tab, colour, ItemWorth);
             if (n == 0) return false;
             Siege.Instance.ServerPay(money);
             Fx.Send(FxKind.Sell, island.VaultDoor, island.VaultDoor, 0, money);
+            Fx.Announce("vaultSellAllDone", n); // everyone sees a big sale happen (and the host log names who did it)
+            BuildSystem.Log.LogInfo($"sell all by {NameOf(who)}: {n} items, ${money}, {scales} scales");
             AutoTest.Count("vault_sold", n);
             return true;
+        }
+
+        // A copy of the vault as it is now, into fortress-backups: before anything that throws a lot away (a sell-all),
+        // so an accidental click can be undone by copying the file back (the host only; it lives next to its save).
+        internal bool Snapshot(string tag)
+        {
+            if (string.IsNullOrEmpty(_loadedFor)) return false;
+            try
+            {
+                string dir = Path.Combine(Paths.BepInExRootPath, "fortress-backups");
+                Directory.CreateDirectory(dir);
+                string file = Path.Combine(dir, $"{Safe(_loadedFor)}-{System.DateTime.Now:yyyyMMdd-HHmmss}-{tag}-vault.txt");
+                File.WriteAllText(file, Vault.Write());
+                BuildSystem.Log.LogInfo($"Vault snapshot before {tag}: {file}");
+                return true;
+            }
+            catch (System.Exception e) { BuildSystem.Log.LogWarning($"Vault snapshot ({tag}) failed: {e.Message}"); return false; }
         }
 
         // What the stall's counter pays for one of the game's items (the game's Item.TotalWorth, from what was saved of it).
@@ -884,11 +941,41 @@ namespace HtfFortress
         }
 
         // Host: the record lives in the save's vault, so test saves and practice rounds don't touch the real one.
+        // Souls: every ten waves cleared past 99, on the way to a new record. Paid back at the keeper to skip waves (small).
+        // The keeper's permanent tree: each level costs 15% more; effects multiply (see VaultData.DamageMult etc).
+        public static int SoulUpgradeCost(int kind, int level) => Mathf.RoundToInt(new[] { 10, 5, 5, 8, 8 }[kind] * Mathf.Pow(1.15f, Mathf.Max(0, level)));
+        public static int SoulLevel(VaultData v, int kind) => kind == 0 ? v.SoulDmg : kind == 1 ? v.SoulCrit : kind == 2 ? v.SoulCoins : kind == 3 ? v.SoulScales : v.SoulCore;
+        public bool ServerBuySoulUpgrade(int kind)
+        {
+            if (!InstanceFinder.IsServerStarted) return false;
+            EnsureLoaded();
+            if (kind < 0 || kind > 4) return false;
+            int lvl = SoulLevel(Vault, kind), cost = SoulUpgradeCost(kind, lvl);
+            if (Vault.Souls < cost) return false;
+            Vault.Souls -= cost;
+            switch (kind)
+            {
+                case 0: Vault.SoulDmg++; break;
+                case 1: Vault.SoulCrit = Mathf.Min(50, Vault.SoulCrit + 1); break; // +2% a level, up to 100%
+                case 2: Vault.SoulCoins++; break;
+                case 3: Vault.SoulScales++; break;
+                default: Vault.SoulCore++; break;
+            }
+            SaveVault();
+            AutoTest.Count("soul_upgrade_" + kind);
+            return true;
+        }
+        public static int SoulReward(int wave) => Mathf.RoundToInt(100f * Mathf.Pow(1.15f, Mathf.Max(0, wave / 10 - 10)));
         public bool ServerRecord(int waves)
         {
             EnsureLoaded();
             if (waves <= Vault.Best) return false;
+            int from = Vault.Best;
+            int souls = 0;
+            for (int m = Mathf.Max(100, (from / 10 + 1) * 10); m <= waves; m += 10) souls += SoulReward(m);
             Vault.Best = waves;
+            Vault.Souls += souls;
+            if (souls > 0) BuildSystem.Log.LogInfo($"record {waves}: +{souls} souls (have {Vault.Souls})");
             SaveVault();
             return true;
         }
@@ -1022,7 +1109,7 @@ namespace HtfFortress
             go.transform.position = pos;
             var spin = new GameObject("Spin").transform; // AnimateViews turns child 0
             spin.SetParent(go.transform, false);
-            var model = Models.Attach(DropModel(g), spin, Vector3.one * 0.4f);
+            var model = Models.Attach(DropModel(g), spin, Vector3.one * 0.4f, shadows: false, share: true);
             var mf = model.GetComponent<MeshFilter>();
             if (mf && mf.sharedMesh)
             {
@@ -1070,7 +1157,7 @@ namespace HtfFortress
         {
             var go = new GameObject("FortressChest");
             go.transform.position = pos;
-            var model = Models.Attach("Chest", go.transform, new Vector3(1f, 0.7f, 0.7f), new Vector3(0f, 0.35f, 0f));
+            var model = Models.Attach("Chest", go.transform, new Vector3(1f, 0.7f, 0.7f), new Vector3(0f, 0.35f, 0f), shadows: false, share: true);
             // E opens it (the game's outline and "[E]" on it, like a drop).
             var grab = new GameObject("Grab");
             grab.SetActive(false);
@@ -1089,22 +1176,21 @@ namespace HtfFortress
             return go;
         }
 
-        // A scale (or a little pile of them, by how many it's worth): flat, blue, glowing, turning slowly over the ground.
-        private static Material _scaleMat;
+        // A scale (or a little pile of them, by how many it's worth): a real scallop shell model, blue and glowing,
+        // turning slowly over the ground (Owen: no proper 3D model for the scales).
         private static GameObject MakeScaleView(Vector3 pos, int n)
         {
             var go = new GameObject("FortressScales");
             go.transform.position = pos;
             var spin = new GameObject("Spin").transform; // AnimateViews turns child 0
             spin.SetParent(go.transform, false);
-            if (!_scaleMat) _scaleMat = BossVfx.Glow(new Color(0.25f, 0.62f, 1f), 6f);
             int pieces = Mathf.Clamp(n, 1, 3);
             for (int i = 0; i < pieces; i++)
             {
-                var s = WeaponFx.Piece(WeaponFx.Ball, _scaleMat, spin);
-                s.localPosition = new Vector3((i - (pieces - 1) * 0.5f) * 0.16f, i * 0.04f, (i % 2) * 0.08f);
-                s.localRotation = Quaternion.Euler(25f + 15f * i, 40f * i, 10f);
-                s.localScale = new Vector3(0.4f, 0.05f, 0.29f);
+                var m = Models.Attach("FishScale", spin, Vector3.one * 0.35f, shadows: false, share: true);
+                m.transform.localPosition = new Vector3((i - (pieces - 1) * 0.5f) * 0.17f, i * 0.05f, (i % 2) * 0.09f);
+                m.transform.localRotation = Quaternion.Euler(0f, 35f * i, 8f - 4f * i);
+                m.transform.localScale = Vector3.one * (0.95f - 0.12f * i);
             }
             return go;
         }
@@ -1177,28 +1263,84 @@ namespace HtfFortress
             Destroy(go);
         }
 
-        // The team's scales, always on screen (bottom left, over the money), bumping up when they grow.
+        // The team's scales, always on screen (bottom left, just over the game's money box), bumping up when they grow.
         private TextMeshProUGUI _scalesHud;
         private int _scalesShown = -1;
         private float _scalesBump;
+        private RectTransform _moneyBox;
+        private static readonly Vector3[] ScaleCorners = new Vector3[4];
         private void DrawScalesHud()
         {
             bool show = Hud.Font && FortressIsland.Instance && FortressIsland.Instance.Exists && Player.LocalPlayer && !Hud.ModalOpen;
             if (!show) { if (_scalesHud) _scalesHud.gameObject.SetActive(false); return; }
             if (!_scalesHud) _scalesHud = Hud.Label(Hud.Root, "", 26f, Vector2.zero, new Vector2(48f, 182f), new Vector2(300f, 36f), TextAlignmentOptions.Left, Color.white, bold: true, outline: true, pivot: Vector2.zero); // over the game's money box
             _scalesHud.gameObject.SetActive(true);
+            // Sit just over the game's money box: at a fixed height the two overlapped on the newer HUD (Owen's playtest).
+            _scalesHud.rectTransform.anchoredPosition = new Vector2(48f, ScalesY());
             int n = ClientVault.Scales;
             if (n != _scalesShown) { if (_scalesShown >= 0 && n > _scalesShown) _scalesBump = 1f; _scalesShown = n; _scalesHud.text = $"<color=#7fd0ff>◆</color> {n} <size=70%>{L10n.T("scalesName")}</size>"; }
             _scalesBump = Mathf.MoveTowards(_scalesBump, 0f, Time.deltaTime * 2.5f);
             _scalesHud.transform.localScale = Vector3.one * (1f + 0.25f * _scalesBump);
         }
 
+        // The bottom of the scales line: the top edge of the game's money box (screen space) converted into the mod canvas's
+        // units, with room to clear the box's own panel and the glow of its amount. 214 when the game's HUD can't be found.
+        private bool _scalesLogged;
+        private float ScalesY()
+        {
+            var box = _moneyBox;
+            if (!box || !box.gameObject.activeInHierarchy)
+            {
+                _moneyBox = null;
+                object ui = HarmonyLib.AccessTools.Field(typeof(PlayerUI), "_instance")?.GetValue(null);
+                object money = ui != null ? HarmonyLib.AccessTools.Field(typeof(PlayerUI), "_moneyUI")?.GetValue(ui) : null;
+                box = money != null ? HarmonyLib.AccessTools.Field(typeof(MoneyUI), "_moneyTextHolder")?.GetValue(money) as RectTransform : null;
+                if (!box || !box.gameObject.activeInHierarchy)
+                {
+                    if (!_scalesLogged) { _scalesLogged = true; BuildSystem.Log.LogInfo("scales HUD: the game's money box wasn't found; line at 214"); }
+                    return 214f;
+                }
+                _moneyBox = box;
+            }
+            float top = Top(box);
+            // The game draws a rounded panel behind the amount; that panel is what the scales line used to sit on top of. Its
+            // rect is the holder's parent (with an Image): take the higher of the two.
+            var up = box.parent as RectTransform;
+            if (up && up.gameObject.activeInHierarchy && up.GetComponent<UnityEngine.UI.Image>()) top = Mathf.Max(top, Top(up));
+            var canvas = Hud.RootCanvas;
+            float k = canvas && canvas.scaleFactor > 0.01f ? canvas.scaleFactor : 1f;
+            // Room for the game's own floating money popups too (they rise a text line or two above the box for a few
+            // seconds): at +14 they still crossed the scales line (Owen's 36th-wave screenshot), hence the bigger gap.
+            float y = Mathf.Clamp(top / k + 70f, 260f, 420f);
+            if (!_scalesLogged) { _scalesLogged = true; BuildSystem.Log.LogInfo($"scales HUD: money top {Mathf.RoundToInt(top)} px, canvas scale {k:0.##}, line at {Mathf.RoundToInt(y)} (old fixed spot 182)"); }
+            return y;
+        }
+
+        private static float Top(RectTransform rt)
+        {
+            rt.GetWorldCorners(ScaleCorners);
+            return Mathf.Max(Mathf.Max(ScaleCorners[0].y, ScaleCorners[1].y), Mathf.Max(ScaleCorners[2].y, ScaleCorners[3].y));
+        }
+
+        // The mod's own loot visuals are for spotting things nearby; a screen full of scales from a boss far away is pure
+        // cost. Hidden past the distance, checked four times a second (a player walking back sees them again at once).
+        private float _nextCull;
+        private const float CullDistance = 90f;
         private void AnimateViews()
         {
             float t = Time.time;
+            bool cull = Time.unscaledTime >= _nextCull;
+            if (cull) _nextCull = Time.unscaledTime + 0.25f;
+            Vector3 eye = Player.LocalPlayer && Player.LocalPlayer.Transform ? Player.LocalPlayer.Transform.position : Vector3.zero;
             foreach (var kv in _scaleViews)
             {
                 if (!kv.Value) continue;
+                if (cull)
+                {
+                    bool near = (kv.Value.transform.position - eye).sqrMagnitude < CullDistance * CullDistance;
+                    if (kv.Value.activeSelf != near) kv.Value.SetActive(near);
+                    if (!near) continue;
+                }
                 var c = kv.Value.transform.GetChild(0);
                 c.localPosition = Vector3.up * (0.1f * Mathf.Sin(t * 3f + kv.Key));
                 c.localRotation = Quaternion.Euler(0f, t * 90f + kv.Key * 53f, 0f);
@@ -1206,6 +1348,12 @@ namespace HtfFortress
             foreach (var kv in _dropViews)
             {
                 if (!kv.Value) continue;
+                if (cull)
+                {
+                    bool near = (kv.Value.transform.position - eye).sqrMagnitude < CullDistance * CullDistance;
+                    if (kv.Value.activeSelf != near) kv.Value.SetActive(near);
+                    if (!near) continue;
+                }
                 var c = kv.Value.transform.GetChild(0);
                 c.localPosition = Vector3.up * (0.15f * Mathf.Sin(t * 2.5f + kv.Key));
                 c.localRotation = Quaternion.Euler(0f, t * 70f + kv.Key * 37f, 0f);
@@ -1224,6 +1372,8 @@ namespace HtfFortress
 
         // Test / debug: the host's current loot on the ground.
         public int ServerDropCount => _drops.Count;
+        public int ClientDropViews => _dropViews.Count;
+        public int ClientScaleViews => _scaleViews.Count;
         public IEnumerable<Vector3> ServerDropPositions => _drops.Values.Select(d => d.pos);
         public Vector3? ServerChestPos => _chest.id != 0 ? _chest.pos : (Vector3?)null;
     }

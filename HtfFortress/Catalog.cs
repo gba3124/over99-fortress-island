@@ -103,6 +103,7 @@ namespace HtfFortress
             if (Beyond(level) == 0) return s;
             float k = Grow(BeyondDamage, level);
             s.Damage = Mathf.RoundToInt(Mathf.Min(1e8f, s.Damage * k));
+            s.Interval = Mathf.Max(0.05f, s.Interval * Mathf.Pow(0.97f, Beyond(level))); // every level also fires faster
             s.Burn *= k;
             s.Range += Mathf.Min(BeyondRangeMax, BeyondRange * Beyond(level));
             if (t == PieceType.Bubble) s.Shield = Mathf.Min(0.85f, s.Shield + 0.025f * Beyond(level));

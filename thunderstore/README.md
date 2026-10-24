@@ -15,6 +15,14 @@ Beat the final boss and the sea strikes back with a fortress island and 100 wave
 - A village on the pier with a fish stall, a smithy and a vault the whole team shares
 - Solo or co-op
 
+## Installation
+
+**With a mod manager (recommended):** install BepInEx 5.4.2305 (the Thunderstore "BepInExPack") in the same profile, then this mod. The manager puts `HtfFortress.dll` together with `Models/` and `Icons/` under `BepInEx/plugins/` and the game loads it at startup. Everyone joining a co-op room must install the **same version** of this mod; a different build is told so and removed from the room.
+
+**By hand:** install BepInEx 5.4.2305 into the game folder (`How to Fish.exe` beside `BepInEx/`), then create `BepInEx/plugins/HtfFortress/` and copy `HtfFortress.dll`, `Models/` and `Icons/` into it. All three must sit together: the mod loads its models from its own folder.
+
+If the mod does not show up, check that `HtfFortress.dll` is directly inside `BepInEx/plugins/` (or one folder under it), not inside a nested `plugins/plugins/`.
+
 ## Languages
 
 English, Traditional Chinese and Simplified Chinese. The mod follows your game's language.
@@ -32,6 +40,37 @@ English, Traditional Chinese and Simplified Chinese. The mod follows your game's
 7. Survive wave 100 and you've gone OVER 99. You get fireworks, your names on the record board and a lighthouse that stays golden for good.
 
 The money is the game's own, shared by the whole team. Fishing pays for your first walls, and the later waves pay better than fishing ever did.
+
+## Troubleshooting
+
+**The mod does not appear in game.**
+1. Install BepInEx 5.4.2305 (the Thunderstore "BepInExPack") first; the game must have `BepInEx/` beside `How to Fish.exe`.
+2. The mod's three parts must sit together: `BepInEx/plugins/HtfFortress/HtfFortress.dll`, `BepInEx/plugins/HtfFortress/Models/` and `BepInEx/plugins/HtfFortress/Icons/`. If you unzipped a store package, make sure the DLL is not under a nested `plugins/plugins/` folder.
+3. Start the game once and check `BepInEx/LogOutput.log`: it should say `HTF Fortress build 0.1.3-...` and BepInEx should list `HtfFortress.dll` as loaded. If the log does not exist, BepInEx itself is not installed or the wrong version (BepInEx 6 will not work).
+
+**"Different Fortress build" and I get removed from a co-op room.**
+Everyone in the room must run the exact same version of this mod. Open the [I] panel to read your build (`0.1.3-xxxxxx`) and compare; update the odd ones out and restart the game. A host must also restart after replacing the DLL: BepInEx only loads it at startup.
+
+**The version shown in game is older than the one I installed.**
+The game was not restarted, or there is a second copy of `HtfFortress.dll` somewhere under `BepInEx/plugins/`. Delete old folders, install one copy, restart.
+
+**The mod's models are invisible, magenta, or the game crashes on the fortress island.**
+`Models/` and `Icons/` must stay next to `HtfFortress.dll` (do not move the DLL alone). Reinstall the whole package, then check the last lines of `BepInEx/LogOutput.log` for the exception that names the missing file.
+
+**Crash or black screen on startup.**
+Check `BepInEx/LogOutput.log` (BepInEx's own log) and `Player.log` (`%USERPROFILE%\AppData\LocalLow\Dazed Games\How to Fish\Player.log` on Windows; on Linux/Proton inside the prefix at `drive_c/users/steamuser/AppData/LocalLow/Dazed Games/How to Fish/Player.log`; on macOS Pixel Port it is in the same place inside the Pixel Port prefix). Send the last 30 lines. A crash before the menu is almost always BepInEx 6 instead of 5, or two different copies of the mod.
+
+**Co-op: things stop and jump for everyone, or only one player lags.**
+The mod writes a `perf host:` / `perf client:` line to `BepInEx/LogOutput.log` every 10 s with fps, worst frame, wave, enemies, helpers, drops, scales, pieces and `fx/10s`. A long host frame is what every client sees as "everything freezes, then jumps", so include those lines (both sides) when reporting. Settings that help on weak machines: `Performance/PropShadows = true` (back on) is the *default off*; `ClientSettings/Reduced` in the same config turns some effects off.
+
+**The vault seems empty after a session.**
+The team's vault is `BepInEx/fortress-vault/<save name>.txt` on the host; every sell-all leaves a `*-pre-sell-vault.txt` in `BepInEx/fortress-backups/`. Copy the newest backup over the vault file to restore it (with the game closed). Do not delete `fortress-backups/`.
+
+**Mac / Linux.**
+The same `BepInEx/plugins/HtfFortress/` layout applies inside the Proton/Pixel Port prefix. The game folder on this setup is under the prefix's `drive_c/Program Files (x86)/Steam/steamapps/common/How to Fish/How to Fish/`; the log is in `BepInEx/LogOutput.log` there.
+
+**The cheat menu does not open.**
+Set `Debug/DebugKeys = true` in `BepInEx/config/owen.htf.fortress.cfg` and restart; the menu opens with `Debug/MenuKey` (default F12).
 
 ## Meet the fish
 

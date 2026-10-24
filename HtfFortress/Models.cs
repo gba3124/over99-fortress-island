@@ -41,6 +41,17 @@ namespace HtfFortress
         private static readonly Dictionary<Material, Texture2D> Swatch = new Dictionary<Material, Texture2D>();
         private static readonly Dictionary<Material, Color> Painted = new Dictionary<Material, Color>();
 
+        // Shared materials for the many identical small props (loot, scales, gulls, baskets): one material and one swatch
+        // texture for all of them, instead of a new pair per instance (which broke batching and filled memory).
+        private static readonly Dictionary<(Color, Color), Material> SharedMats = new Dictionary<(Color, Color), Material>();
+        public static Material MakeShared(Color color, Color emit = default)
+        {
+            if (SharedMats.TryGetValue((color, emit), out var m) && m) return m;
+            m = Make(color, emit);
+            SharedMats[(color, emit)] = m;
+            return m;
+        }
+
         public static Material Make(Color color, Color emit = default)
         {
             var t = Template();
@@ -95,7 +106,7 @@ namespace HtfFortress
         // ---------- spawning ----------
 
         // Builds the model as a child of `parent`. Falls back to a plain cube of `fallbackSize` if the OBJ is missing.
-        public static GameObject Attach(string name, Transform parent, Vector3 fallbackSize, Vector3 fallbackOffset = default)
+        public static GameObject Attach(string name, Transform parent, Vector3 fallbackSize, Vector3 fallbackOffset = default, bool shadows = true, bool share = false)
         {
             var model = Load(name);
             GameObject go;
@@ -103,20 +114,21 @@ namespace HtfFortress
             {
                 go = new GameObject(name + "Model");
                 go.AddComponent<MeshFilter>().sharedMesh = model.Mesh;
-                go.AddComponent<MeshRenderer>().sharedMaterials = model.Colors.Select((c, i) => Make(c, model.Emits[i])).ToArray();
+                go.AddComponent<MeshRenderer>().sharedMaterials = model.Colors.Select((c, i) => share ? MakeShared(c, model.Emits[i]) : Make(c, model.Emits[i])).ToArray();
             }
             else
             {
                 go = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 Object.Destroy(go.GetComponent<Collider>());
                 go.transform.localScale = fallbackSize;
-                go.GetComponent<Renderer>().sharedMaterial = Make(new Color(0.6f, 0.45f, 0.3f));
+                go.GetComponent<Renderer>().sharedMaterial = share ? MakeShared(new Color(0.6f, 0.45f, 0.3f)) : Make(new Color(0.6f, 0.45f, 0.3f));
             }
             go.AddComponent<OwnMaterials>().Mats.AddRange(go.GetComponent<Renderer>().sharedMaterials);
             go.transform.SetParent(parent, false);
             go.transform.localPosition = model != null ? Vector3.zero : fallbackOffset;
             go.layer = parent.gameObject.layer;
             var r = go.GetComponent<Renderer>();
+            if (!shadows) { r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; r.receiveShadows = false; }
             var cols = model != null ? model.Colors.ToArray() : new[] { new Color(0.6f, 0.45f, 0.3f) };
             BaseColors[r] = cols;
             Originals[r] = cols.ToArray();

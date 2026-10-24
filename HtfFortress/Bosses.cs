@@ -22,6 +22,7 @@ namespace HtfFortress
         // code stays off (BossPuppetPatches).
         internal static readonly HashSet<Creature> Puppets = new HashSet<Creature>();
         private readonly Dictionary<Creature, BossBrain> _brains = new Dictionary<Creature, BossBrain>();
+        private readonly List<KeyValuePair<Creature, BossBrain>> _brainsScratch = new List<KeyValuePair<Creature, BossBrain>>(); // reused in Update: no per-frame garbage
         private readonly Dictionary<int, float> _silenced = new Dictionary<int, float>(); // turret piece id -> until
         private float _nextAura;
 
@@ -101,7 +102,9 @@ namespace HtfFortress
             if (FortressPlugin.Frozen) { foreach (var c in _brains.Keys) if (c) Siege.Synced(c); return; } // test key F11
             bool aura = Time.time >= _nextAura;
             if (aura) _nextAura = Time.time + 0.5f;
-            foreach (var kv in _brains.ToList())
+            _brainsScratch.Clear();
+            _brainsScratch.AddRange(_brains);
+            foreach (var kv in _brainsScratch)
             {
                 var b = kv.Value;
                 if (!kv.Key || kv.Key._hp.Value <= 0 || !Siege.Instance.ServerActive)
@@ -370,6 +373,31 @@ namespace HtfFortress
 
         // Walk (on the ground, turning as it goes) toward `goal` until within `stopAt`, `seconds` at most. Walls in its way
         // are trampled: it stops at one and breaks it.
+        // Going round instead of standing still in front of every turret (Owen: "每隻都很笨重"): probe a few sides for a
+        // clear way, remember it for a moment, and only trample when the way really is walled off.
+        private Vector3 _detourDir;
+        private float _detourUntil;
+        private bool TryDetour(Vector3 dir, out Vector3 move)
+        {
+            move = Vector3.zero;
+            if (Time.time < _detourUntil && _detourDir.sqrMagnitude > 0.01f && WallAhead(_detourDir) == null)
+            {
+                move = _detourDir;
+                return true;
+            }
+            for (int i = 0; i < 8; i++)
+            {
+                float ang = (i % 2 == 0 ? 1f : -1f) * (40f + 25f * (i / 2));
+                Vector3 side = (Quaternion.Euler(0f, ang, 0f) * dir).Flat().normalized;
+                if (WallAhead(side) != null) continue;
+                Vector3 next = Pos + side * 1.4f;
+                if (Mathf.Abs(LandY(next) - LandY(Pos)) > 2.5f) continue;
+                _detourDir = side; _detourUntil = Time.time + 0.8f; move = side;
+                return true;
+            }
+            return false;
+        }
+
         protected IEnumerator WalkTo(Vector3 goal, float speed, float stopAt, float seconds)
         {
             for (float t = 0f; t < seconds && Alive; t += Time.deltaTime)
@@ -377,9 +405,22 @@ namespace HtfFortress
                 Vector3 to = (goal - Pos).Flat();
                 if (to.magnitude <= stopAt) yield break;
                 Vector3 dir = to.normalized;
-                Quaternion face = Quaternion.RotateTowards(T.rotation, Facing(dir), 140f * Time.deltaTime);
+                Quaternion face = Quaternion.RotateTowards(T.rotation, Facing(dir), 220f * Time.deltaTime);
                 var wall = WallAhead(dir);
-                if (wall != null) { Put(Pos, face); yield return Trample(wall.Value); continue; }
+                if (wall != null)
+                {
+                    // A turret or a short wall in the way: step around it if there is a way; otherwise break through it.
+                    if (TryDetour(dir, out var side))
+                    {
+                        Vector3 step = Pos + side * speed * SlowFactor * Time.deltaTime;
+                        Put(Stand(step), Quaternion.RotateTowards(T.rotation, Facing(side), 260f * Time.deltaTime));
+                        yield return null;
+                        continue;
+                    }
+                    Put(Pos, face);
+                    yield return Trample(wall.Value);
+                    continue;
+                }
                 Vector3 next = Pos + dir * speed * SlowFactor * Time.deltaTime;
                 if (Mathf.Abs(LandY(next) - LandY(Pos)) > 2.5f) yield break; // a cliff
                 Put(Stand(next), face);
@@ -392,7 +433,7 @@ namespace HtfFortress
         {
             if (Time.time >= _nextTrample)
             {
-                _nextTrample = Time.time + 0.8f;
+                _nextTrample = Time.time + 0.55f;
                 BuildSystem.Instance.ServerDamagePiece(wall.Id, Scaled(55f));
                 Send("stomp", wall.Pos, wall.Pos);
             }
@@ -642,10 +683,12 @@ namespace HtfFortress
             if ((Core - Pos).Flat().magnitude < r + 2f) Siege.Instance.DamageCore(Mathf.RoundToInt((20 + Wave) * 0.5f));
         }
 
-        // Too slow: it throws itself at the lighthouse (a third of its health) and is gone.
+        // Too slow: it throws itself at the lighthouse and is gone. A boss that is still nearly full does far more damage
+        // than one that was already worn down (Owen: "扣王剩餘血量的比例"): 60 % of the core at full health, 15 % when spent.
         private void Crash()
         {
-            Siege.Instance.DamageCore(Mathf.RoundToInt(Siege.Instance.CoreMax * 0.35f));
+            float hp = MaxHp > 0 ? Mathf.Clamp01(Body._hp.Value / (float)MaxHp) : 1f;
+            Siege.Instance.DamageCore(Mathf.RoundToInt(Siege.Instance.CoreMax * Mathf.Lerp(0.15f, 0.6f, hp)));
             Fx.Send(FxKind.Crash, Core + Vector3.up * 2f, Core + Vector3.up * 2f);
             Fx.Announce("bossCrashed");
             Report(false);

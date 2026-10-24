@@ -22,10 +22,14 @@ namespace HtfFortress
         Mend, // a repair tower's spark to what it mends: PieceId the tower
         Absorber, // the absorber's moves (drawn by BossMoves.PlayAbsorber): Key the move
         Drip, // a wet fish dripping (drawn by Weapons)
-        Gatling } // the gatling's bullets (drawn by Weapons): PieceId how many (-1: one glancing on to the next fish), Arg how far it's spun up (%)
+        Gatling, // the gatling's bullets (drawn by Weapons): PieceId how many (-1: one glancing on to the next fish), Arg how far it's spun up (%)
+        Soul } // souls rising at the lighthouse after a settlement (drawn by Weapons)
 
     // Host -> everyone: a visual effect (and for Announce, a banner: Key = string key, Arg = number). Who = the player whose weapon did it.
     public struct FxEvent : IBroadcast { public FxKind Kind; public Vector3 From; public Vector3 To; public int PieceId; public string Key; public int Arg; public int Who; }
+    // A whole frame's worth of effects in one broadcast (a late wave makes dozens a second: one message each was most of the
+    // mod's traffic and the client ran a handler per effect).
+    public struct FxBatch : IBroadcast { public FxEvent[] Events; }
 
     // All transient visuals in one place, drawn on every client from host broadcasts.
     public class Fx : MonoBehaviour
@@ -38,17 +42,55 @@ namespace HtfFortress
         {
             GenericWriter<FxEvent>.SetWrite((w, v) => { w.WriteByte((byte)v.Kind); w.WriteVector3(v.From); w.WriteVector3(v.To); w.WriteInt32(v.PieceId); w.WriteString(v.Key ?? ""); w.WriteInt32(v.Arg); w.WriteInt32(v.Who); });
             GenericReader<FxEvent>.SetRead(r => new FxEvent { Kind = (FxKind)r.ReadByte(), From = r.ReadVector3(), To = r.ReadVector3(), PieceId = r.ReadInt32(), Key = r.ReadString(), Arg = r.ReadInt32(), Who = r.ReadInt32() });
+            GenericWriter<FxBatch>.SetWrite((w, v) =>
+            {
+                int n = v.Events?.Length ?? 0;
+                w.WriteInt32(n);
+                for (int i = 0; i < n; i++)
+                {
+                    var e = v.Events[i];
+                    w.WriteByte((byte)e.Kind); w.WriteVector3(e.From); w.WriteVector3(e.To); w.WriteInt32(e.PieceId);
+                    w.WriteString(e.Key ?? ""); w.WriteInt32(e.Arg); w.WriteInt32(e.Who);
+                }
+            });
+            GenericReader<FxBatch>.SetRead(r =>
+            {
+                int n = r.ReadInt32();
+                var arr = new FxEvent[n];
+                for (int i = 0; i < n; i++)
+                    arr[i] = new FxEvent { Kind = (FxKind)r.ReadByte(), From = r.ReadVector3(), To = r.ReadVector3(), PieceId = r.ReadInt32(), Key = r.ReadString(), Arg = r.ReadInt32(), Who = r.ReadInt32() };
+                return new FxBatch { Events = arr };
+            });
         }
 
         private void Awake() => _instance = this;
         public static Fx Instance => _instance;
 
+        private static readonly List<FxEvent> _pending = new List<FxEvent>(128); // host: this frame's effects, sent once
+        public static int Queued; // read and cleared by PerfLog: effects the host produced in the last window
+
+        // Host: queue one for everyone (the host's own client receives it too, at the end of the frame).
+        public static void Queue(FxEvent e)
+        {
+            if (!InstanceFinder.IsServerStarted) return;
+            Queued++;
+            _pending.Add(e);
+            if (_pending.Count >= 256) Flush();
+        }
+
+        // One broadcast per frame at most: a wave's hits, burns and shots arrive together instead of as dozens of messages.
+        private static void Flush()
+        {
+            if (_pending.Count == 0) return;
+            var events = _pending.ToArray();
+            _pending.Clear();
+            InstanceFinder.ServerManager.Broadcast(new FxBatch { Events = events });
+        }
+
         // Host: send to everyone (the host's own client receives it too).
         // `damage` > 0 shows the game's own damage number where it lands.
-        public static void Send(FxKind kind, Vector3 from, Vector3 to, int pieceId = 0, int damage = 0, int who = 0)
-        {
-            if (InstanceFinder.IsServerStarted) InstanceFinder.ServerManager.Broadcast(new FxEvent { Kind = kind, From = from, To = to, PieceId = pieceId, Arg = damage, Who = who });
-        }
+        public static void Send(FxKind kind, Vector3 from, Vector3 to, int pieceId = 0, int damage = 0, int who = 0) =>
+            Queue(new FxEvent { Kind = kind, From = from, To = to, PieceId = pieceId, Arg = damage, Who = who });
 
         // The game's own sounds (see BepInEx/fortress-sounds.txt for every name).
         public static void Sound(string clip, Vector3 at, float volume = 1f, AudioDistance dist = AudioDistance.Medium)
@@ -118,17 +160,13 @@ namespace HtfFortress
             _flushing = false;
         }
 
-        public static void Announce(string key, int arg = 0)
-        {
-            if (InstanceFinder.IsServerStarted) InstanceFinder.ServerManager.Broadcast(new FxEvent { Kind = FxKind.Announce, Key = key, Arg = arg });
-        }
+        public static void Announce(string key, int arg = 0) => Queue(new FxEvent { Kind = FxKind.Announce, Key = key, Arg = arg });
 
         // A boss's fight (BossBrain.Report), in everyone's chat in their own language: seconds, the players' share of the
         // damage, and how much of its health was taken (From.x) if it got away.
         public static void BossFight(EnemyKind kind, bool down, int seconds, int playersPct, int takenPct)
         {
-            if (InstanceFinder.IsServerStarted)
-                InstanceFinder.ServerManager.Broadcast(new FxEvent { Kind = FxKind.Announce, Key = down ? "bossFightDown" : "bossFightCrashed", Arg = seconds, PieceId = playersPct, Who = (int)kind, From = new Vector3(takenPct, 0f, 0f) });
+            Queue(new FxEvent { Kind = FxKind.Announce, Key = down ? "bossFightDown" : "bossFightCrashed", Arg = seconds, PieceId = playersPct, Who = (int)kind, From = new Vector3(takenPct, 0f, 0f) });
         }
 
         private void Update()
@@ -137,8 +175,9 @@ namespace HtfFortress
             if (nm && nm != _registeredOn)
             {
                 _registeredOn = nm;
-                nm.ClientManager.RegisterBroadcast<FxEvent>((e, ch) => Play(e));
+                nm.ClientManager.RegisterBroadcast<FxBatch>((b, ch) => { if (b.Events == null) return; for (int i = 0; i < b.Events.Length; i++) Play(b.Events[i]); });
             }
+            if (InstanceFinder.IsServerStarted && _pending.Count > 0) Flush(); // the whole frame's effects, once
         }
 
         private void Play(FxEvent e)

@@ -17,9 +17,11 @@ namespace HtfFortress
     [BepInPlugin("owen.htf.fortress", "OVER 99", Version)]
     public class FortressPlugin : BaseUnityPlugin
     {
-        public const string Version = "0.1.2";
+        public const string Version = "0.2.8";
         private ConfigEntry<Key> _toggleKey;
         private ConfigEntry<bool> _debugKeys;
+        private ConfigEntry<Key> _menuKey;
+        private ConfigEntry<float> _menuScale;
         private int _kills;
         private ConfigEntry<string> _pool;
         private ConfigEntry<int> _baseCount;
@@ -38,6 +40,9 @@ namespace HtfFortress
         // Wave creatures still alive; turrets pick targets from here.
         public static readonly List<Creature> Alive = new List<Creature>();
         private List<Creature> _alive => Alive;
+        // Reused every frame (no garbage): see the round's Update.
+        private static readonly List<Creature> _escaped = new List<Creature>(), _dead = new List<Creature>();
+        private static readonly List<Vector3> _splits = new List<Vector3>();
         // Enemies that must die to clear a wave (land attackers); sea creatures are extras and get cleaned up.
         private readonly HashSet<Creature> _required = new HashSet<Creature>();
         private float _waveStarted;
@@ -51,6 +56,7 @@ namespace HtfFortress
         private int _stackFrom;   // the first wave of the ones on the field now (more than one when called early): all paid when they're cleared
         private int _bestAtStart; // the save's record when this round began (it's raised wave by wave now)
         private float _nextWaveAt;
+        private ConfigEntry<float> _spawnGap, _burstGap;
         private bool _warnedNoLand;
         private bool _hadAlivePlayers;
 
@@ -58,7 +64,9 @@ namespace HtfFortress
         {
             _instance = this;
             _toggleKey = Config.Bind("Debug", "ToggleKey", Key.F9, "Test key: host starts / ends a round (needs DebugKeys).");
-            _debugKeys = Config.Bind("Debug", "DebugKeys", false, "Test keys for the host: F4 teleport to the fortress, F5 +500 coins, F6 god mode, F7 kill all, F8 skip build time (Shift: jump 5 waves), F9 start/end a round.");
+            _debugKeys = Config.Bind("Debug", "DebugKeys", false, "Test keys for the host: F4 teleport to the fortress, F5 +500 coins, F6 god mode, F7 kill all, F8 skip build time (Shift: jump 5 waves), F9 start/end a round. The clickable cheat menu opens with MenuKey.");
+            _menuKey = Config.Bind("Debug", "MenuKey", Key.F12, "Open the clickable cheat menu (needs DebugKeys).");
+            _menuScale = Config.Bind("Debug", "MenuScale", 1f, new ConfigDescription("Cheat menu size.", new AcceptableValueRange<float>(0.6f, 1.8f)));
             FortressIsland.Unlock = Config.Bind("Island", "Unlock", IslandUnlock.AfterFinalBoss, "When the fortress island appears: after beating the final boss, or always.");
             Reveal.Seen = Config.Bind("Island", "RevealSeen", false, "The island's entrance (it rises out of the sea) has played on this computer. Set to false to see it again.");
             _pool = Config.Bind("Waves", "CreaturePool", "", "Comma-separated creature names to spawn. Empty = hostile creatures only. Names are listed in the BepInEx log on start.");
@@ -66,6 +74,10 @@ namespace HtfFortress
             _countPerWave = Config.Bind("Waves", "CountPerWave", 2, new ConfigDescription("Extra creatures added each wave.", new AcceptableValueRange<int>(0, 20)));
             _hpPerWave = Config.Bind("Waves", "HpPerWave", 0.4f, new ConfigDescription("Extra HP multiplier per wave (0.4 = +40% each wave).", new AcceptableValueRange<float>(0f, 2f)));
             _radius = Config.Bind("Waves", "SpawnRadius", 6f, new ConfigDescription("Distance from the host where creatures appear.", new AcceptableValueRange<float>(3f, 80f)));
+            // A wave used to arrive in three big bursts that instantiated everything at once (smooth for nobody, and a
+            // stutter on every machine). Fish now walk in one after another, and the bursts are closer together.
+            _spawnGap = Config.Bind("Waves", "SpawnGap", 0.06f, new ConfigDescription("Seconds between two fish of a wave appearing (0 = all at once).", new AcceptableValueRange<float>(0f, 0.5f)));
+            _burstGap = Config.Bind("Waves", "BurstGap", 1.2f, new ConfigDescription("Seconds between the three bursts of a wave (was 3.5).", new AcceptableValueRange<float>(0f, 10f)));
             // New names so the longer defaults reach existing setups (the old BreakSeconds / FirstBuildSeconds were 25 / 45).
             _breakSeconds = Config.Bind("Waves", "BuildSecondsBetweenWaves", 90f, new ConfigDescription("Build time between waves (the host can press N to start the next wave sooner).", new AcceptableValueRange<float>(0f, 300f)));
             _walkerShare = Config.Bind("Siege", "WalkerShare", 0.5f, new ConfigDescription("Share of each wave that are walkers charging the core.", new AcceptableValueRange<float>(0f, 1f)));
@@ -82,6 +94,9 @@ namespace HtfFortress
             _waveBonus = Config.Bind("Economy", "WaveBonus", 25, new ConfigDescription("Coins for clearing a wave (plus 6 x wave).", new AcceptableValueRange<int>(0, 500)));
             Turrets.DamageMultiplier = Config.Bind("Economy", "TurretDamage", 1f, new ConfigDescription("Turret damage multiplier.", new AcceptableValueRange<float>(0.1f, 10f)));
             HandDamage = Config.Bind("Economy", "HandDamage", 1f, new ConfigDescription("Multiplier on damage players' own weapons (guns, bow, knife, fists) deal to fortress enemies.", new AcceptableValueRange<float>(0.1f, 10f)));
+            SellAllAnyPlayer = Config.Bind("Economy", "VaultSellAllAnyPlayer", false, "Also let friends use the vault's \"sell all\" buttons. Off: only the host can sell everything at once (the host's log records who did).");
+            CorpseCap = Config.Bind("Performance", "CorpseCap", 160, new ConfigDescription("Most fish bodies left on the island at once; the oldest vanish beyond it. 110 was too tight for a late wave (about 200 fish), 160 keeps a full wave plus a backlog; raise it if your machines keep up.", new AcceptableValueRange<int>(40, 400)));
+            PropShadows = Config.Bind("Performance", "PropShadows", false, "Let the mod's small props (loot, chests, baskets, gulls) cast shadows. Off saves GPU: the shadow pass draws things that are off screen.");
             L10n.Setting = Config.Bind("General", "Language", LanguageSetting.Auto, "Language for Fortress messages. Auto follows the game.");
             BuildSystem.BuildKey = Config.Bind("Build", "BuildKey", Key.G, "Toggle build mode.");
             Weapons.NetKey = Config.Bind("Weapons", "NetKey", Key.F, "Take out / put away the hand net (scoops dead fish; sell them at the fish stall).");
@@ -100,6 +115,8 @@ namespace HtfFortress
             gameObject.AddComponent<Loot>();
             gameObject.AddComponent<VaultUI>();
             gameObject.AddComponent<StallMenu>();
+            gameObject.AddComponent<KeeperMenu>();
+            gameObject.AddComponent<CheatMenu>();
             gameObject.AddComponent<Construction>();
             gameObject.AddComponent<PieceMenu>();
             gameObject.AddComponent<Actives>();
@@ -112,6 +129,7 @@ namespace HtfFortress
             gameObject.AddComponent<ItemIcons>();
             gameObject.AddComponent<Bosses>();
             gameObject.AddComponent<BossFx>();
+            gameObject.AddComponent<PerfLog>(); // long-frame log: what clients see as "everything stops, then jumps"
             Markers.Show = Config.Bind("Players", "TeammateMarkers", true, "Show where your teammates are: a mark over their heads with name and distance (red while they're down and need carrying back), an arrow at the screen's edge when they're off it.");
             Unstuck.UnstuckKey = Config.Bind("Players", "UnstuckKey", Key.O, "Hold to get out when you're stuck in or between pieces (you're also freed by yourself when you're inside one, or push for 2 s and go nowhere).");
             gameObject.AddComponent<Markers>();
@@ -141,6 +159,27 @@ namespace HtfFortress
         public int Wave => _wave;
         public int Cleared => _cleared;
         public bool InBuildTime => _running && _nextWaveAt > 0f;
+        public int WaveNow => _wave;
+
+        // Host: the lighthouse keeper's soul skip (Owen): one soul for ten waves, only between waves, never past the save's
+        // own record, and only once wave 100 has been cleared (souls are earned there and beyond).
+        public bool ServerSkipTenWaves()
+        {
+            if (!InstanceFinder.IsServerStarted || !_running || _nextWaveAt <= 0f) return false;
+            var v = Loot.Instance ? Loot.Instance.Vault : null;
+            if (v == null || v.Best < 100 || v.Souls < 1) return false;
+            int target = (_wave / 10 + 1) * 10;
+            int cap = v.Best / 10 * 10;
+            if (target > cap) return false;
+            v.Souls--;
+            _wave = target - 1;
+            _nextWaveAt = Time.time;
+            Loot.Instance.SaveVault();
+            AutoTest.Count("skip_waves");
+            Say(L10n.T("skipWaveDone", target, v.Souls));
+            BuildSystem.Log.LogInfo($"keeper skip: wave {target - 10} -> {target}, souls left {v.Souls}");
+            return true;
+        }
         // Mid-wave the host can hold N to bring the next wave on top of this one (Owen asked): not while this one is still
         // landing, not a boss's wave (its entrance wants the stage to itself), not past wave 100.
         public const float CallHold = 1.2f;
@@ -178,6 +217,13 @@ namespace HtfFortress
 
         public static readonly HashSet<Creature> Showcase = new HashSet<Creature>();
         public static ConfigEntry<float> HandDamage;
+        // Small mod props (loot, chests, baskets, gulls) casting shadows: the shadow camera draws casters you cannot see, so
+        // turning it off is one of the cheapest GPU savings there is (Owen: "沒看的地方不渲染").
+        public static ConfigEntry<bool> PropShadows;
+        public static ConfigEntry<int> CorpseCap;
+        // A one-click sale throws a whole tab away: only the host may do it unless the team turns this on (Owen: a friend
+        // emptied the stash). The sale itself still leaves a pre-sell snapshot in fortress-backups.
+        public static ConfigEntry<bool> SellAllAnyPlayer;
         public float WaveHpMult => _hpMult; // this wave's health multiplier (things that should keep up with the fish use it)
 
         // Shift+F7: everything lying on the fortress island and in the water round it goes (weapons, fish, the game's items,
@@ -203,10 +249,30 @@ namespace HtfFortress
         }
         public void DebugStopRound() { if (_running) Stop(L10n.T("stopped")); }
 
+        // Cheat menu: the new currencies and vault, so a tester does not have to grind to the wave that pays them.
+        public void DebugSouls(int n) { if (!IsHost) return; var v = Loot.Instance ? Loot.Instance.Vault : null; if (v == null) return; v.Souls = Mathf.Max(0, v.Souls + n); Loot.Instance.SaveVault(); }
+        public void DebugScales(int n) { if (!IsHost) return; var v = Loot.Instance ? Loot.Instance.Vault : null; if (v == null) return; v.Scales = Mathf.Max(0, v.Scales + n); Loot.Instance.SaveVault(); }
+        public void DebugGear(int n)
+        {
+            if (!IsHost || Loot.Instance == null) return;
+            for (int i = 0; i < n; i++) Loot.Instance.ServerGive(GearCatalog.RandomGear(), GearCatalog.Roll(Mathf.Max(1, _wave), Rarity.Common));
+        }
+        public void DebugUnlockAll()
+        {
+            if (!IsHost || Loot.Instance == null) return;
+            var v = Loot.Instance.Vault;
+            foreach (PieceType t in System.Enum.GetValues(typeof(PieceType))) if (Catalog.NeedsBlueprint(t)) v.Unlocked.Add(t);
+            Loot.Instance.SaveVault();
+        }
+
         // ---------- test keys (Debug / DebugKeys, host only; Mac keyboards need Fn for the F keys) ----------
 
         private UnityEngine.UI.Image _testHelp;
         public bool TestKeysOn => _debugKeys.Value;
+        public Key MenuKey => _menuKey != null ? _menuKey.Value : Key.F12;
+        public Key ToggleKey => _toggleKey.Value;
+        public int CorpseCapValue => CorpseCap != null ? CorpseCap.Value : 160;
+        public float MenuScale { get => _menuScale != null ? _menuScale.Value : 1f; set { if (_menuScale != null) _menuScale.Value = Mathf.Clamp(value, 0.6f, 1.8f); } }
         // Mine, or the host's: a friend in a host's world with test keys on has them too (the playtest's F5 did nothing).
         private bool KeysOn => _debugKeys.Value || (!IsHost && Siege.Instance && Siege.Instance.View.TestKeys);
 
@@ -222,9 +288,12 @@ namespace HtfFortress
             if (!_testHelp && KeysOn && Hud.Font)
             {
                 _testHelp = Hud.Box(Hud.Root, new Vector2(1f, 1f), new Vector2(-18f, -18f), new Vector2(330f, 290f), Hud.Panel, 14f);
+                _testHelp.raycastTarget = true;
+                var mb = _testHelp.gameObject.AddComponent<UnityEngine.UI.Button>();
+                mb.onClick.AddListener(() => { if (CheatMenu.Instance) CheatMenu.Instance.Toggle(); }); // click the list: the clickable menu
                 // A key a line, never wrapped (Owen: "很多地方的文字都會換行"): the panel is as wide as its longest line, and past
                 // 560 the text shrinks instead.
-                var t = Hud.Label(_testHelp.transform, Hud.Keys(L10n.T("testKeys")), 19f, new Vector2(0f, 1f), new Vector2(16f, -12f), new Vector2(560f, 270f), TMPro.TextAlignmentOptions.TopLeft, pivot: new Vector2(0f, 1f));
+                var t = Hud.Label(_testHelp.transform, Hud.Keys(L10n.T("testKeys") + "\n" + L10n.T("testKeysClick")), 19f, new Vector2(0f, 1f), new Vector2(16f, -12f), new Vector2(560f, 270f), TMPro.TextAlignmentOptions.TopLeft, pivot: new Vector2(0f, 1f));
                 t.lineSpacing = 18f;
                 t.enableWordWrapping = false;
                 var need = t.GetPreferredValues(t.text, float.PositiveInfinity, float.PositiveInfinity);
@@ -235,7 +304,7 @@ namespace HtfFortress
             if (_testHelp) _testHelp.gameObject.SetActive(KeysOn);
             if (!KeysOn || kb == null || ChatManager.IsTyping || Hud.ModalOpen) return;
             foreach (var key in new[] { Key.F1, Key.F2, Key.F3, Key.F5, Key.F6, Key.F7, Key.F8, Key.F10, Key.F11, _toggleKey.Value }) // (F4 is everyone's: Unstick)
-                if (kb[key].wasPressedThisFrame) TestKey(key, kb.shiftKey.isPressed, kb.ctrlKey.isPressed);
+                if (kb[key].wasPressedThisFrame) TestKey(key, kb.shiftKey.isPressed, kb.ctrlKey.isPressed || kb.leftAltKey.isPressed || kb.rightAltKey.isPressed);
         }
 
         // F4, for anyone at any time: back to the ready circle by the lighthouse (stuck in a rock or your own walls: the
@@ -373,8 +442,14 @@ namespace HtfFortress
             // Same squad-wipe check the game uses (PlayerDying.OnPlayerAmountChange).
             // Only once someone has been alive this round (a fresh save starts in a 'drowning' intro with nobody alive).
             // Someone down: mark where (everyone sees a pillar there; what they carried is hard to find otherwise).
-            foreach (var p in PlayerManager.Players.Where(p => p && p.Transform && p.Dying))
+            // Plain loops and reused lists: this runs every frame with every enemy, and the LINQ here made several kB of
+            // garbage a frame. Mono's GC is stop-the-world, so that garbage showed up as the server freezing for a moment
+            // every few seconds -- and every client's world with it.
+            var players = PlayerManager.Players;
+            for (int i = 0; i < players.Count; i++)
             {
+                var p = players[i];
+                if (!p || !p.Transform || !p.Dying) continue;
                 bool down = p.Dying.IsDead;
                 if (down && _markedDead.Add(p.ObjectId)) Fx.Send(FxKind.DeathMark, p.Transform.position, p.Transform.position, 0, 0, p.ObjectId);
                 else if (!down) _markedDead.Remove(p.ObjectId);
@@ -388,14 +463,26 @@ namespace HtfFortress
             // Anything that wandered far from the fight (or a sea creature that swam off) is removed.
             Vector3 corePos = Siege.Instance.CorePos;
             // (Not a boss: the albatross circles wide, and a boss that stays away crashes into the lighthouse in the end anyway.)
-            foreach (var c in _alive.Where(c => c && c._hp.Value > 0 && c.IsSpawned && (c.transform.position - corePos).sqrMagnitude > 80f * 80f
-                                                && !(Enemies.Instance.TryGet(c, out var ft) && EnemyCatalog.IsBoss(ft.Kind))).ToList())
-            { _alive.Remove(c); _required.Remove(c); c.DestroyItem(); AutoTest.Count("escaped"); }
+            _escaped.Clear();
+            for (int i = 0; i < _alive.Count; i++)
+            {
+                var c = _alive[i];
+                if (!c || c._hp.Value <= 0 || !c.IsSpawned) continue;
+                if ((c.transform.position - corePos).sqrMagnitude <= 80f * 80f) continue;
+                if (Enemies.Instance.TryGet(c, out var ft) && EnemyCatalog.IsBoss(ft.Kind)) continue;
+                _escaped.Add(c);
+            }
+            for (int i = 0; i < _escaped.Count; i++)
+            {
+                var c = _escaped[i];
+                _alive.Remove(c); _required.Remove(c); c.DestroyItem(); AutoTest.Count("escaped");
+            }
             // Dead this frame: pay out per enemy type, then forget them.
-            var dead = _alive.Where(c => !c || c._hp.Value <= 0).ToList();
-            int killed = dead.Count, reward = 0;
-            var splits = new List<Vector3>();
-            foreach (var d in dead)
+            _dead.Clear();
+            for (int i = 0; i < _alive.Count; i++) { var c = _alive[i]; if (!c || c._hp.Value <= 0) _dead.Add(c); }
+            int killed = _dead.Count, reward = 0;
+            _splits.Clear();
+            foreach (var d in _dead)
             {
                 if (!d) { killed--; continue; } // despawned (retreated / cleaned up), not killed: no reward
                 int killer = Stats.Killed(d);
@@ -405,11 +492,11 @@ namespace HtfFortress
                 reward += r;
                 if (tagged && EnemyCatalog.IsPuppet(tag.Kind)) reward += CorpseValue(r); // a boss (or its summons) blows apart: its body's worth is paid straight away
                 else FortressNet.Instance.ServerAddCorpse(d, CorpseValue(r) + Siege.Instance.ServerTakeCarried(d)); // most of the money is in the bodies (a thief drops what it stole)
-                if (tagged && tag.Kind == EnemyKind.Splitter) splits.Add(d.transform.position);
+                if (tagged && tag.Kind == EnemyKind.Splitter) _splits.Add(d.transform.position);
                 Enemies.Instance.ServerForget(d);
             }
             _alive.RemoveAll(c => !c || c._hp.Value <= 0);
-            foreach (var at in splits)
+            foreach (var at in _splits)
                 for (int i = 0; i < 3; i++) ServerSpawnMinion(EnemyKind.Mini, at + Quaternion.Euler(0f, i * 120f, 0f) * Vector3.forward * 0.8f);
             _required.RemoveWhere(c => !c || c._hp.Value <= 0);
             // Wave is over when the land attackers are dead (or, if a wave had none, everything), or after 3 minutes for extras.
@@ -506,6 +593,8 @@ namespace HtfFortress
             _hpMult = 1f;
             FortressNet.Instance.ServerReset(keepSize: true); // everyone's net (and its size with their Big Net) from the first second
             Siege.Instance.ServerStart(corePos);
+            int start = Loot.Instance.Vault.StartCoins;
+            if (start > 0) Siege.Instance.ServerAddCoins(start); // the keeper's starting-money tree (fort coins)
             _bestAtStart = Loot.Instance.Vault.Best;
             Say(L10n.T("start", Loot.Instance.Vault.Best));
             Say(L10n.T("startHint", BuildSystem.BuildKey.Value, _readyKey.Value));
@@ -539,7 +628,17 @@ namespace HtfFortress
             Siege.Instance.ServerStop();
             Loot.Instance.ServerCollectAll();
             bool practice = _practice || PlayerManager.InGodMode;
+            int soulsBefore = Loot.Instance.Vault.Souls, oldBest = Loot.Instance.Vault.Best;
             bool record = !practice && (Loot.Instance.ServerRecord(_cleared) || _cleared > _bestAtStart);
+            int soulGain = Loot.Instance.Vault.Souls - soulsBefore;
+            string soulLines = "";
+            if (soulGain > 0)
+            {
+                var sb = new System.Text.StringBuilder();
+                for (int m = Mathf.Max(100, (oldBest / 10 + 1) * 10); m <= _cleared; m += 10) sb.Append(L10n.T("soulSettleBlock", m, Loot.SoulReward(m))).Append('\n');
+                soulLines = sb.ToString().TrimEnd('\n');
+            }
+            if (soulGain > 0) Fx.Send(FxKind.Soul, Siege.Instance.CorePos + Vector3.up * 0.5f, Siege.Instance.CorePos + Vector3.up * 3.5f, Mathf.Min(12, soulGain / 100 + 1));
             if (_victory && !practice) Loot.Instance.ServerWin(string.Join("、", PlayerManager.Players.Where(p => p).Select(Loot.NameOf)));
             // The run's pay-off: money by the waves held, so the next run never starts from nothing (the playtest's idea).
             int settle = practice ? 0 : SettleBonus(_cleared);
@@ -548,7 +647,7 @@ namespace HtfFortress
             string recordText = practice ? L10n.T("practice") : record ? L10n.T("newRecord") : L10n.T("best", best);
             Say(L10n.T("result", why, _cleared) + recordText);
             // Everyone sees the results panel; the field is cleared for the next round.
-            InstanceFinder.ServerManager.Broadcast(new RoundResult { Waves = _cleared, Kills = _kills, Built = BuildSystem.Instance.RoundBuilt, Best = best, NewRecord = record, CoreLost = coreLost, Victory = _victory, Table = Stats.Table() });
+            InstanceFinder.ServerManager.Broadcast(new RoundResult { Waves = _cleared, Kills = _kills, Built = BuildSystem.Instance.RoundBuilt, Best = best, NewRecord = record, CoreLost = coreLost, Victory = _victory, Table = Stats.Table(), Souls = soulGain, SoulsTotal = Loot.Instance.Vault.Souls, SoulsFrom = oldBest, SoulLines = soulLines });
             _victory = false;
             BuildSystem.Instance.ServerClearAll();
         }
@@ -603,7 +702,9 @@ namespace HtfFortress
         public static float HpMult(int wave, float hpPerWave = 0.4f)
         {
             float w = wave - 1;
-            return 1f + hpPerWave * w + 0.05f * w * w + 0.0015f * w * w * w;
+            // Gentler than it was (0.4 / 0.05 / 0.0015): the fish no longer pull player weapons up with them, so the health
+            // curve is what the weapon mods have to keep up with.
+            return 1f + hpPerWave * w + 0.012f * w * w + 0.0002f * w * w * w;
         }
 
         // A boss's health on top of that (Owen: "可能不是武器 是王血太少": a legendary with its mods took the wave-50 boss down
@@ -709,23 +810,49 @@ namespace HtfFortress
                     if (kind == EnemyKind.Spitter && island) pos = FortressIsland.Instance.SpitterSpot();
                     else if (island) { if (!FortressIsland.Instance.WalkerSpawn(gap, out pos)) continue; }
                     else if (!FindLandAround(core, _walkerRadius.Value, out pos)) { if (!_warnedNoLand) { _warnedNoLand = true; Say(L10n.T("noLand")); } continue; }
-                    var c = SpawnCreature(walkerPrefab, pos, 0f, Enemies.StatsOf(new EnemyTag { Kind = kind, Elite = elite }).BaseHp * hpMult);
+                    var c = SpawnCreature(walkerPrefab, Spread(pos), 0f, Enemies.StatsOf(new EnemyTag { Kind = kind, Elite = elite }).BaseHp * hpMult);
                     Enemies.Instance.ServerTag(c, kind, elite);
                     Siege.Instance.RegisterWalker(c);
                     if (kind != EnemyKind.Spitter) _required.Add(c); // spitters only harass: they dive once the landing party is dead
                     AutoTest.Count("spawned_" + kind + (elite ? "_elite" : ""));
+                    if (_spawnGap.Value > 0f) yield return new WaitForSeconds(_spawnGap.Value); // one at a time, not a burst
                 }
                 if (burst == 0)
                     for (int i = 0; i < extras; i++)
                     {
                         Item prefab = _poolPrefabs[UnityEngine.Random.Range(0, _poolPrefabs.Count)];
                         Vector3 pos = island ? FortressIsland.Instance.SeaSpawn() : FindSpawnPos(host, _radius.Value, WalksOnLand(prefab.GetComponent<Creature>()));
-                        SpawnCreature(prefab, pos, 0f, 25f * hpMult); // harassers: about a walker's health
+                        SpawnCreature(prefab, Spread(pos), 0f, 25f * hpMult); // harassers: about a walker's health
                         AutoTest.Count("sea_spawned");
+                        if (_spawnGap.Value > 0f) yield return new WaitForSeconds(_spawnGap.Value);
                     }
-                if (burst < 2) yield return new WaitForSeconds(3.5f);
+                if (burst < 2) yield return new WaitForSeconds(_burstGap.Value);
             }
             _spawning = false;
+        }
+
+        // Something already standing there? Move this one along until it is not inside it (the fish shoved each other apart
+        // when a burst spawned several into the same patch of sand).
+        private Vector3 Spread(Vector3 pos, float min = 2.6f)
+        {
+            for (int pass = 0; pass < 6; pass++)
+            {
+                bool moved = false;
+                for (int i = 0; i < _alive.Count; i++)
+                {
+                    var c = _alive[i];
+                    if (!c) continue;
+                    Vector3 d = pos - c.transform.position;
+                    d.y = 0f;
+                    float dist = d.magnitude;
+                    if (dist >= min) continue;
+                    Vector3 dir = dist > 0.05f ? d / dist : new Vector3(UnityEngine.Random.Range(-1f, 1f), 0f, UnityEngine.Random.Range(-1f, 1f)).normalized;
+                    pos += dir * (min - dist + 0.2f);
+                    moved = true;
+                }
+                if (!moved) break;
+            }
+            return pos;
         }
 
         private Creature SpawnCreature(Item prefab, Vector3 pos, float hpMult, float hp = 0f, float yaw = float.NaN)

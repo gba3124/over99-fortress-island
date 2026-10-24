@@ -48,6 +48,10 @@ namespace HtfFortress
         private int _lastReady; private bool _wasActive;
         private readonly HashSet<RunningFish> _walkers = new HashSet<RunningFish>();
         private readonly Dictionary<RunningFish, float> _nextAttack = new Dictionary<RunningFish, float>();
+        // The one wall every walker breaks through (see UpdateBreach): a walled-in fort then comes down at one point.
+        private int _breachId;
+        private Vector3 _breachPos;
+        private float _nextBreach;
 
         // every client
         private SiegeState _view;
@@ -154,7 +158,7 @@ namespace HtfFortress
         // Everything remembered about this round's fish.
         private void ClearFish()
         {
-            _walkers.Clear(); _nextAttack.Clear(); _progress.Clear(); _blockedSince.Clear(); _flank.Clear(); _slow.Clear(); _airborne.Clear();
+            _walkers.Clear(); _nextAttack.Clear(); _progress.Clear(); _blockedSince.Clear(); _flank.Clear(); _slow.Clear(); _airborne.Clear(); _freezeNext.Clear();
             _carry.Clear(); _nextHop.Clear(); _nextHeal.Clear(); _hidden.Clear(); _dug.Clear();
             _nextSpit.Clear(); _nextMove.Clear(); _spitterBorn.Clear(); _decoys.Clear(); _bubbled.Clear(); _reeled.Clear();
         }
@@ -184,6 +188,43 @@ namespace HtfFortress
         }
 
         // ---------- walker steering (host simulates the creatures) ----------
+
+        // Owen's playtest: the friend walled the whole island in and the fish "didn't want to come in" -- each hit whichever
+        // wall it met, so the fort was nibbled at everywhere and broken nowhere. Now the host picks ONE wall for the whole
+        // horde: the wall nearest any walker (shortest walk for the fish that get there first, and the one the others drift
+        // to), lowest health among near-equals. Refreshed twice a second, or at once when that wall is gone.
+        private void UpdateBreach()
+        {
+            if (Time.time < _nextBreach && _breachId != 0) return;
+            _nextBreach = Time.time + 0.5f;
+            var build = BuildSystem.Instance;
+            if (!build || _walkers.Count == 0) { _breachId = 0; return; }
+            int best = 0; float bestD = float.MaxValue; int bestHp = int.MaxValue;
+            Vector3 bestPos = default;
+            foreach (var p in build.ServerPieces)
+            {
+                if (p.Hp <= 0 || p.Type != PieceType.Wall) continue;
+                float d = float.MaxValue;
+                foreach (var f in _walkers)
+                {
+                    if (!f || f.IsDead) continue;
+                    float dd = (f.transform.position - p.Pos).sqrMagnitude;
+                    if (dd < d) d = dd;
+                }
+                if (d == float.MaxValue) continue;
+                if (d < bestD - 0.04f || (Mathf.Abs(d - bestD) <= 0.04f && p.Hp < bestHp))
+                { bestD = d; bestHp = p.Hp; best = p.Id; bestPos = p.Pos; }
+            }
+            if (best != _breachId) BuildSystem.Log.LogInfo($"breach: walkers break wall {best} at {bestPos}");
+            _breachId = best; _breachPos = bestPos;
+        }
+
+        private bool IsBreach(Collider col)
+        {
+            if (_breachId == 0 || !col) return false;
+            var parts = col.gameObject.name.Split('_');
+            return parts.Length >= 3 && int.TryParse(parts[2], out int id) && id == _breachId;
+        }
 
         // Returns true when we drove the fish this tick, so the game's own wandering is skipped.
         public bool Steer(RunningFish fish)
@@ -275,6 +316,34 @@ namespace HtfFortress
 
             Collider wall = WallAhead(pos, dir, stats);
             if (wall && tag.Kind == EnemyKind.Digger && !_dug.Contains(fish)) { StartCoroutine(Burrow(fish, rig, dir)); return true; }
+            // A walled-in fort used to leave fish hammering whatever wall each of them happened to meet (or nothing at all):
+            // they now all break the one wall UpdateBreach picked. If the way to it is clear, walk there; at it, hit it.
+            if (wall && _breachId != 0 && !IsBreach(wall) && !decoyed && prey == null)
+            {
+                Vector3 bd = _breachPos - pos; bd.y = 0f;
+                if (bd.sqrMagnitude > 0.04f)
+                {
+                    Vector3 bdir = bd.normalized;
+                    Collider bw = WallAhead(pos, bdir, stats);
+                    if (bw && IsBreach(bw))
+                    {
+                        fish.transform.forward = bdir;
+                        Halt(rig);
+                        TryAttack(fish, bw, tag, stats);
+                        AutoTest.Count("breach_hit");
+                        return true;
+                    }
+                    if (!bw)
+                    {
+                        fish.transform.forward = bdir;
+                        Vector3 bv = bdir * RunSpeed(fish) * stats.Speed * SlowFactor(fish);
+                        bv.y = rig.linearVelocity.y;
+                        rig.linearVelocity = bv;
+                        rig.angularVelocity = Vector3.zero;
+                        return true;
+                    }
+                }
+            }
             if (wall)
             {
                 if (flanking) { _flank.Remove(fish); _blockedSince.Remove(fish); } // flank blocked too: just smash through
@@ -351,20 +420,31 @@ namespace HtfFortress
         // ---------- fortress weapons on the host: bubble, hook line, shove, interrupt ----------
 
         // Bubble gun: the fish floats helpless for a few seconds and takes half again from everything. Bosses are only slowed.
-        private readonly Dictionary<Creature, float> _bubbled = new Dictionary<Creature, float>();
-        public bool IsBubbled(Creature c) => c && _bubbled.TryGetValue(c, out float until) && Time.time < until;
+        private class Bubble { public float Until, Rise; public System.Action<Vector3> Pop; }
+        private readonly Dictionary<Creature, Bubble> _bubbled = new Dictionary<Creature, Bubble>();
+        public bool IsBubbled(Creature c) => c && _bubbled.TryGetValue(c, out var b) && Time.time < b.Until;
+        public float BubbleRiseOf(Creature c) => c && _bubbled.TryGetValue(c, out var b) ? b.Rise : 0f;
 
-        public void ServerBubble(Creature c, float seconds, System.Action<Vector3> onPop)
+        // Owen: "一直射到泡泡越浮越高，刷新破掉的時間，傷害也會添加". Each shot on a bubbled fish keeps it up, floats it
+        // higher and stacks its burst; the bubble pops for everything that was put in it.
+        public void ServerBubble(Creature c, float seconds, float rise, System.Action<Vector3> onPop)
         {
             if (!(c is Creature fish) || fish.IsDead || !fish.Rig || _reeled.Contains(c)) return;
             if (Enemies.Instance.TryGet(c, out var tag) && EnemyCatalog.IsBoss(tag.Kind)) { Slow(c, 0.5f, seconds); return; }
-            bool floating = IsBubbled(c);
-            _bubbled[c] = Time.time + seconds;
-            if (!floating) StartCoroutine(Float(fish, onPop));
+            if (_bubbled.TryGetValue(c, out var b))
+            {
+                b.Until = Time.time + seconds;
+                b.Rise = Mathf.Max(b.Rise, rise);
+                if (onPop != null) b.Pop = onPop;
+                AutoTest.Count("bubbled");
+                return;
+            }
+            _bubbled[c] = new Bubble { Until = Time.time + seconds, Rise = Mathf.Max(1.4f, rise), Pop = onPop };
+            StartCoroutine(Float(fish));
             AutoTest.Count("bubbled");
         }
 
-        private System.Collections.IEnumerator Float(Creature fish, System.Action<Vector3> onPop)
+        private System.Collections.IEnumerator Float(Creature fish)
         {
             var rig = fish.Rig;
             bool wasKinematic = rig.isKinematic;
@@ -372,14 +452,16 @@ namespace HtfFortress
             Vector3 start = fish.transform.position;
             for (float t = 0f; fish && !fish.IsDead && IsBubbled(fish); t += Time.deltaTime) // a round ending clears the bubbles
             {
-                rig.MovePosition(start + Vector3.up * (Mathf.Min(1f, t * 2f) * 1.4f + Mathf.Sin(t * 3f) * 0.12f));
+                float h = _bubbled.TryGetValue(fish, out var b) ? b.Rise : 1.4f;
+                rig.MovePosition(start + Vector3.up * (Mathf.Min(1f, t * 2f) * h + Mathf.Sin(t * 3f) * 0.12f));
                 Synced(fish);
                 yield return null;
             }
+            _bubbled.TryGetValue(fish, out var bubble);
             _bubbled.Remove(fish);
             if (!fish) yield break;
             if (!wasKinematic) { rig.isKinematic = false; rig.linearVelocity = Vector3.zero; } // a fish killed up there drops too
-            if (!fish.IsDead) onPop?.Invoke(fish.transform.position);
+            if (!fish.IsDead) bubble?.Pop?.Invoke(fish.transform.position);
         }
 
         // Hook (and the conch's shove): drag a fish to `to` over `seconds`; it does nothing else meanwhile. It stops short of
@@ -589,7 +671,24 @@ namespace HtfFortress
             if (_slow.TryGetValue(c, out var cur) && cur.until > Time.time && cur.factor < f) f = cur.factor;
             _slow[c] = (f, Time.time + seconds);
         }
+
+        // Legendary Frost Core: 6 % a turret hit, but a wall of turrets rolled that hundreds of times a second and bosses then
+        // never moved again. At most one full freeze per target every 4 s; bosses are slowed to half speed instead (never a
+        // full stop). Other slows (bubbles, harpoons, the Frost Core gear itself) are unchanged.
+        public const float FreezeCooldown = 4f;
+        private readonly Dictionary<Creature, float> _freezeNext = new Dictionary<Creature, float>();
+        public bool TryFreeze(Creature c)
+        {
+            if (!c || c.IsDead) return false;
+            if (_freezeNext.TryGetValue(c, out float next) && Time.time < next) return false;
+            _freezeNext[c] = Time.time + FreezeCooldown;
+            bool boss = Enemies.Instance.TryGet(c, out var tag) && EnemyCatalog.IsBoss(tag.Kind);
+            bool wet = Weapons.IsWet(c);
+            Slow(c, boss ? 0.5f : 1f, wet ? 2.6f : 1.5f); // wet fish freeze much longer (Owen: elemental reactions)
+            return true;
+        }
         public float SlowOf(Creature c) => SlowFactor(c);
+        public bool IsFrozen(Creature c) => c && SlowOf(c) <= 0.05f; // held still by Frost Core / a bubble
         private float SlowFactor(Creature c) =>
             (_slow.TryGetValue(c, out var s) && s.until > Time.time ? s.factor : 1f)
             * (FortressIsland.Instance && FortressIsland.Instance.InPool(c.transform.position) ? PoolSlow : 1f); // knee-deep in a tide pool
@@ -598,13 +697,16 @@ namespace HtfFortress
         private readonly Dictionary<RunningFish, float> _blockedSince = new Dictionary<RunningFish, float>();
         private readonly Dictionary<RunningFish, (Vector3 dir, float until)> _flank = new Dictionary<RunningFish, (Vector3, float)>();
 
-        // Overlap just ahead (a cast would miss a wall the fish is already pressed against).
+        // Overlap just ahead (a cast would miss a wall the fish is already pressed against). NonAlloc: this runs for every
+        // walker every physics frame, and an allocating OverlapSphere there was the host's steadiest source of garbage
+        // (Mono's GC is stop-the-world, so the whole server -- and so every client's world -- hitched when it ran).
+        private static readonly Collider[] WallAheadHits = new Collider[8];
         private static Collider WallAhead(Vector3 pos, Vector3 dir, EnemyStats stats)
         {
             int mask = 1 << BuildSystem.PieceLayer;
             float r = 0.45f * Mathf.Max(1f, stats.Scale * 0.8f);
-            foreach (var col in Physics.OverlapSphere(pos + dir * (0.6f * stats.Scale) + Vector3.up * 0.4f * stats.Scale, r, mask, QueryTriggerInteraction.Ignore))
-                if (BuildSystem.IsWall(col)) return col;
+            int n = Physics.OverlapSphereNonAlloc(pos + dir * (0.6f * stats.Scale) + Vector3.up * 0.4f * stats.Scale, r, WallAheadHits, mask, QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < n; i++) if (BuildSystem.IsWall(WallAheadHits[i])) return WallAheadHits[i];
             return null;
         }
 
@@ -677,7 +779,7 @@ namespace HtfFortress
                     HurtPlayer(p, dmg, (p.Transform.position - at).normalized * 6f + Vector3.up * 3f);
         }
 
-        private static int CoreShielded => Mathf.RoundToInt(CoreMaxHp.Value * (1f + Perks.Team(Gear.CoreShield)));
+        private static int CoreShielded => Mathf.RoundToInt(CoreMaxHp.Value * (1f + Perks.Team(Gear.CoreShield)) * (Loot.Instance && Loot.Instance.Vault != null ? Loot.Instance.Vault.CoreMult : 1f));
 
         // A bubble shield by the lighthouse covers it like any other building. (Negative = healing, used by the auto-test.)
         public void DamageCore(int dmg)
@@ -808,6 +910,8 @@ namespace HtfFortress
                 _server.BossHp = 0; _server.BossMax = 0; _server.BossCrashIn = 0;
                 int shown = 0;
                 if (_server.Active)
+                {
+                    UpdateBreach(); // the one wall the horde is breaking (see Steer)
                     foreach (var kv in Enemies.Instance.ServerAll)
                     {
                         if (!EnemyCatalog.IsBoss(kv.Value.Kind) || kv.Key._hp.Value <= 0) continue;
@@ -817,6 +921,7 @@ namespace HtfFortress
                         _server.BossKind = (byte)kv.Value.Kind; _server.BossHp = kv.Key._hp.Value; _server.BossMax = max; _bossMax = max;
                         _server.BossCrashIn = Bosses.Of(kv.Key) is BossBrain bb ? Mathf.CeilToInt(bb.CrashIn) : 0;
                     }
+                }
                 if (_server.BossMax == 0) _bossMax = 0;
                 Send(false);
             }
@@ -1002,6 +1107,9 @@ namespace HtfFortress
             lamp.intensity = 2f;
         }
 
+        private float _nextHud; // the HUD text is rebuilt ten times a second, not every frame: the strings were the largest
+                                // steady allocation both the host and the clients made (each one is garbage for the GC)
+
         private void LateUpdate()
         {
             // Sounds for the ready countdown and the round starting.
@@ -1023,9 +1131,13 @@ namespace HtfFortress
                 _roundGroup.SetActive(false);
                 _bossBox.gameObject.SetActive(false);
                 _titleText.gameObject.SetActive(true);
-                _titleText.text = L10n.T("islandName");
-                SetPhase(_view.ReadyCountdown > 0 ? $"<color={Hud.Hex(Hud.Accent)}><b>{L10n.T("readyCountdown", _view.ReadyCountdown)}</b></color>　" + Hud.Keys(L10n.T("gateCancelHint"))
-                         : Hud.Keys(L10n.T("readyPrompt")) + "　" + L10n.T("helpHint"));
+                if (Time.time >= _nextHud)
+                {
+                    _nextHud = Time.time + 0.1f;
+                    _titleText.text = L10n.T("islandName");
+                    SetPhase(_view.ReadyCountdown > 0 ? $"<color={Hud.Hex(Hud.Accent)}><b>{L10n.T("readyCountdown", _view.ReadyCountdown)}</b></color>　" + Hud.Keys(L10n.T("gateCancelHint"))
+                             : Hud.Keys(L10n.T("readyPrompt")) + "　" + L10n.T("helpHint"));
+                }
                 return;
             }
             ShowCore(_view.CorePos, _view.CoreMax > 0 ? (float)_view.CoreHp / _view.CoreMax : 1f);
@@ -1039,28 +1151,33 @@ namespace HtfFortress
             if (_view.CoreHp < _lastCoreHp) _hpFlashUntil = Time.time + 0.25f;
             _lastCoreHp = _view.CoreHp;
 
-            float hp = _view.CoreMax > 0 ? (float)_view.CoreHp / _view.CoreMax : 1f;
-            _waveText.text = L10n.T("hudWave", _view.Wave);
-            _hpBar.Set(hp, Time.time < _hpFlashUntil ? Color.white : Hud.HealthColor(hp));
-            _hpText.text = $"{_view.CoreHp}<size=70%><color={Hud.Hex(Hud.Muted)}> / {_view.CoreMax}</color></size>";
-            _enemyText.text = _view.Remaining.ToString();
-            _coinText.text = "$" + ViewCoins + (Time.time < _coinPopUntil ? $" <size=72%><color={Hud.Hex(Hud.Good)}>{_coinPop}</color></size>" : "");
-            bool host = InstanceFinder.IsServerStarted;
-            int mend = _view.Building && BuildSystem.Instance ? BuildSystem.Instance.ClientRepairAllCost : 0;
-            SetPhase(_view.Building ? L10n.T("buildPhase", _view.Countdown) + (host ? "　" + L10n.T("phaseSkip", FortressPlugin.Instance.ReadyKeyName) : "")
-                                      + "　" + L10n.T("phaseBuildKey", BuildSystem.BuildKey.Value) + (mend > 0 ? "　" + L10n.T("phaseRepairAll", mend) : "")
-                                    : $"<color={Hud.Hex(Hud.Accent)}>{L10n.T("fightPhase")}</color>"
-                                      + (host && FortressPlugin.Instance.CanCallNext ? "　" + L10n.T("phaseCallNext", FortressPlugin.Instance.ReadyKeyName) : ""));
-            bool boss = _view.BossMax > 0;
-            _bossBox.gameObject.SetActive(boss);
-            if (boss)
+            if (Time.time >= _nextHud)
             {
-                // The game's bosses crash into the lighthouse if they live too long: the countdown goes red in the last 30 s.
-                int left = _view.BossCrashIn;
-                string crash = left > 0 ? $"  <size=75%><color={Hud.Hex(left <= 30 ? Hud.Bad : Hud.Muted)}>{L10n.T("bossCrashIn", left / 60, (left % 60).ToString("00"))}</color></size>" : "";
-                _bossText.text = L10n.T("bossName" + (EnemyKind)_view.BossKind) + crash;
-                _bossBar.Set((float)_view.BossHp / _view.BossMax);
+                _nextHud = Time.time + 0.1f;
+                float hp = _view.CoreMax > 0 ? (float)_view.CoreHp / _view.CoreMax : 1f;
+                _waveText.text = L10n.T("hudWave", _view.Wave);
+                _hpBar.Set(hp, Time.time < _hpFlashUntil ? Color.white : Hud.HealthColor(hp));
+                _hpText.text = $"{_view.CoreHp}<size=70%><color={Hud.Hex(Hud.Muted)}> / {_view.CoreMax}</color></size>";
+                _enemyText.text = _view.Remaining.ToString();
+                _coinText.text = "$" + ViewCoins + (Time.time < _coinPopUntil ? $" <size=72%><color={Hud.Hex(Hud.Good)}>{_coinPop}</color></size>" : "");
+                bool host = InstanceFinder.IsServerStarted;
+                int mend = _view.Building && BuildSystem.Instance ? BuildSystem.Instance.ClientRepairAllCost : 0;
+                SetPhase(_view.Building ? L10n.T("buildPhase", _view.Countdown) + (host ? "　" + L10n.T("phaseSkip", FortressPlugin.Instance.ReadyKeyName) : "")
+                                          + "　" + L10n.T("phaseBuildKey", BuildSystem.BuildKey.Value) + (mend > 0 ? "　" + L10n.T("phaseRepairAll", mend) : "")
+                                        : $"<color={Hud.Hex(Hud.Accent)}>{L10n.T("fightPhase")}</color>"
+                                          + (host && FortressPlugin.Instance.CanCallNext ? "　" + L10n.T("phaseCallNext", FortressPlugin.Instance.ReadyKeyName) : ""));
+                bool boss = _view.BossMax > 0;
+                _bossBox.gameObject.SetActive(boss);
+                if (boss)
+                {
+                    // The game's bosses crash into the lighthouse if they live too long: the countdown goes red in the last 30 s.
+                    int left = _view.BossCrashIn;
+                    string crash = left > 0 ? $"  <size=75%><color={Hud.Hex(left <= 30 ? Hud.Bad : Hud.Muted)}>{L10n.T("bossCrashIn", left / 60, (left % 60).ToString("00"))}</color></size>" : "";
+                    _bossText.text = L10n.T("bossName" + (EnemyKind)_view.BossKind) + crash;
+                    _bossBar.Set((float)_view.BossHp / _view.BossMax);
+                }
             }
+            else if (_view.BossMax <= 0 && _bossBox.gameObject.activeSelf) _bossBox.gameObject.SetActive(false);
         }
 
         private void ShowHud(bool on)

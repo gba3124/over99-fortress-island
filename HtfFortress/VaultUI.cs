@@ -47,7 +47,10 @@ namespace HtfFortress
         private TextMeshProUGUI _title, _subtitle, _scales, _hint, _capacity, _expandText;
         private Button _expandBtn;
         private VaultData _drawn;
+        private int _lastSig; private bool _sigKnown; private float _nextSig, _nextRedraw;
+        private float _lastRedrawMs;
         private int _tab;                 // vault: 0 all, 1 gear, 2 weapons, 3 the game's items; smithy: 0 weapons, 1 gear, 2 the shop, 3 mods
+        private int _gearSide;            // the gear tab's filter: 0 all, 1 for people (personal + active), 2 for towers (fortress)
         private const int ShopTab = 2, ModTab = 3;
         private bool Shop => Smith && _tab == ShopTab;
         private bool Modding => Smith && _tab == ModTab;
@@ -83,8 +86,25 @@ namespace HtfFortress
             if (IsOpen)
             {
                 if (!Near(CurrentDesk)) Close();
-                else if ((Loot.Instance.ClientVault != _drawn || _iconsPending || (_sellArmed >= 0 && Time.unscaledTime >= _sellArmedUntil)) && _dragPile == null)
-                { _iconsPending = false; if (Time.unscaledTime >= _sellArmedUntil) _sellArmed = -1; Redraw(); } // not under a drag: the tile held would go
+                else if (_dragPile == null)
+                {
+                    // The vault is re-sent whenever anyone puts something in (twice a second while helpers are working); rebuilding
+                    // the whole panel each time made opening it feel like a freeze. Cheap checks: a signature at 5 Hz, and a
+                    // redraw at most twice a second, timed so a slow one is in the log.
+                    bool expired = _sellArmed >= 0 && Time.unscaledTime >= _sellArmedUntil;
+                    if (Time.unscaledTime >= _nextSig) { _nextSig = Time.unscaledTime + 0.2f; RecheckSignature(); }
+                    if ((_iconsPending || expired || !_sigKnown || _lastSig != _sigSeen) && Time.unscaledTime >= _nextRedraw)
+                    {
+                        _iconsPending = false;
+                        if (expired) _sellArmed = -1;
+                        _sigKnown = true; _lastSig = _sigSeen;
+                        float t0 = Time.realtimeSinceStartup;
+                        Redraw();
+                        _lastRedrawMs = (Time.realtimeSinceStartup - t0) * 1000f;
+                        if (_lastRedrawMs > 40f) BuildSystem.Log.LogWarning($"vault redraw {_lastRedrawMs:0} ms");
+                        _nextRedraw = Time.unscaledTime + 0.5f;
+                    }
+                }
                 if (_ghost) _ghost.rectTransform.position = Mouse.current != null ? (Vector3)Mouse.current.position.ReadValue() : _ghost.rectTransform.position;
                 PlaceHotbarHandles();
             }
@@ -92,9 +112,17 @@ namespace HtfFortress
 
         public void Open(Desk desk = Desk.Quartermaster)
         {
+            bool firstBuild = !_root;
+            float tb = Time.realtimeSinceStartup;
             if (!_root) Build();
             if (!_root) return;
-            if (CurrentDesk != desk) { _sel = null; _tab = 0; }
+            if (firstBuild)
+            {
+                float bms = (Time.realtimeSinceStartup - tb) * 1000f;
+                BuildSystem.Log.LogInfo($"vault panel built once: {bms:0} ms");
+            }
+            bool anotherDesk = CurrentDesk != desk;
+            if (anotherDesk) { _sel = null; _tab = 0; _gearSide = 0; }
             CurrentDesk = desk;
             _title.text = L10n.T(Smith ? "smithTitle" : "vaultTitle");
             _subtitle.text = L10n.T(Smith ? "smithSubtitle" : "vaultSubtitle");
@@ -105,7 +133,15 @@ namespace HtfFortress
             Hud.Root.gameObject.SetActive(false); // the game's panel sprite isn't fully opaque: keep the HUD from showing through
             PlayerCamera.ToggleMouse(true);
             _hover = null; _hoverSlot = null; _hoverBuy = null; _benchHover = null; _hoverSell = null; _sellArmed = -1;
-            Redraw();
+            // Opening it again with the same things in it reuses the panel built last time (the old code rebuilt every open).
+            if (anotherDesk || !_sigKnown || Signature(Loot.Instance.ClientVault) != _lastSig)
+            {
+                float t0 = Time.realtimeSinceStartup;
+                Redraw();
+                float ms = (Time.realtimeSinceStartup - t0) * 1000f;
+                if (ms > 40f) BuildSystem.Log.LogWarning($"vault open {ms:0} ms (rebuilt)");
+            }
+            _lastSig = Signature(Loot.Instance.ClientVault); _sigSeen = _lastSig; _sigKnown = true; _nextSig = Time.unscaledTime + 0.2f; _nextRedraw = Time.unscaledTime + 0.5f;
             BuildHotbarHandles();
         }
 
@@ -206,10 +242,41 @@ namespace HtfFortress
             PlayerCamera.ToggleMouse(false);
         }
 
+        private int _sigSeen;
+        private void RecheckSignature() => _sigSeen = Signature(Loot.Instance.ClientVault);
+
+        // A cheap number for "does the panel show something different" (no strings, no LINQ): the redraw is expensive.
+        private static int Signature(VaultData v)
+        {
+            if (v == null) return 0;
+            unchecked
+            {
+                int h = 17;
+                h = h * 31 + v.Scales; h = h * 31 + v.Best;
+                h = h * 31 + v.SlotsOf(0); h = h * 31 + v.SlotsOf(1); h = h * 31 + v.StorageSlots;
+                h = h * 31 + v.Fortress.Count + v.Items.Count;
+                foreach (var kv in v.Owned) { h = h * 31 + (int)kv.Key.Item1 + (int)kv.Key.Item2 * 7 + kv.Value * 7919; }
+                foreach (var kv in v.Personal) h = h * 31 + kv.Value.Count;
+                foreach (var kv in v.ItemCount) { h = h * 31 + kv.Key; h = h * 31 + kv.Value; }
+                foreach (var kv in v.Bought) { h = h * 31 + (int)kv.Key; h = h * 31 + kv.Value; }
+                foreach (var kv in v.Enhance) { h = h * 31 + (int)kv.Key; h = h * 31 + kv.Value; }
+                h = h * 31 + (v.Oven ? 1 : 0);
+                return h;
+            }
+        }
+
         private static void Send(VaultAction a, Gear g = default, Rarity r = default, int slot = 0, byte item = 0, int count = 1, int into = 0)
         {
             if (InstanceFinder.IsClientStarted)
                 InstanceFinder.ClientManager.Broadcast(new VaultRequest { Action = a, Gear = g, Rarity = r, Slot = (byte)slot, Item = item, Count = (byte)Mathf.Clamp(count, 0, 255), Into = (byte)into });
+            RefreshSoon(); // an action should show at once, not up to half a second later
+        }
+
+        // Something was clicked: let the next frame redraw (the rate limits still bound how often that can happen).
+        public static void RefreshSoon()
+        {
+            if (!Instance) return;
+            Instance._sigKnown = false; Instance._nextSig = 0f; Instance._nextRedraw = 0f;
         }
 
         private static void Click(string sound = "EquipItem") => Fx.Sound(sound, Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Vector3.zero, 0.6f, AudioDistance.Short);
@@ -290,12 +357,14 @@ namespace HtfFortress
         }
 
         private bool InTab(Pile p) => InTab(p, _tab);
+        private bool GearSide(Gear g) => _gearSide == 0 || (_gearSide == 1 ? (KindOf(g) == 1 || KindOf(g) == 2) : KindOf(g) == 0);
         private bool InTab(Pile p, int tab)
         {
             if (Smith) return !p.IsItem && (tab == 0 ? GearCatalog.IsWeapon(p.Gear.Value) : !GearCatalog.IsWeapon(p.Gear.Value));
             switch (tab)
             {
-                case 1: return !p.IsItem && !GearCatalog.IsWeapon(p.Gear.Value);
+                // Gear for the people (personal and active) or for the towers (fortress/team buffs): Owen wanted them apart.
+                case 1: return !p.IsItem && !GearCatalog.IsWeapon(p.Gear.Value) && GearSide(p.Gear.Value);
                 case 2: return !p.IsItem && GearCatalog.IsWeapon(p.Gear.Value);
                 case 3: return p.IsItem;
                 default: return true;
@@ -317,6 +386,8 @@ namespace HtfFortress
 
         private void Redraw()
         {
+            // The buttons just destroyed are rebuilt below: forget what the pointer was over, or the card shows the old hover.
+            _hover = null; _hoverSlot = null; _hoverBuy = null; _benchHover = null; _hoverSell = null;
             var v = Loot.Instance.ClientVault;
             _drawn = v;
             if (_sel is Pile s && Total(v, s) == 0 && !Shop && !Modding && !(Smith && !s.IsItem && Carried().Contains((s.Gear.Value, s.Rarity)))) _sel = null;
@@ -340,10 +411,32 @@ namespace HtfFortress
                 int tab = k;
                 int count = piles.Where(p => InTab(p, tab)).Sum(p => p.Count);
                 var b = Btn(_tabsLayer, new Vector2(150f, 36f), GridTopLeft + new Vector2(85f + 160f * k, 40f), tab == _tab ? new Color(0.36f, 0.27f, 0.1f) : new Color(0.13f, 0.15f, 0.19f, 1f),
-                    () => { _tab = tab; Redraw(); }, out var t);
+                    () => { _tab = tab; if (tab != 1) _gearSide = 0; Redraw(); }, out var t);
                 t.text = L10n.T(keys[k], count);
                 t.fontSize = 17f;
                 if (tab == _tab) Ring(b.transform, new Vector2(150f, 36f), Hud.Accent);
+            }
+            if (Smith)
+            {
+                // One click for every merge that's possible (Owen: "一鍵合成").
+                int merges = v.Mergeable();
+                var mb = Btn(_tabsLayer, new Vector2(150f, 34f), GridTopLeft + new Vector2(760f, 40f), new Color(0.24f, 0.34f, 0.52f, 1f), () => { Send(VaultAction.MergeAll); AutoTest.Count("smith_merge_all"); }, out var mt);
+                mt.text = L10n.T("smithMergeAll", merges);
+                mt.fontSize = 16f;
+                mb.interactable = merges > 0;
+            }
+            if (_tab == 1 && !Smith)
+            {
+                // 全部 / 給人 / 給塔: the plain gear tab mixes the team's tower buffs with what one player wears.
+                for (int side = 0; side < 3; side++)
+                {
+                    int sd = side;
+                    var sb = Btn(_tabsLayer, new Vector2(56f, 34f), GridTopLeft + new Vector2(740f + 60f * side, 40f),
+                        sd == _gearSide ? new Color(0.36f, 0.27f, 0.1f) : new Color(0.13f, 0.15f, 0.19f, 1f),
+                        () => { _gearSide = sd; Redraw(); }, out var st);
+                    st.text = L10n.T(side == 0 ? "vaultGearAll" : side == 1 ? "vaultGearPeople" : "vaultGearTowers");
+                    st.fontSize = 15f;
+                }
             }
         }
 
@@ -465,14 +558,15 @@ namespace HtfFortress
 
         // ---------- the quartermaster: a one-click sale under the slots (Owen: "一鍵賣（可以按類別或品質）") ----------
 
-        // What's in the tab (VaultData.SellAll), one colour or every colour (4); a second click within 3 s sells.
+        // What's in the tab (VaultData.SellAll), one colour or every colour (4); a second click 0.4-5 s later sells (a double click does not).
         private int? _hoverSell;
         private int _sellArmed = -1;      // tab * 10 + colour
-        private float _sellArmedUntil;
+        private float _sellArmedUntil, _sellArmedAt;
         private static Rarity? ColourOf(int c) => c < 4 ? (Rarity)c : (Rarity?)null;
 
         private void DrawSale(VaultData v)
         {
+            if (_gearSide != 0) { Text(_gridLayer, L10n.T("vaultSellAllOnly"), 17f, new Vector2(GridWidth - 40f, 30f), new Vector2(GridTopLeft.x + GridWidth / 2f, GridTopLeft.y - GridHeight - 92f), TextAlignmentOptions.Center).color = Hud.Muted; return; }
             float y = GridTopLeft.y - GridHeight - 92f;
             Text(_gridLayer, L10n.T("vaultSellTitle"), 19f, new Vector2(110f, 36f), new Vector2(GridTopLeft.x + 55f, y), TextAlignmentOptions.Left).color = Hud.Muted;
             for (int c = 0; c <= 4; c++)
@@ -492,7 +586,9 @@ namespace HtfFortress
 
         private void Sell(int code, int colour)
         {
-            if (_sellArmed != code || Time.unscaledTime >= _sellArmedUntil) { _sellArmed = code; _sellArmedUntil = Time.unscaledTime + 3f; Click(); Redraw(); return; }
+            bool armed = _sellArmed == code && Time.unscaledTime < _sellArmedUntil;
+            if (!armed) { _sellArmed = code; _sellArmedAt = Time.unscaledTime; _sellArmedUntil = Time.unscaledTime + 5f; Click(); Redraw(); return; }
+            if (Time.unscaledTime - _sellArmedAt < 0.4f) return; // a double click must not count as the confirmation
             _sellArmed = -1;
             var c = ColourOf(colour);
             Send(VaultAction.SellAll, r: c ?? Rarity.Common, slot: _tab, count: c == null ? 1 : 0);
@@ -1016,7 +1112,9 @@ namespace HtfFortress
 
         private static Color Darken(Color c, float k) => new Color(c.r * k, c.g * k, c.b * k, 1f);
 
-        private static void Clear(Transform t) { foreach (Transform c in t) Destroy(c.gameObject); }
+        // Hidden before Destroy: Destroyed objects live until the end of the frame, and a click in that frame could still land
+        // on the old button (the "buttons feel odd" report).
+        private static void Clear(Transform t) { foreach (Transform c in t) { c.gameObject.SetActive(false); Destroy(c.gameObject); } }
 
         private static Transform Node(Transform parent, string name)
         {

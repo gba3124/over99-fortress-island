@@ -45,26 +45,42 @@ namespace HtfFortress
                    && (Player.LocalPlayer.Transform.position - island.MarketPos).sqrMagnitude < 5f * 5f;
         }
 
+        private float _nextCheck, _nextRedraw;
+        public static void RefreshSoon()
+        {
+            if (!Instance) return;
+            Instance._drawn = null; Instance._nextCheck = 0f; Instance._nextRedraw = 0f;
+        }
         private void Update()
         {
             if (!IsOpen) return;
             var mouse = Mouse.current;
             if (!Near() || (mouse != null && mouse.rightButton.wasPressedThisFrame)) { Close(); return; }
+            // The key is a few strings; making it every frame and rebuilding the panel whenever one changed was most of what
+            // opening this menu cost. Check five times a second, redraw at most twice a second, and log a slow build.
+            if (Time.unscaledTime < _nextCheck) return;
+            _nextCheck = Time.unscaledTime + 0.2f;
             var net = FortressNet.Instance.ClientNet;
             var hv = Loot.Instance.ClientVault;
             string key = $"{net.count}|{net.capacity}|{net.value}|{Siege.Instance.ViewCoins}|{Siege.Instance.ViewActive}|{hv.Helpers}|{hv.HelperSpeed}|{hv.HelperLoad}|{hv.Oven}";
-            if (key != _drawn) { _drawn = key; Redraw(); }
+            if (key == _drawn || Time.unscaledTime < _nextRedraw) return;
+            _drawn = key;
+            float t0 = Time.realtimeSinceStartup;
+            Redraw();
+            float ms = (Time.realtimeSinceStartup - t0) * 1000f;
+            if (ms > 40f) BuildSystem.Log.LogWarning($"stall redraw {ms:0} ms");
+            _nextRedraw = Time.unscaledTime + 0.5f;
         }
 
         private void Redraw()
         {
-            if (_panel) Destroy(_panel.gameObject);
+            if (_panel) { _panel.gameObject.SetActive(false); Destroy(_panel.gameObject); }
             Vector2 C = new Vector2(0.5f, 0.5f), T = new Vector2(0.5f, 1f), L = new Vector2(0f, 1f);
             var dim = Hud.Box(_canvas.transform, C, Vector2.zero, new Vector2(4000f, 3000f), new Color(0f, 0f, 0f, 0.35f), 0f);
             dim.raycastTarget = true;
             _panel = dim.rectTransform;
             // Two columns: the fish (sell, the net, food) on the left, the helpers on the right.
-            var p = Hud.Box(_panel, C, new Vector2(0f, 30f), new Vector2(1500f, 720f), Hud.PanelSolid, 24f).transform;
+            var p = Hud.Box(_panel, C, new Vector2(0f, 30f), new Vector2(1500f, 830f), Hud.PanelSolid, 24f).transform;
             Hud.Label(p, L10n.T("stallTitle"), 38f, T, new Vector2(0f, -22f), new Vector2(1400f, 48f), TextAlignmentOptions.Center, bold: true);
             Hud.Box(p, T, new Vector2(0f, -76f), new Vector2(90f, 5f), Hud.Accent, 2.5f);
             Hud.Label(p, "“" + L10n.T("stallLine") + "”", 21f, T, new Vector2(0f, -92f), new Vector2(1400f, 30f), TextAlignmentOptions.Center, Hud.Muted);
@@ -113,7 +129,7 @@ namespace HtfFortress
                     price >= 0 && Siege.Instance.ViewCoins >= dollars, new Color(0.26f, 0.55f, 0.5f),
                     () => { InstanceFinder.ClientManager.Broadcast(new HelperBuy { What = what }); AutoTest.Count("stall_helper_" + what); });
             }
-            HelperRow(-166f, 0, "StallHelper", L10n.T("helperHireTitle", vault.Helpers, Helpers.MaxHelpers), L10n.T("helperHireDetail"));
+            HelperRow(-166f, 0, "StallHelper", L10n.T("helperHireTitle", vault.Helpers, Helpers.MaxHelpers, Mathf.Max(0, vault.Helpers - Helpers.HumanHelpers)), L10n.T("helperHireDetail"));
             bool fastest = vault.HelperSpeed >= Helpers.MaxLevel, biggest = vault.HelperLoad >= Helpers.MaxLevel;
             HelperRow(-288f, 1, "StallSpeed", L10n.T("helperSpeedTitle", vault.HelperSpeed, Helpers.MaxLevel),
                 fastest ? L10n.T("helperSpeedNow", Helpers.Speed(vault.HelperSpeed).ToString("0.#"))
@@ -121,6 +137,10 @@ namespace HtfFortress
             HelperRow(-410f, 2, "StallBasket", L10n.T("helperLoadTitle", vault.HelperLoad, Helpers.MaxLevel),
                 biggest ? L10n.T("helperLoadNow", Helpers.Basket(vault.HelperLoad)) : L10n.T("helperLoadDetail", Helpers.Basket(vault.HelperLoad), Helpers.Basket(vault.HelperLoad + 1)));
             HelperRow(-532f, 3, "StallOven", L10n.T(vault.Oven ? "helperOvenOwned" : "helperOvenTitle"), L10n.T("helperOvenDetail", Mathf.RoundToInt(Helpers.OvenBonus * 100f)));
+            // Dismiss the newest one (free, no refund): the seagulls hired last go first.
+            Row(Right, -654f, "StallHelper", L10n.T("stallDismissTitle"), L10n.T("stallDismissDetail"),
+                L10n.T("stallDismissBtn"), vault.Helpers > 0, new Color(0.55f, 0.32f, 0.30f),
+                () => { InstanceFinder.ClientManager.Broadcast(new HelperBuy { What = 4 }); AutoTest.Count("stall_helper_dismiss"); });
             Hud.Label(p, Hud.Keys(L10n.T("stallHint")), 18f, new Vector2(0.5f, 0f), new Vector2(0f, 20f), new Vector2(1400f, 30f), TextAlignmentOptions.Center, Hud.Muted);
         }
 
@@ -134,7 +154,12 @@ namespace HtfFortress
             colors.disabledColor = new Color(0.45f, 0.45f, 0.45f, 0.55f);
             b.colors = colors;
             b.interactable = enabled;
-            b.onClick.AddListener(() => { Fx.Sound("Click", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Vector3.zero, 0.6f, AudioDistance.Short); onClick(); });
+            b.onClick.AddListener(() =>
+            {
+                Fx.Sound("Click", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Vector3.zero, 0.6f, AudioDistance.Short);
+                onClick();
+                RefreshSoon(); // bought / sold / dismissed: show it on the next frame
+            });
             var t = Hud.Label(img.transform, text, 22f, new Vector2(0.5f, 0.5f), Vector2.zero, size - new Vector2(12f, 6f), TextAlignmentOptions.Center, bold: true);
             t.enableAutoSizing = true; t.fontSizeMin = 13f; t.fontSizeMax = 22f;
         }

@@ -1497,7 +1497,7 @@ namespace HtfFortress
             yield return new WaitForSecondsRealtime(2f);
             Bosses.Instance.DebugAge(Bosses.CrashAfter - 1f);
             yield return new WaitForSecondsRealtime(2.5f);
-            Note($"crash: core {coreBefore} -> {Siege.Instance.CoreHp} (expect about -35%), boss gone {late == null || !late.IsSpawned || late.IsDestroying}, crashes {C("boss_crashed")}");
+            Note($"crash: core {coreBefore} -> {Siege.Instance.CoreHp} (expect about -60% at full health), boss gone {late == null || !late.IsSpawned || late.IsDestroying}, crashes {C("boss_crashed")}");
             // Wave 100 cleared: the run is won.
             Siege.Instance.DamageCore(-Siege.Instance.CoreMax);
             plugin.DebugJumpToWave(EnemyCatalog.FinalWave);

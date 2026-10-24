@@ -18,8 +18,7 @@ namespace HtfFortress
         // Host: to everyone. `boss` tells the clients whose move it is (its colour, where its body is).
         public static void Send(string key, Creature boss, Vector3 a, Vector3 b, int arg = 0, int who = 0)
         {
-            if (InstanceFinder.IsServerStarted)
-                InstanceFinder.ServerManager.Broadcast(new FxEvent { Kind = FxKind.BossFx, Key = key, From = a, To = b, PieceId = boss ? boss.ObjectId : 0, Arg = arg, Who = who });
+            Fx.Queue(new FxEvent { Kind = FxKind.BossFx, Key = key, From = a, To = b, PieceId = boss ? boss.ObjectId : 0, Arg = arg, Who = who });
         }
 
         public static Transform BodyOf(int id)

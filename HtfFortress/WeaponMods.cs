@@ -26,7 +26,7 @@ namespace HtfFortress
         // Fish scales for the next level up from `lvl`: 8, 15, 25, 40, 60 as before, then 22% dearer a level (a line to Lv10
         // ~700 in all, Lv20 ~6,400, Lv30 ~48,000; Sim prints what a run brings in). Past int it can't be bought.
         private static readonly int[] FirstCosts = { 8, 15, 25, 40, 60 };
-        public const double CostGrowth = 1.22;
+        public const double CostGrowth = 1.12;
         public static int Cost(int lvl) => lvl < 0 ? 0 : lvl < FirstCosts.Length ? FirstCosts[lvl]
             : (int)System.Math.Min(int.MaxValue, System.Math.Round(FirstCosts[FirstCosts.Length - 1] * System.Math.Pow(CostGrowth, lvl - FirstCosts.Length + 1)));
 
@@ -66,7 +66,7 @@ namespace HtfFortress
                 case Gear.LobsterClaw: return 0.5f; // the splash's radius where the thrown fish lands (2.5)
                 case Gear.Rocket: return 0.4f;      // the blast's radius (3)
                 case Gear.Absorber: return 3f;      // degrees wider it sucks in (30)
-                case Gear.Gatling: return 0.1f;     // seconds sooner its barrels are spun up (1.2)
+                case Gear.Gatling: return 0.1f;     // seconds sooner its barrels are spun up (2.0)
             }
             return 0f;
         }

@@ -6,3 +6,7 @@ dist/
 __pycache__/
 *.blend1
 PROGRESS.md
+# local tooling / scratch
+.tools/
+ts.toml
+icon.png

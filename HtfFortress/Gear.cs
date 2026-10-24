@@ -30,15 +30,16 @@ namespace HtfFortress
     {
         public const int FortressSlots = 4, PersonalSlots = 2, ActiveSlots = 1, WeaponSlots = 0; // to start with; weapons are items you carry (WeaponItems), not vault gear
 
-        // Expansions, each in fish scales and only once the team has held that many waves in a round (Best): team slots 5-8,
-        // personal slots 3-4, the vault 30 -> 130 slots (a slot holds up to 50 of one thing), a step every 5 waves (Owen:
-        // "倉庫升級要等 50 波太久，建議每 5 波"; the playtest's full vault waited on wave 50 and 250 scales). Priced against what
-        // dismantling brings in (a 30-wave run drops about 70 pieces; dismantling the spares is roughly 60-100 scales): the
-        // first steps come within a run or two, the last team slot is a long-term goal next to legendary enhancing (15-90 a level).
-        public static readonly (int scales, int best)[] TeamSlotPrices = { (40, 15), (100, 30), (200, 50), (350, 70) };
-        public static readonly (int scales, int best)[] PersonalSlotPrices = { (60, 25), (180, 55) };
+        // Expansions, priced in fish scales only (Owen: "倉庫格子的限制 只用魚鱗限制就好 不要用關卡 然後就合適的量" --
+        // no wave requirement any more, the scales are the gate): team slots 5-8, personal slots 3-4, the vault
+        // 30 -> 130 slots (a slot holds up to 50 of one thing). Priced against what dismantling brings in (a 30-wave run
+        // drops about 70 pieces; dismantling the spares is roughly 60-100 scales): the first steps come within a run or
+        // two, the last team slot is a long-term goal next to legendary enhancing (15-90 a level). The second number stays
+        // in the tuple (the format the vault, the shop and the tests share) but is 0 = no wave needed.
+        public static readonly (int scales, int best)[] TeamSlotPrices = { (40, 0), (100, 0), (200, 0), (350, 0) };
+        public static readonly (int scales, int best)[] PersonalSlotPrices = { (60, 0), (180, 0) };
         public static readonly (int scales, int best)[] StoragePrices =
-            { (20, 0), (30, 5), (45, 10), (60, 15), (80, 20), (100, 25), (125, 30), (150, 35), (180, 40), (220, 45) };
+            { (20, 0), (30, 0), (45, 0), (60, 0), (80, 0), (100, 0), (125, 0), (150, 0), (180, 0), (220, 0) };
         public const int StorageBase = 30, StorageStep = 10, Stack = 50;
 
         public static (int scales, int best)[] PricesOf(Expansion e) =>
@@ -238,6 +239,13 @@ namespace HtfFortress
         public readonly Dictionary<Gear, int> Enhance = new Dictionary<Gear, int>(); // +levels on a kind's legendaries (not weapons)
         public readonly Dictionary<(ulong, Gear, int), int> Mods = new Dictionary<(ulong, Gear, int), int>(); // (player, weapon kind, line): level (WeaponMods)
         public int Best;                                                        // most waves cleared in a real round on this save
+        public int Souls;                                                       // souls from records (wave 100 and beyond): paid at the lighthouse keeper
+        public int SoulDmg, SoulCrit, SoulCoins, SoulScales, SoulCore;           // the keeper's permanent tree (levels, bought with souls)
+        public float DamageMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulDmg));
+        public float CritChance => Mathf.Min(1f, 0.02f * Mathf.Max(0, SoulCrit));
+        public float ScaleMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulScales));
+        public float CoreMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulCore));
+        public int StartCoins => Mathf.Max(0, SoulCoins) * 500;                  // in fort coins
         public readonly HashSet<ulong> Starter = new HashSet<ulong>();          // players who got their first laser gun
         public readonly Dictionary<Expansion, int> Bought = new Dictionary<Expansion, int>(); // expansions bought so far
         public readonly List<(string date, string team)> Wins = new List<(string, string)>();  // every OVER 99 on this save
@@ -358,6 +366,8 @@ namespace HtfFortress
             foreach (var kv in Enhance) lines.Add($"enh {kv.Key} {kv.Value}");
             foreach (var kv in Mods) lines.Add($"mod {kv.Key.Item1} {kv.Key.Item2} {kv.Key.Item3} {kv.Value}");
             lines.Add($"best {Best} 0");
+            lines.Add($"souls {Souls} 0");
+            lines.Add($"soulup {SoulDmg} {SoulCrit} {SoulCoins} {SoulScales} {SoulCore}");
             foreach (var k in Starter) lines.Add($"starter {k} 1");
             foreach (var kv in Bought) lines.Add($"buy {kv.Key} {kv.Value}");
             foreach (var w in Wins) lines.Add($"win {w.date} {w.team.Split('、').Length} {w.team.Replace("\n", " ")}");
@@ -371,11 +381,43 @@ namespace HtfFortress
             return string.Join("\n", lines);
         }
 
+        // How many merges are possible right now (three of a kind into the next rarity), and do all of them (chains included).
+        public int Mergeable()
+        {
+            int n = 0;
+            foreach (var kv in Owned) if (kv.Key.Item2 < Rarity.Legendary) n += kv.Value / 3;
+            return n;
+        }
+        public int MergeAll()
+        {
+            int total = 0;
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var k in Owned.Keys.ToList())
+                {
+                    if (k.Item2 >= Rarity.Legendary) continue;
+                    while (Count(k.Item1, k.Item2) >= 3)
+                    {
+                        Add(k.Item1, k.Item2, -3);
+                        Add(k.Item1, k.Item2 + 1);
+                        total++;
+                        changed = true;
+                    }
+                }
+            }
+            if (total > 0) AutoTest.Count("merged", total);
+            return total;
+        }
+
         // One vault action by player `key` (host). Returns false and changes nothing when it isn't allowed.
         public bool Apply(VaultAction action, Gear g, Rarity r, int slot, ulong key)
         {
             switch (action)
             {
+                case VaultAction.MergeAll:
+                    return MergeAll() > 0;
                 case VaultAction.Merge:
                     if (r >= Rarity.Legendary || Count(g, r) < 3) return false;
                     Add(g, r, -3);
@@ -482,6 +524,11 @@ namespace HtfFortress
                         case "enh": v.Enhance[P<Gear>(f[1])] = int.Parse(f[2]); break;
                         case "mod": var tl = f[3].Split(' '); v.Mods[(ulong.Parse(f[1]), P<Gear>(f[2]), int.Parse(tl[0]))] = int.Parse(tl[1]); break;
                         case "best": v.Best = int.Parse(f[1]); break;
+                        case "souls": v.Souls = int.Parse(f[1]); break;
+                        case "soulup":
+                            var su = f[3].Split(' ');
+                            v.SoulDmg = int.Parse(f[1]); v.SoulCrit = Mathf.Max(0, int.Parse(f[2]));
+                            v.SoulCoins = Mathf.Max(0, int.Parse(su[0])); v.SoulScales = Mathf.Max(0, int.Parse(su[1])); v.SoulCore = Mathf.Max(0, int.Parse(su[2])); break;
                         case "starter": v.Starter.Add(ulong.Parse(f[1])); break;
                         case "buy": v.Bought[P<Expansion>(f[1])] = int.Parse(f[2]); break;
                         case "win": v.Wins.Add((f[1], f.Length > 3 ? f[3] : "")); break;

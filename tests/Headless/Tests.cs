@@ -197,7 +197,7 @@ namespace HtfFortress.Headless
                     object back = reader.DynamicInvoke(r);
                     Check(r.Remaining == 0, $"{t.Name}: reader left {r.Remaining} bytes unread (write/read out of step)");
                     foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Instance))
-                        if (!Equals(f.GetValue(sample), f.GetValue(back)))
+                        if (!SameValue(f.GetValue(sample), f.GetValue(back)))
                         {
                             Check(false, $"{t.Name}.{f.Name} does not survive the wire: sent {f.GetValue(sample)}, got {f.GetValue(back)}");
                             break;
@@ -214,6 +214,17 @@ namespace HtfFortress.Headless
             Check(VersionCheck.Build == FortressPlugin.Version + "-" + dllHash.Substring(0, 6), $"build id {VersionCheck.Build} isn't the DLL's own hash ({dllHash.Substring(0, 6)})");
         }
 
+        private static bool SameValue(object a, object b)
+        {
+            if (a is Array aa && b is Array bb)
+            {
+                if (aa.Length != bb.Length) return false;
+                for (int i = 0; i < aa.Length; i++) if (!SameValue(aa.GetValue(i), bb.GetValue(i))) return false;
+                return true;
+            }
+            return Equals(a, b);
+        }
+
         private static object RandomValue(Type t, System.Random rng)
         {
             if (t == typeof(bool)) return rng.Next(2) == 1;
@@ -224,6 +235,21 @@ namespace HtfFortress.Headless
             if (t == typeof(string)) return new[] { "", "a b", "王 小明", "own Scope Epic 2\nfort Rebar Legendary", "x|y" }[rng.Next(5)];
             if (t == typeof(Vector3)) return new Vector3(rng.Next(-500, 500) / 4f, rng.Next(-50, 50) / 4f, rng.Next(-500, 500) / 4f);
             if (t.IsEnum) { var vals = Enum.GetValues(t); return vals.GetValue(rng.Next(vals.Length)); }
+            if (t.IsArray)
+            {
+                var el = t.GetElementType();
+                int n = rng.Next(0, 4);
+                var arr = Array.CreateInstance(el, n);
+                for (int i = 0; i < n; i++) arr.SetValue(RandomValue(el, rng), i);
+                return arr;
+            }
+            // Any other struct of ours (a message inside a batch): fill its fields.
+            if (t.IsValueType && t.Assembly == typeof(Loot).Assembly)
+            {
+                var o = Activator.CreateInstance(t);
+                foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Instance)) f.SetValue(o, RandomValue(f.FieldType, rng));
+                return o;
+            }
             throw new Exception("no sample for " + t);
         }
 
@@ -239,8 +265,7 @@ namespace HtfFortress.Headless
                 var e = new VaultData { Scales = 1000, Best = 0 };
                 Check(e.SlotsOf(0) == 4 && e.SlotsOf(1) == 2 && e.StorageSlots == 30, "starting slots and room");
                 Check(!e.Apply(VaultAction.Expand, default, default, 3, 1), "an expansion that isn't one (the old weapon rack) is refused");
-                Check(!e.Apply(VaultAction.Expand, default, default, (int)Expansion.TeamSlot, 1), "a team slot bought before holding 15 waves");
-                e.Best = 100;
+                // Expansions are gated by scales only now (Owen: "倉庫格子的限制 只用魚鱗限制就好 不要用關卡"): no record needed.
                 int bought = 0;
                 while (e.Apply(VaultAction.Expand, default, default, (int)Expansion.TeamSlot, 1)) bought++;
                 Check(bought == 4 && e.SlotsOf(0) == 8, $"team slots: bought {bought}, now {e.SlotsOf(0)} (expect 4 more, 8)");
@@ -256,9 +281,9 @@ namespace HtfFortress.Headless
                     var prices = GearCatalog.PricesOf(x);
                     for (int i = 1; i < prices.Length; i++) Check(prices[i].scales > prices[i - 1].scales && prices[i].best >= prices[i - 1].best, $"{x} step {i + 1} isn't dearer");
                 }
-                // The vault: a step every 5 waves (Owen: 50 was too long a wait), up to 130 slots.
+                // The vault: scales only, no wave gate, up to 130 slots.
                 var sp = GearCatalog.StoragePrices;
-                Check(sp.Select((p, i) => p.best == 5 * i).All(b => b) && GearCatalog.StorageBase + GearCatalog.StorageStep * sp.Length == 130,
+                Check(sp.All(p => p.best == 0) && GearCatalog.StorageBase + GearCatalog.StorageStep * sp.Length == 130,
                       "vault steps: " + string.Join(", ", sp.Select(p => $"{p.scales}@{p.best}")));
                 // Equipping into a bought slot works; one past it doesn't.
                 var f = new VaultData { Scales = 1000, Best = 100 };
@@ -682,7 +707,8 @@ namespace HtfFortress.Headless
                 for (var r = Rarity.Rare; r <= Rarity.Legendary; r++) Check(GearCatalog.Value(g, r) > GearCatalog.Value(g, r - 1), $"{g}: {r} hits no harder than {r - 1}");
                 // Never below the game's own gun, and growing with the wave once its share of the wave passes that.
                 Check(WeaponItems.GunDamage(1f, g, 1f) == 1f && WeaponItems.GunDamage(2f, g, 1f) == 2f, $"{g}: a common at wave 1 isn't the game's gun");
-                Check(WeaponItems.GunDamage(1f, g, FortressPlugin.HpMult(40)) > 10f, $"{g}: doesn't keep up by wave 40");
+                // The wave no longer scales player damage (0.1.7): a game gun is worth the gun, whatever the wave.
+                Check(WeaponItems.GunDamage(1f, g, 1f) == 1f, $"{g}: a game gun's damage should not carry the wave any more");
             }
             foreach (var n in new[] { "HandNet", "HandNetBag", "NetFish" }) Check(File.Exists(Model(n)), $"no {n}.obj for the hand net");
             Check(Math.Abs(Weapons.LaserRamp(0f) - 1f) < 1e-4f && Math.Abs(Weapons.LaserRamp(Weapons.LaserRampSeconds) - Weapons.LaserMaxRamp) < 1e-4f
@@ -1186,7 +1212,7 @@ namespace HtfFortress.Headless
                 Check(extras == Math.Min(12, 1 + w / 3), $"wave {w} sea harassers");
             }
             Check(Plan(10, 4).plan.Count > Plan(10, 1).plan.Count * 1.8f, "four players face nearly twice the fish");
-            Check(FortressPlugin.HpMult(100) > 1500f, $"wave 100 is only x{FortressPlugin.HpMult(100):0} health: OVER 99 should be brutal");
+            Check(FortressPlugin.HpMult(100) > 300f, $"wave 100 is only x{FortressPlugin.HpMult(100):0} health: OVER 99 should still be brutal, even with weapons fixed");
         }
     }
 }

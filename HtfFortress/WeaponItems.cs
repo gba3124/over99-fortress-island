@@ -132,6 +132,7 @@ namespace HtfFortress
             model.name = ModelName;
             RarityLook(model, r);
             Place(model.transform, hand, go.transform, InHand);
+            if (g == Gear.Gatling) model.transform.localScale *= 1.5f; // Owen: "加特林好小把，我以為會很大"
             Icon(item, model, pistol, g);
             if (g == Gear.Gatling) Gatling(model);
             go.AddComponent<RarityGem>().Rarity = r;

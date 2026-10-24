@@ -114,6 +114,7 @@ namespace HtfFortress
         private void Awake() => Instance = this;
 
         public bool TryGet(Creature c, out EnemyTag tag) => _tags.TryGetValue(c, out tag);
+        public int ClientCount => _clientTags.Count; // client: fortress fish on this screen right now
         public bool ClientIsFortress(int objectId) => _clientTags.ContainsKey(objectId); // client: one of the host's fortress fish
         public EnemyTag? ClientTagOf(int objectId) => _clientTags.TryGetValue(objectId, out var t) ? t : (EnemyTag?)null;
 
@@ -261,7 +262,13 @@ namespace HtfFortress
                     float scale = Mathf.Clamp(14f / Mathf.Max(1f, dist), 0.65f, 1.15f) * (EnemyCatalog.IsBoss(tag.Kind) ? 1.4f : 1f);
                     root.localScale = Vector3.one * scale;
                     label.gameObject.SetActive(named);
-                    if (named) { label.text = (tag.Elite ? "★ " : "") + L10n.T("enemy" + tag.Kind); label.color = tag.Elite || EnemyCatalog.IsBoss(tag.Kind) ? Hud.Gold : Color.Lerp(Color.white, DyeOf(tag.Kind), 0.8f); }
+                    if (named)
+                    {
+                        string want = (tag.Elite ? "★ " : "") + L10n.T("enemy" + tag.Kind);
+                        if (label.text != want) label.text = want;
+                        Color wantColor = tag.Elite || EnemyCatalog.IsBoss(tag.Kind) ? Hud.Gold : Color.Lerp(Color.white, DyeOf(tag.Kind), 0.8f);
+                        if (label.color != wantColor) label.color = wantColor;
+                    }
                     hpBar.Set((float)hp / Mathf.Max(1, max), Hud.Bad);
                 }
             for (int i = used; i < _plates.Count; i++) if (_plates[i].root) _plates[i].root.gameObject.SetActive(false);

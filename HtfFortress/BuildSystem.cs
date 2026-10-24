@@ -43,13 +43,16 @@ namespace HtfFortress
         private readonly Dictionary<int, PieceState> _serverPieces = new Dictionary<int, PieceState>();
         private readonly Dictionary<int, int> _spent = new Dictionary<int, int>();
         private int _nextId = 1;
-        public IEnumerable<PieceState> ServerPieces => _serverPieces.Values;
+        // The concrete collection (not IEnumerable): callers that walk it every frame (turrets, bosses, siege) then get the
+        // struct enumerator and no boxing allocation.
+        public Dictionary<int, PieceState>.ValueCollection ServerPieces => _serverPieces.Values;
 
         // every client (host included)
         private readonly Dictionary<int, GameObject> _pieces = new Dictionary<int, GameObject>();
         private readonly Dictionary<int, PieceState> _states = new Dictionary<int, PieceState>();
         private readonly Dictionary<GameObject, int> _pieceIds = new Dictionary<GameObject, int>();
         public GameObject PieceObject(int id) => _pieces.TryGetValue(id, out var go) ? go : null;
+        public int PieceCount => _pieces.Count;
 
         private NetworkManager _registeredOn;
         private bool _building;
@@ -106,8 +109,16 @@ namespace HtfFortress
             var kb = Keyboard.current;
             if (kb == null || ChatManager.IsTyping || Hud.ModalOpen) return;
             // Shift+J, anywhere in a round: every damaged building mended at once (the playtest asked for one repair for all).
+            // Five seconds between presses (each player's own): it repairs everything for money, and holding the keys used to
+            // fire a request every frame it was down (Owen: 「全部修復應該要有cd 5秒一次」).
             if (kb.jKey.wasPressedThisFrame && (kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed) && Siege.Instance && Siege.Instance.ViewActive && InstanceFinder.IsClientStarted)
-            { InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = -1, Repair = true }); return; }
+            {
+                if (ClientRepairAllCost <= 0) return; // nothing is hurt: nothing to do, and it shouldn't eat the cooldown
+                if (Time.time < _repairAllReady) { Hud.Banner(L10n.T("repairAllCd", Mathf.CeilToInt(_repairAllReady - Time.time)), 1.5f); return; }
+                _repairAllReady = Time.time + RepairAllCooldown;
+                InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = -1, Repair = true });
+                return;
+            }
             if (kb[BuildKey.Value].wasPressedThisFrame) SetBuilding(!_building);
             if (!_building) { WalkUp(kb); return; }
             _walkUp = false;
@@ -231,9 +242,15 @@ namespace HtfFortress
         // What mending everything would cost this player now (the build-time bar shows it).
         public int ClientRepairAllCost => _states.Values.Where(s => s.Hp < s.MaxHp).Sum(s => Perks.MyCost(Catalog.RepairCost(s.Hp, s.MaxHp)));
 
+        public const float RepairAllCooldown = 5f; // Shift+J, each player their own
+        private float _repairAllReady; // this client's next allowed press
+        private readonly Dictionary<int, float> _repairAllNext = new Dictionary<int, float>(); // host: per player, by object id
+
         // Host, Shift+J: every damaged building mended, the worst first, as far as the money goes; everyone's told how it went.
-        private void ServerRepairAll(Player who)
+        private void ServerRepairAll(Player who, int key)
         {
+            if (_repairAllNext.TryGetValue(key, out float next) && Time.time < next) return; // a request inside the cooldown
+            _repairAllNext[key] = Time.time + RepairAllCooldown;
             int done = 0, left = 0;
             foreach (var s in _serverPieces.Values.Where(x => x.Hp < x.MaxHp).OrderBy(x => (float)x.Hp / Mathf.Max(1, x.MaxHp)).ToList())
             {
@@ -870,7 +887,7 @@ namespace HtfFortress
         private void OnUpgradeRequest(NetworkConnection conn, PieceUpgradeRequest req, Channel ch)
         {
             var who = conn == null ? Player.LocalPlayer : PlayerManager.Players.FirstOrDefault(p => p && p.Owner == conn);
-            if (req.Repair && req.Id == -1) { ServerRepairAll(who); return; }
+            if (req.Repair && req.Id == -1) { ServerRepairAll(who, who ? who.ObjectId : 0); return; }
             if (!_serverPieces.TryGetValue(req.Id, out var s)) return;
             if (req.Repair)
             {

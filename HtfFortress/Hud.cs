@@ -24,7 +24,8 @@ namespace HtfFortress
         public static readonly Color Ink = new Color(0.96f, 0.97f, 1f);
 
         private static Canvas _canvas;
-        public static Transform Root => Canvas("FortressHUD", 500, ref _canvas).transform;
+        public static Canvas RootCanvas => Canvas("FortressHUD", 500, ref _canvas);
+        public static Transform Root => RootCanvas.transform;
 
         public static Canvas Canvas(string name, int order, ref Canvas cache)
         {
@@ -211,10 +212,15 @@ namespace HtfFortress
             public Image Back, Fill;
             private RectTransform _fill;
 
+            private float _last = -1f;
+            private Color _lastColor;
             public void Set(float v, Color? c = null)
             {
-                _fill.anchorMax = new Vector2(Mathf.Clamp01(v), 1f);
-                _fill.gameObject.SetActive(v > 0.001f);
+                float f = Mathf.Clamp01(v);
+                if (Mathf.Abs(f - _last) < 0.002f && (!c.HasValue || c.Value == _lastColor)) return; // no layout rebuild for an unchanged bar
+                _last = f; _lastColor = c ?? _lastColor;
+                _fill.anchorMax = new Vector2(f, 1f);
+                _fill.gameObject.SetActive(f > 0.001f);
                 if (c.HasValue) Fill.color = c.Value;
             }
 

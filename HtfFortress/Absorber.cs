@@ -374,8 +374,7 @@ namespace HtfFortress
         // The absorber's effects (BossMoves.PlayAbsorber draws them): PieceId and Arg as each move needs.
         private static void AbsFx(string key, Vector3 a, Vector3 b, Player who, int pieceId = 0, int arg = 0)
         {
-            if (InstanceFinder.IsServerStarted)
-                InstanceFinder.ServerManager.Broadcast(new FxEvent { Kind = FxKind.Absorber, Key = key, From = a, To = b, PieceId = pieceId, Arg = arg, Who = who ? who.ObjectId : 0 });
+            Fx.Queue(new FxEvent { Kind = FxKind.Absorber, Key = key, From = a, To = b, PieceId = pieceId, Arg = arg, Who = who ? who.ObjectId : 0 });
         }
 
         // =====================================================================================================
@@ -473,7 +472,7 @@ namespace HtfFortress
             ulong me = Loot.MyKey;
             var held = vault.AbsorbedOf(me);
             var siege = Siege.Instance;
-            float scale = siege && siege.ViewActive ? FortressPlugin.HpMult(siege.View.Wave) : 1f;
+            float scale = Weapons.Scale; // the wave no longer scales player damage
             int shot = Mathf.RoundToInt(vault.WeaponValue(me, Gear.Absorber, r) * scale);
             if (held == null) { banner = L10n.T("absorberEmpty"); return L10n.T("absorberEmptyHow", SuckReach(vault, me).ToString("0.#")); }
             var prefab = GameInfo.GetSpawnable(held.Id);
