@@ -69,7 +69,8 @@
 
 > `InHand` = `Grip { Longest = 0.22f, FromHand = (-0.03, 0.03, 0.05) }`（`WeaponItems.cs:229`）；Gatling 另 ×1.5（`WeaponItems.cs:136`）；遊戲槍用原版 rig。  
 > 取得：Rocket 開局贈送；Absorber / Gatling 只在鐵匠（Best ≥10 / ≥80）；其餘掉落或鐵匠。  
-> 遊戲槍的 ID 與原版 prefab 對應在 `WeaponItems.cs:38-49`；17 把要塞武器的 `ModelName` 映射在 `Weapons.cs:130-143`；所有 `Gear*.png` 都是 256×256、透明背景、內容留約 14 px 邊。
+> 遊戲槍的 ID 與原版 prefab 對應在 `WeaponItems.cs:38-49`；17 把要塞武器的 `ModelName` 映射在 `Weapons.cs:130-143`；所有 `Gear*.png` 都是 256×256、透明背景、內容留約 14 px 邊。  
+> 缺失：0；placeholder：0；重用：Boomerang／LobsterClaw／PufferBomb 也當場上投射物，6 把遊戲槍用原版 prefab。
 
 ---
 
@@ -151,6 +152,7 @@ Gatling 再 ×1.5
   - `PufferBomb`：圓球＋引信，只有一塊「hand holds it」的方塊（`make_weapon_models2.py:153-170`）。
 - `Conch`、`Boomerang`、`PufferBomb`、`SharkWhistle` 被當成 pistol 拿：手的位置是 pistol hand target，**不是**這些物件實際被握／被吹／被丟的位置。推論：手會穿進海螺、握在河豚底部、或托著回力鏢中心。
 - `Rocket`、`Gatling`、`NetLauncher`、`WaterCannon` 都是一手持，沒有前握把／肩托／支持手；與它們的長度、重量、後座設定不符。
+- 第一人稱與朋友端看到的是同一個 prefab、同一個 `hand.parent` 下的模型（`WeaponItems.cs:130-135`），所以**手持模型本身兩邊一致**；不一致的是 FX 起點（§3.2）與後座只動本地（`KickHeld`）。真正的問題是沒有 per-weapon pose，而不是同步。
 - 遊戲槍直接使用原版 hand rig，這部分反而是正確的；問題只在要塞武器。
 
 ### 3.4 P0：五條顯示路徑，五套尺度／材質／chirality
@@ -176,7 +178,7 @@ Gatling 再 ×1.5
 ### 3.5 P1：材質與多邊形預算
 
 - 15/17 把超過 `CURRENT-DESIGN.md:306` 的「材質 1–4 個」：Gas 7、Whistle 7、Bubble 7、Hook 7、Net 7、Water 7、Puffer 7、Rocket 7、Gatling 7、Whirl 6、Conch 6、Jelly 6、Absorber 6、Boomerang 5、Star 5。只有 Laser 與 LobsterClaw 是 4。
-- 17 把合計 **8,238 vertices / 14,988 triangles**；只有 `StarThrower` 1,570 tris 超過 `CURRENT-DESIGN.md:305` 的武器 1,500 預算（超 4.7%）。
+- 17 把主模型合計 **8,238 vertices / 14,988 triangles**（不含 `GatlingBarrels` 252/440/4）；只有 `StarThrower` 1,570 tris 超過 `CURRENT-DESIGN.md:305` 的武器 1,500 預算（超 4.7%）。
 - 所有 MTL 都有對應 `Kd`，沒有缺 material；但多數是 5–7 個 slot，會讓每個 rarity／每個持有者都多出材質與 draw call，也讓 `RarityLook` 的「只染發光材質」規則更難一致。
 - 風格局部正確：低多邊形、flat、硬邊、無貼圖、`Ke` 發光；配色也大致跟 `img/arsenal.png` 一致。**不是美術方向錯，是資產規格沒收斂。**
 
