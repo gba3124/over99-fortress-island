@@ -407,3 +407,51 @@ WeaponProfile (per Gear)
 - `ItemIcons` 在目前 build 對 6 把遊戲槍是否都能成功截圖；code path 有 null fallback。
 - 材質 5–7 個在實機的實際 draw call／效能影響（只有資產事實，沒有 profiling）。
 - 玩家手部 IK 是否真的穿進 Conch／Puffer（推論，需實機截圖）。
+
+---
+
+## 10. 深度補充（2026-10-26，程式路徑核對）
+
+補上這輪逐行核對 `Weapons.cs`／`Loot.cs` 才發現、§0 五點之外的兩個**行為級 P0**：
+
+### P0-A　SharkWhistle 的「召喚鯊魚狩獵」目前是死碼
+
+- `Shark` class（`Weapons.cs:239`）、`_sharks`（`:247`）、`SharkTick()`（`:1050-1072`）、`SharkLife`（`:49`）都存在。
+- 但全 repo 沒有任何 `_sharks.Add(...)`；`grep` 只找到 client 端 `new SharkView`。
+- 實際 `Gear.SharkWhistle` 分支（`Weapons.cs:447-478`）是「算落點 → 延遲 0.25 s → 半徑內一次傷害 + 兩次傳奇」，鯊魚只是 `FxKind.Shark` 視覺。
+- `WeaponMods.TraitStep` 仍把 shark 描述成「hunts for seconds」，但 `TraitAdd` 實際被當成瞬傷倍率，文字與行為脫鉤。
+- 驗收：建立真正的 `Shark` 實體、讓 `SharkTick` 游動／咬中才扣血；`AutoTest.Count("shark_jump")` 改在真正建立時計數。
+
+### P0-B　六把遊戲原生槍掉在地上沒有模型
+
+- `Loot.DropModel(g)` 對所有 `IsWeapon` 呼叫 `Weapons.ModelName(g)`；`ModelName` default 回傳 `g.ToString()`（`Weapons.cs:142`）。
+- 對 Pistol／Shotgun／Smg／Sniper／Rifle／Bow，這會找 `Pistol.obj`…`Bow.obj`；`HtfFortress/Models/` **沒有這六個檔**。
+- `Models.Load` 找不到時回傳 null；`MakeDropView` 只剩稀有度圓盤與寶石，槍身是空氣，撿起來才出現原生 prefab。
+- 建議（三選一）：
+  1. `Loot.DropModel` 對 `IsGameGun` 直接 instantiate 遊戲原生 Weapon prefab（不經 `Models.Attach`）；
+  2. `Weapons.ModelName` 對 `IsGameGun` 回傳可用的原生 prefab 名稱；
+  3. 幫六把各做一個簡化 OBJ（最一致，但要六個新模型）。
+- Headless 驗收：`DropModel` 回傳的名字在 `Models/` 有對應 `.obj`，或該分支有原生 renderer。
+
+### 其他 P1 補充
+
+- **Boomerang 持握**：`Icon()` 有 90° 立起修正（`WeaponItems.cs:256`），但 `Dress()`／`Place()` 沒有；手持可能只看到邊線。需加同一修正。
+- **LobsterClaw**：目前是「有牙的楔形頭」，不是兩片可開合蟹螯；需要重做鉗子分件。
+- **Absorber**：`make_weapon_models3.py:106` 的材質是粉紅／金色，與設計文件的「黑洞核心、金屬環」相反；優先改色票。
+- **Whirlpool / Conch**：兩把都是「筒身＋喇叭口」，只靠材質分辨；Whirlpool 應改成機械渦輪／窄錐，Conch 保留有機貝殼。
+- **材質數**：17 把中 13 把是 5–7 個材質槽，設計文件寫 1–4；需更新規格或收斂。
+- **StarThrower** 1,570 tris，超過 1,500 預算。
+- **遠端槍口**：只有本地 `MyMuzzle` 讀 bbox；朋友端仍用固定 `o+d*0.6-up*0.25`，短槍／長槍都會偏。
+
+### 修正後 Top 10（合併版）
+
+1. Fix SharkWhistle dead `_sharks` path (P0-A).
+2. Fix game-gun ground drop models (P0-B).
+3. Per-weapon held scale/grip/muzzle profile (remove global 0.22 m).
+4. Rocket／Gatling shoulder-scale + correct barrels/posing.
+5. Boomerang held 90° rotation.
+6. LobsterClaw real double pincer; Absorber dark-hole palette.
+7. Whirlpool vs Conch silhouette differentiation.
+8. Remote muzzle from actual barrel; local/remote same.
+9. Single source for held/drop/hotbar/icon (uniform scale/materials/chirality).
+10. Materials ≤4 and StarThrower ≤1,500 tris; card DPS/range texts match behaviour.
