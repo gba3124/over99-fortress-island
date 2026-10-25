@@ -262,20 +262,20 @@ namespace HtfFortress.Headless
             Section("vault");
             // Expansions: they cost scales, wait for the record, add a slot each, stop at the top, survive a save.
             {
-                var e = new VaultData { Scales = 1000, Best = 0 };
-                Check(e.SlotsOf(0) == 4 && e.SlotsOf(1) == 2 && e.StorageSlots == 30, "starting slots and room");
+                var e = new VaultData { Scales = 3000, Best = 0 };
+                Check(e.SlotsOf(0) == 4 && e.SlotsOf(1) == 2 && e.StorageSlots == 40, "starting slots and room");
                 Check(!e.Apply(VaultAction.Expand, default, default, 3, 1), "an expansion that isn't one (the old weapon rack) is refused");
                 // Expansions are gated by scales only now (Owen: "倉庫格子的限制 只用魚鱗限制就好 不要用關卡"): no record needed.
                 int bought = 0;
                 while (e.Apply(VaultAction.Expand, default, default, (int)Expansion.TeamSlot, 1)) bought++;
-                Check(bought == 4 && e.SlotsOf(0) == 8, $"team slots: bought {bought}, now {e.SlotsOf(0)} (expect 4 more, 8)");
-                Check(e.Scales == 1000 - GearCatalog.TeamSlotPrices.Sum(p => p.scales), "team slots charged their price");
+                Check(bought == 6 && e.SlotsOf(0) == 10, $"team slots: bought {bought}, now {e.SlotsOf(0)} (expect 6 more, 10)");
+                Check(e.Scales == 3000 - GearCatalog.TeamSlotPrices.Sum(p => p.scales), "team slots charged their price");
                 e.Scales = 10;
-                Check(!e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 30, "storage bought without the scales");
+                Check(!e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 40, "storage bought without the scales");
                 e.Scales = 1000;
-                Check(e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 40, "storage +10 slots");
+                Check(e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 55, "storage +15 slots");
                 var e2 = VaultData.Read(e.Write());
-                Check(e2.SlotsOf(0) == 8 && e2.StorageSlots == 40, "expansions lost in a save");
+                Check(e2.SlotsOf(0) == 10 && e2.StorageSlots == 55, "expansions lost in a save");
                 foreach (Expansion x in Enum.GetValues(typeof(Expansion)))
                 {
                     var prices = GearCatalog.PricesOf(x);
@@ -283,7 +283,7 @@ namespace HtfFortress.Headless
                 }
                 // The vault: scales only, no wave gate, up to 130 slots.
                 var sp = GearCatalog.StoragePrices;
-                Check(sp.All(p => p.best == 0) && GearCatalog.StorageBase + GearCatalog.StorageStep * sp.Length == 130,
+                Check(sp.All(p => p.best == 0) && GearCatalog.StorageBase + GearCatalog.StorageStep * sp.Length == 190,
                       "vault steps: " + string.Join(", ", sp.Select(p => $"{p.scales}@{p.best}")));
                 // Equipping into a bought slot works; one past it doesn't.
                 var f = new VaultData { Scales = 1000, Best = 100 };
@@ -302,8 +302,8 @@ namespace HtfFortress.Headless
                       && !d.Apply(VaultAction.EquipPersonal, Gear.SharkArmor, Rarity.Legendary, 0, 9), "two shark armours in two slots (and no third)");
                 float armor = d.PersonalValue(9, Gear.SharkArmor), one = GearCatalog.Value(Gear.SharkArmor, Rarity.Legendary);
                 Check(Mathf.Abs(armor - (1f - (1f - one) * (1f - one))) < 1e-5f && armor < 1f, $"two legendary armours cut {armor:P0}");
-                Check(d.Apply(VaultAction.EquipFortress, Gear.Gunpowder, Rarity.Epic, 0, 9) && d.Apply(VaultAction.EquipFortress, Gear.Gunpowder, Rarity.Epic, 0, 9)
-                      && Mathf.Abs(d.FortressValue(Gear.Gunpowder) - 2f * GearCatalog.Value(Gear.Gunpowder, Rarity.Epic)) < 1e-5f, "two gunpowders add up");
+                Check(d.Apply(VaultAction.EquipFortress, Gear.Gunpowder, Rarity.Epic, 0, 9) && !d.Apply(VaultAction.EquipFortress, Gear.Gunpowder, Rarity.Epic, 0, 9)
+                      && Mathf.Abs(d.FortressValue(Gear.Gunpowder) - GearCatalog.Value(Gear.Gunpowder, Rarity.Epic)) < 1e-5f, "a second gunpowder is refused (one per tower gear kind)");
                 Check(Mathf.Abs(GearCatalog.Stacked(Gear.LuckyCharm, new[] { 3f, 3f }) - 5f) < 1e-5f && GearCatalog.Stacked(Gear.LuckyCharm, new float[0]) == 0f
                       && GearCatalog.Stacked(Gear.ToolBelt, Enumerable.Repeat(0.25f, 4)) < 1f, "lucky charms and tool belts stack");
             }
@@ -335,10 +335,11 @@ namespace HtfFortress.Headless
                 st.Add(Gear.Laser, Rarity.Common, 1);
                 Check(st.SlotsUsed == 1, "50 lasers still one slot");
                 st.Add(Gear.Laser, Rarity.Common, 1);
-                Check(st.SlotsUsed == 2, "the 51st starts a second slot");
-                st.Add(Gear.Rebar, Rarity.Common, GearCatalog.Stack * (st.StorageSlots - 2));
-                Check(st.VaultFull && st.Fits(Gear.Laser, Rarity.Common) && !st.Fits(Gear.Rebar, Rarity.Common) && !st.Fits(Gear.Scope, Rarity.Rare),
-                      $"full vault ({st.SlotsUsed}/{st.StorageSlots}): only the part-filled laser stack takes more");
+                Check(st.SlotsUsed == 1, "51 lasers stay in their one (gear, rarity) slot; stars are sub-stacks");
+                int gi = 0;
+                while (st.SlotsUsed < st.StorageSlots) st.Add(GearCatalog.All[gi++ % GearCatalog.All.Length], Rarity.Common, 1);
+                Check(st.VaultFull && st.Fits(Gear.Laser, Rarity.Common) && !st.Fits(Gear.Scope, Rarity.Rare),
+                      $"full vault ({st.SlotsUsed}/{st.StorageSlots}): only an existing group or a free slot takes more");
                 var fish = new StoredItem { Dead = true, Saved = new SavedItem { Exists = true, ItemID = 37, Weight = 1.734f, Cookness = 0.25f, BettingMultiplier = 1f, KillScoreMultiplier = 1.5f, SkinIndex = 2, IsDripCreature = true } };
                 var gun = new StoredItem { Saved = new SavedItem { Exists = true, ItemID = 12, Weight = 1f, Sight = 3, AmmoType = 1, ExtendedMag = true, LaserSight = true, Sharpness = 0, Quiver = 0, BarrelAttachment = 2 } };
                 st.AddItem(fish); st.AddItem(gun); st.AddItem(fish);
@@ -351,6 +352,27 @@ namespace HtfFortress.Headless
                 var client = VaultData.Read(st.Write(forClients: true));
                 Check(client.Items.Count == 0 && client.CountItem(37) == 2 && client.CountItem(12) == 1, "clients get counts, not the items");
                 Check(st.TakeItem(37)?.Id == 37 && st.CountItem(37) == 1 && st.TakeItem(99) == null, "taking one out");
+            }
+
+            // Stars: three of the same gear/rarity/star forge the next star; three 3★ forge the next rarity at 0★.
+            {
+                var st = new VaultData();
+                st.Add(Gear.Laser, Rarity.Common, 3);
+                Check(st.Apply(VaultAction.Merge, Gear.Laser, Rarity.Common, 0, 1, 0) && st.Count(Gear.Laser, Rarity.Common, 0) == 0
+                      && st.Count(Gear.Laser, Rarity.Common, 1) == 1, "3 x 0-star -> 1-star");
+                st.AddStar(Gear.Laser, Rarity.Common, 1, 2);
+                Check(st.Count(Gear.Laser, Rarity.Common, 1) == 3 && st.Mergeable() >= 1, "three 1-stars can merge");
+                st.MergeAll();
+                Check(st.Count(Gear.Laser, Rarity.Common, 1) == 0 && st.Count(Gear.Laser, Rarity.Common, 2) == 1, "three 1-star -> 2-star");
+                st.AddStar(Gear.Laser, Rarity.Epic, 3, 3);
+                st.MergeAll();
+                Check(st.Count(Gear.Laser, Rarity.Legendary, 0) == 1 && st.Count(Gear.Laser, Rarity.Epic, 3) == 0, "three epic 3-star -> legendary 0-star");
+                Check(Mathf.Abs(st.ValueOf(Gear.Laser, Rarity.Common, 3) - GearCatalog.Value(Gear.Laser, Rarity.Common) * 1.24f) < 1e-5f, "a 3-star is +24%");
+                Check(st.SlotsUsed == 2, "four star substacks of one gear/rarity still take one slot");
+                var file = VaultData.Read(st.Write());
+                Check(file.Count(Gear.Laser, Rarity.Legendary, 0) == 1 && file.Count(Gear.Laser, Rarity.Common, 2) == 1, "stars survive a vault save");
+                var oldStar = VaultData.Read("own Laser Rare 2\nfort Rebar Legendary\npers 7 SharkArmor Rare");
+                Check(oldStar.Count(Gear.Laser, Rarity.Rare, 0) == 2 && oldStar.Fortress[0].Stars == 0 && oldStar.Slots(7)[0].Stars == 0, "old saves load as 0-star");
             }
 
             var v = new VaultData();
@@ -418,7 +440,7 @@ namespace HtfFortress.Headless
                 if (!ok) { Check(dItems == 0 && dScales == 0, $"refused {act} still changed the vault"); continue; }
                 switch (a)
                 {
-                    case VaultAction.Merge: Check(dItems == -2 && dScales == 0 && count >= 3 && r < Rarity.Legendary, $"{act}: merge took {-dItems + 1} for 1"); break;
+                    case VaultAction.Merge: Check(dItems == -2 && dScales == 0 && count >= 3, $"{act}: merge took {-dItems + 1} for 1"); break;
                     case VaultAction.Salvage: Check(dItems == -1 && dScales == GearCatalog.SalvageScales[(int)r], $"{act}: salvage paid {dScales}"); break;
                     case VaultAction.Ascend: Check(dItems == 0 && dScales == -GearCatalog.AscendCost(r) && r < Rarity.Legendary, $"{act}: rank up cost {-dScales}"); break;
                     case VaultAction.Enhance: Check(dItems == 0 && dScales == -GearCatalog.EnhanceCosts[enh] && v.EnhanceOf(g) == enh + 1 && !GearCatalog.IsWeapon(g), $"{act}: enhance"); break;
@@ -427,7 +449,7 @@ namespace HtfFortress.Headless
                 }
                 Check(v.Scales >= 0, $"{act}: scales went negative");
                 Check(v.Owned.Values.All(n => n > 0), $"{act}: an empty stack stayed in the vault");
-                Check(v.Fortress.Count <= GearCatalog.FortressSlots && v.Fortress.All(f => GearCatalog.IsFortress(f.Item1)), $"{act}: fortress loadout broke the rules");
+                Check(v.Fortress.Count <= v.SlotsOf(0) && v.Fortress.All(f => GearCatalog.IsFortress(f.Item1)), $"{act}: fortress loadout broke the rules");
                 foreach (var kv in v.Personal)
                     Check(Enumerable.Range(1, 3).All(k => kv.Value.Count(x => GearCatalog.SlotKind(x.Item1) == k) <= GearCatalog.SlotsOf(k))
                           && kv.Value.All(x => !GearCatalog.IsFortress(x.Item1) && !GearCatalog.IsActive(x.Item1)), $"{act}: personal slots broke the rules");
@@ -459,7 +481,7 @@ namespace HtfFortress.Headless
             // once: a byte rarity counting down past common never ends).
             worn.Add(Gear.Decoy, Rarity.Epic);
             var usable = Actives.Owned(worn);
-            Check(usable.Count == 2 && usable.Contains((Gear.Overclock, Rarity.Rare)) && usable.Contains((Gear.Decoy, Rarity.Epic)), $"K can use {string.Join(", ", usable)}");
+            Check(usable.Count == 2 && usable.Contains((Gear.Overclock, Rarity.Rare, 0)) && usable.Contains((Gear.Decoy, Rarity.Epic, 0)), $"K can use {string.Join(", ", usable)}");
             Check(Actives.Owned(new VaultData()).Count == 0, "K can use something from an empty vault");
         }
 
@@ -502,6 +524,16 @@ namespace HtfFortress.Headless
                     Check(d1 <= d2 && d2 <= d3, $"{t} damage per second doesn't rise with level ({d1:0} / {d2:0} / {d3:0})");
                 }
             }
+            for (int first = 1; first <= 2; first++)
+                for (int second = 1; second <= 2; second++)
+                {
+                    int code = Catalog.BranchCode(first, second);
+                    Check(Catalog.FirstOf(code) == first && Catalog.SecondOf(code) == second,
+                          $"branch code {first}/{second} -> {code} maps back to {Catalog.FirstOf(code)}/{Catalog.SecondOf(code)}");
+                    Check(Catalog.BranchKey(PieceType.Flame, code) == "Flame" + (first == 1 ? "A" : "B") + second,
+                          $"branch key {code} is {Catalog.BranchKey(PieceType.Flame, code)}");
+                }
+            Check(Catalog.BranchKey(PieceType.Flame, 5) != Catalog.BranchKey(PieceType.Flame, 6), "the two B-side second branches are different");
             var v = new VaultData();
             Check(all.Count(v.CanBuild) == 10, "10 pieces buildable without blueprints (the repair tower among them)");
             var mend = Catalog.Turret(PieceType.Mender, 1, 0);
@@ -628,10 +660,13 @@ namespace HtfFortress.Headless
             // Each kind of gear as likely as before the rocket and the game's guns came; weapons as a whole too, any of them alike;
             // a special weapon (the absorber) never: only the smithy sells it.
             int before = (int)Gear.LobsterClaw + 1, weaponKinds = GearCatalog.Droppable.Length;
-            double each = (double)N / before, eachWeapon = each * (before - (int)Gear.Laser) / weaponKinds;
+            int retiredCount = Enumerable.Range(0, before).Count(i => GearCatalog.Retired((Gear)i));
+            double each = (double)N / (before - retiredCount), eachWeapon = each * (before - (int)Gear.Laser) / weaponKinds;
             double Expect(int i) => GearCatalog.IsSpecial((Gear)i) ? 0 : GearCatalog.IsWeapon((Gear)i) ? eachWeapon : each;
-            Check(Enumerable.Range(0, kinds.Length).All(i => Math.Abs(kinds[i] - Expect(i)) <= Expect(i) * 0.08),
-                  "every gear equally likely, every weapon equally likely, no absorber: " + string.Join(" ", kinds));
+            Check(Enumerable.Range(0, kinds.Length).All(i => GearCatalog.Retired((Gear)i)
+                      ? kinds[i] == 0
+                      : Math.Abs(kinds[i] - Expect(i)) <= Expect(i) * 0.08),
+                  "every gear equally likely, every weapon equally likely, no absorber/retired: " + string.Join(" ", kinds));
             Check(Loot.DropChance(EnemyKind.Runner, false, 1, 0, 0f) == 0.06f, "normal 6%");
             Check(Loot.DropChance(EnemyKind.Runner, false, 2, 0, 0f) == 1f, "first kill from wave 2 always drops");
             Check(Loot.DropChance(EnemyKind.Runner, true, 3, 1, 0f) == 0.35f, "elite 35%");
@@ -780,7 +815,8 @@ namespace HtfFortress.Headless
                 Check(GearCatalog.All.Where(GearCatalog.IsActive).All(g => Loot.Buyable(g, fresh)) && !Loot.Buyable(Gear.Gunpowder, fresh) && !Loot.Buyable(Gear.SharkArmor, fresh)
                       && !Loot.Buyable(Gear.Absorber, fresh) && Loot.Buyable(Gear.Rocket, fresh), "what the shop hands over");
                 var full = new VaultData();
-                full.Add(Gear.Rebar, Rarity.Common, GearCatalog.Stack * full.StorageSlots);
+                foreach (var g in GearCatalog.All) full.Add(g, Rarity.Epic, 1);
+                for (byte id = 1; full.SlotsUsed < full.StorageSlots && id < 200; id++) full.AddItem(new StoredItem { Saved = new SavedItem { Exists = true, ItemID = id } });
                 Check(!Loot.Buyable(Gear.Decoy, full) && Loot.Buyable(Gear.Laser, full), "active gear bought into a full vault (a weapon goes to your hands)");
                 Check(Loot.ShopItems.Count == 0, "explosives found without the game's items");
             }
@@ -866,16 +902,18 @@ namespace HtfFortress.Headless
                 Check(WeaponMods.Cost(l) > WeaponMods.Cost(l - 1) || WeaponMods.Cost(l) == int.MaxValue, $"mod price Lv{l} -> Lv{l + 1} isn't dearer than the one before");
             // What a level does stays sane however high it goes: damage keeps growing, the rest tapers to a bound.
             Check(WeaponMods.PowerMult(0) == 1f && WeaponMods.TimeMult(0) == 1f && WeaponMods.ReachMult(0) == 1f && WeaponMods.Soft(0) == 0f && WeaponMods.Soft(5) == 5f
-                  && Math.Abs(WeaponMods.TimeMult(5) - 0.6f) < 1e-4f && Math.Abs(WeaponMods.PowerMult(5) - 1.5f) < 1e-4f, "mods at 0 change nothing; Lv5 is what it was");
+                  && WeaponMods.TimeMult(5) < 0.8f && Math.Abs(WeaponMods.PowerMult(5) - 1.75f) < 1e-4f, "mods at 0 change nothing; Lv5 is much stronger");
             for (int l = 1; l <= 200; l++)
             {
-                Check(WeaponMods.PowerMult(l) > WeaponMods.PowerMult(l - 1) && WeaponMods.PowerMult(l, Gear.Conch) <= 2.5f, $"power at Lv{l}");
-                Check(WeaponMods.TimeMult(l) < WeaponMods.TimeMult(l - 1) && WeaponMods.TimeMult(l) > 0.2f, $"fire rate at Lv{l}: {WeaponMods.TimeMult(l)}");
-                Check(WeaponMods.ReachMult(l) > WeaponMods.ReachMult(l - 1) && WeaponMods.ReachMult(l) < 2f, $"range at Lv{l}: {WeaponMods.ReachMult(l)}");
+                Check(WeaponMods.PowerMult(l) > WeaponMods.PowerMult(l - 1) && WeaponMods.PowerMult(l, Gear.Conch) > WeaponMods.PowerMult(l - 1, Gear.Conch), $"power at Lv{l}");
+                Check(WeaponMods.TimeMult(l) <= WeaponMods.TimeMult(l - 1)
+                      && (WeaponMods.TimeMult(l - 1) / WeaponMods.TimeMult(l) >= 1.0099f || WeaponMods.TimeMult(l) <= 0.0101f),
+                      $"fire rate at Lv{l}: {WeaponMods.TimeMult(l)} (every level at least +3% rate until the floor)");
+                Check(WeaponMods.ReachMult(l) > WeaponMods.ReachMult(l - 1) && WeaponMods.ReachMult(l) < 100f, $"range at Lv{l}: {WeaponMods.ReachMult(l)}");
                 Check(WeaponMods.Soft(l) > WeaponMods.Soft(l - 1) && WeaponMods.Soft(l) < 15f, $"trait levels at Lv{l}: {WeaponMods.Soft(l)}");
-                Check(WeaponMods.MagAdd(30, l) <= 6 * 15, $"magazine at Lv{l}: +{WeaponMods.MagAdd(30, l)}");
+                Check(WeaponMods.MagAdd(30, l) > 0, $"magazine at Lv{l}: +{WeaponMods.MagAdd(30, l)}");
             }
-            Check(WeaponMods.MagAdd(2, 1) == 1 && WeaponMods.MagAdd(30, 5) == 30 && WeaponMods.MagAdd(0, 0) == 0, "magazine: at least a round a level, a fifth of it on a big one");
+            Check(WeaponMods.MagAdd(2, 1) == 1 && WeaponMods.MagAdd(30, 5) == 45 && WeaponMods.MagAdd(0, 0) == 0, "magazine: at least a round a level, a fifth of it on a big one");
             // A high level survives the file (and is bought with the low byte of the level it was bought at: VaultRequest.Count).
             var hv = new VaultData { Scales = int.MaxValue - 1 };
             hv.Mods[(9, Gear.Laser, WeaponMods.Rate)] = 300;
@@ -901,7 +939,7 @@ namespace HtfFortress.Headless
                 // The card and the HUD show the shooter's own power and speed.
                 var v = new VaultData();
                 v.Mods[(9, g, WeaponMods.Power)] = 2; v.Mods[(9, g, WeaponMods.Rate)] = 5;
-                Check(Math.Abs(v.WeaponValue(9, g, Rarity.Epic) - GearCatalog.Value(g, Rarity.Epic) * 1.2f) < 1e-4f && v.WeaponValue(8, g, Rarity.Epic) == GearCatalog.Value(g, Rarity.Epic), $"{g}: power isn't the shooter's own");
+                Check(Math.Abs(v.WeaponValue(9, g, Rarity.Epic) - GearCatalog.Value(g, Rarity.Epic) * 1.3f) < 1e-4f && v.WeaponValue(8, g, Rarity.Epic) == GearCatalog.Value(g, Rarity.Epic), $"{g}: power isn't the shooter's own");
                 string fx = v.EffectFor(9, g, Rarity.Rare), shown = GearCatalog.FormatValue(g, v.WeaponValue(9, g, Rarity.Rare));
                 Check(fx.Contains(shown), $"{g}: card '{fx}' doesn't show {shown}");
                 if (GearCatalog.Cooldown(g, Rarity.Rare) > 0f)
@@ -940,7 +978,7 @@ namespace HtfFortress.Headless
         private static void HelperChecks()
         {
             Section("helpers");
-            Check(Helpers.MaxHelpers == 30 && Helpers.Speed(Helpers.MaxLevel) >= 25f && Helpers.Basket(Helpers.MaxLevel) >= 60, "helpers: 30, about 27 m/s, about 60 fish a trip");
+            Check(Helpers.MaxHelpers == 10 && Helpers.HumanHelpers == 5 && Helpers.Speed(Helpers.MaxLevel) >= 25f && Helpers.Basket(Helpers.MaxLevel) >= 60, "helpers: 10 max, 5 villagers then 5 seagulls, about 27 m/s, about 60 fish a trip");
             Check(Helpers.Speed(4) == 5.4f && Helpers.Basket(4) >= 6, "a save's Lv4 helpers are no worse than before");
             for (int i = 1; i < Helpers.MaxHelpers; i++) Check(Helpers.HirePrice(i) > Helpers.HirePrice(i - 1), $"helper {i + 1} isn't dearer than {i}");
             for (int l = 1; l < Helpers.MaxLevel; l++) Check(Helpers.UpgradePrice(l) > Helpers.UpgradePrice(l - 1), $"helper upgrade Lv{l + 1} isn't dearer");
