@@ -148,28 +148,33 @@ namespace HtfFortress
         {
             var v = Loot.Instance ? Loot.Instance.ClientVault : null;
             ulong me = Player.LocalPlayer ? Loot.KeyOf(Player.LocalPlayer) : 0;
-            var mine = v != null && v.Personal.TryGetValue(me, out var l) ? l.Where(x => !GearCatalog.IsActive(x.Item1)).ToList() : new List<(Gear, Rarity)>();
+            var mine = v != null && v.Personal.TryGetValue(me, out var l) ? l.Where(x => !GearCatalog.IsActive(x.Item1)).ToList() : new List<GearKey>();
             bool show = v != null && Siege.Instance && Siege.Instance.ViewActive && Hud.Font && (v.Fortress.Count > 0 || mine.Count > 0) && !Hud.ModalOpen;
             if (!show) { if (_bar) _bar.gameObject.SetActive(false); return; }
-            // Rebuild only when the loadout changes.
-            string key = string.Join(",", v.Fortress.Select(x => $"{x.Item1}{x.Item2}{v.EnhanceOf(x.Item1)}")) + "|" + string.Join(",", mine.Select(x => $"{x.Item1}{x.Item2}{v.EnhanceOf(x.Item1)}"));
+            // Rebuild only when the loadout changes (stars included: forging one changes the bar too).
+            string key = string.Join(",", v.Fortress.Select(x => $"{x.Item1}{x.Item2}{x.Stars}{v.EnhanceOf(x.Item1)}")) + "|" + string.Join(",", mine.Select(x => $"{x.Item1}{x.Item2}{x.Stars}{v.EnhanceOf(x.Item1)}"));
             if (!_bar || key != _barKey)
             {
                 if (_bar) Destroy(_bar.gameObject);
                 _tiles.Clear();
                 _barKey = key;
                 _bar = Hud.Node(Hud.Root, "Loadout", new Vector2(1f, 0f), Vector2.zero, new Vector2(320f, 120f), new Vector2(1f, 0f));
-                void Row(string label, List<(Gear, Rarity)> items, float y)
+                void Row(string label, List<GearKey> items, float y)
                 {
                     if (items.Count == 0) return;
                     Hud.Label(_bar, label, 15f, new Vector2(1f, 0f), new Vector2(-(items.Count * (BarTile + 6f)) - 8f, y + BarTile * 0.5f), new Vector2(60f, 20f), TextAlignmentOptions.Right, Hud.Muted, pivot: new Vector2(1f, 0.5f));
                     for (int i = 0; i < items.Count; i++)
                     {
-                        var (g, r) = items[i];
+                        GearKey k = items[i];
+                        var g = k.Item1;
+                        var r = k.Item2;
                         var c = GearCatalog.Color(r);
                         var box = GlyphTile(_bar, new Vector2(1f, 0f), new Vector2(-(items.Count - 1 - i) * (BarTile + 6f), y), BarTile, L10n.T("glyph" + g), c, "Gear" + g);
                         if (r == Rarity.Legendary && v.EnhanceOf(g) > 0)
                             Hud.Label(box.transform, "+" + v.EnhanceOf(g), 12f, new Vector2(1f, 1f), new Vector2(-3f, -2f), new Vector2(30f, 14f), TextAlignmentOptions.TopRight, c, bold: true, pivot: new Vector2(1f, 1f));
+                        // The star row, minimally: the substack this piece was forged to (nothing at 0★).
+                        if (k.Stars > 0)
+                            Hud.Label(box.transform, new string('★', k.Stars), 11f, new Vector2(0f, 0f), new Vector2(2f, 1f), new Vector2(BarTile - 4f, 14f), TextAlignmentOptions.BottomLeft, Hud.Gold, bold: true, outline: true);
                         var glow = Hud.Box(box.transform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(BarTile, BarTile), new Color(1f, 1f, 1f, 0f), 10f);
                         glow.raycastTarget = false;
                         _tiles[g] = (box.rectTransform, glow);

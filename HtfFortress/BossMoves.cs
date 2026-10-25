@@ -113,7 +113,7 @@ namespace HtfFortress
                     break;
                 case "koi.call": Sound("ItemHitWaterLight_V", 1, 3, a, 1f); Run(Charge(e.PieceId, secs, Water)); break;
                 case "koi.drop": Run(Fly(a + Vector3.up * 30f + Random.insideUnitSphere * 3f, a, WeaponFx.Ball, WeaponFx.Water("BossDrop", new Color(0.55f, 0.8f, 1f, 0.85f)), Vector3.one * 1.3f, 0.6f, 0f, Water, () => { WeaponFx.Game("WaterSplashWhite", a, Vector3.up); WeaponFx.Emit(WeaponFx.Drops, a, 12, Vector3.up); BossVfx.Shock(a, 3f, Water, 0.35f); })); break;
-                case "koi.breath": Run(Breath(a, b, secs, e.Who)); Fx.Sound("FireLoop", a, 1f, AudioDistance.Long); break;
+                case "koi.breath": Run(Breath(a, b, secs, e.Who)); Fx.Sound("Ignite", a, 0.8f, AudioDistance.Long); break; // short: the loop clip kept sizzling after the breath
                 case "koi.burn": Run(Burning(a, secs)); break;
                 case "koi.charge": Run(Charge(e.PieceId, secs, new Color(0.7f, 0.85f, 1f))); break;
                 case "koi.thunder": H.StartCoroutine(BossFx.Lightning(a, new Color(0.75f, 0.85f, 1f))); BossVfx.Impact(a, 2.6f, new Color(0.6f, 0.8f, 1f), Basalt); break;
@@ -1241,7 +1241,7 @@ namespace HtfFortress
             var body = BossFx.BodyOf(id);
             Vector3 g = new Vector3(eye.x, BossFx.Ground(eye), eye.z), dir = (far - g).Flat().normalized;
             float range = (far - g).Flat().magnitude;
-            Fx.Sound("SizzlingLoop", far, 1f, AudioDistance.Long);
+            Fx.Sound("Ignite", far, 0.7f, AudioDistance.Long); // a short sizzle, not the grill loop ringing out over the fort
             Vector3 lastMark = Vector3.zero;
             for (float t = 0f; t < seconds && core; t += Time.deltaTime)
             {

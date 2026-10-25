@@ -49,7 +49,7 @@ namespace HtfFortress
                 case "kraken": Run(Grasp(b, 3f)); break;
                 case "voxel": Run(Selection(a, b, e.PieceId / 100f, 0.8f)); Fx.Sound("TypingClick" + Random.Range(1, 4), a, 1f, AudioDistance.Long); break;
                 case "voxelDelete": Run(Pixelate(a, b, e.PieceId / 100f)); BossVfx.Flash(a + Vector3.up, 3f, Pixel, 0.2f); Fx.Sound("Error", a, 0.9f, AudioDistance.Long); break;
-                case "koi": Run(Breath(a, b, e.Arg / 1000f, 25)); Fx.Sound("FireLoop", a, 0.8f, AudioDistance.Long); break;
+                case "koi": Run(Breath(a, b, e.Arg / 1000f, 25)); Fx.Sound("Ignite", a, 0.7f, AudioDistance.Long); break;
                 case "eye": Run(Gaze(a, b)); break;
                 case "spear":
                     Run(Fly(a + Vector3.up * 30f + Random.insideUnitSphere.Flat() * 3f, a, BossVfx.Shard, BossVfx.Glow(Blood, 4f), new Vector3(0.6f, 2f, 0.6f), 0.55f, 0f, Blood,

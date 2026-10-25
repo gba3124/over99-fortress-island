@@ -18,7 +18,10 @@ namespace HtfFortress
     public struct GateRequest : IBroadcast { public byte Pull; }
 
     // Host -> everyone when a round ends.
-    public struct RoundResult : IBroadcast { public int Waves; public int Kills; public int Built; public int Best; public bool NewRecord; public bool CoreLost; public bool Victory; public string Table; public int Souls, SoulsTotal, SoulsFrom; public string SoulLines; }
+    public struct RoundResult : IBroadcast { public int Waves; public int Kills; public int Built; public int Best; public bool NewRecord; public bool CoreLost; public bool Victory; public string Table; public int Souls, SoulsTotal, SoulsFrom; public string SoulLines; public int Wins; public int SettleBase, SettleBonus, ScaleGain, ScaleSpent; public bool Practice; }
+    // Host -> clients: where the fortress island actually is. Every client used to pick its own spot off whichever island it
+    // happened to have loaded, so two players could each stand on a different copy of the island and never see each other.
+    public struct IslandPlacement : IBroadcast { public Vector3 Center; }
 
     // The fortress island: a Blender-made island every client builds locally off the coast of the current island,
     // shown on the radar once unlocked. E at the lighthouse's door pulls its gate: 5 seconds later the round starts.
@@ -58,8 +61,45 @@ namespace HtfFortress
         public Vector3 DockPos => Center + DockLocal;
         // The player's position is the middle of the body (it stands about 0.9 m above the ground): put it a little higher
         // and let them drop. Only 0.3 m up, the body started half in the ground and the physics often pushed it down through.
-        public Vector3 RespawnPos => (Loot.Ground(Center + RespawnLocal + Vector3.up * 6f, 12f, out var g) ? g : Center + RespawnLocal + Vector3.up * 1.2f) + Vector3.up * StandHeight;
+        // The actual built island's position (not the intended Center): if a round moved the anchor before the island was
+        // rebuilt, Center and the visible root can disagree; teleports must always use the root.
+        public Vector3 RootPos => _root ? _root.transform.position : Center;
+        public Vector3 ReadyPos => RootPos + ReadyLocal + Vector3.up * 0.5f;
+        public Vector3 RespawnPos
+        {
+            get
+            {
+                Vector3 at = RootPos + RespawnLocal;
+                return (Loot.Ground(at + Vector3.up * 6f, 12f, out var g) ? g : at + Vector3.up * 1.2f) + Vector3.up * StandHeight;
+            }
+        }
         public const float StandHeight = 1.1f;
+
+        // F4/teleports must never aim at a point without ground under it: an unlucky anchor or a collider that is still
+        // loading used to drop the player into the sea. Try the used spots, then a small ring around them.
+        public bool TrySafePlayerSpot(Vector3 near, out Vector3 spot)
+        {
+            spot = near + Vector3.up * StandHeight;
+            if (!_root) return false;
+            Vector3[] seeds = { RootPos + RespawnLocal, ReadyPos - Vector3.up * 0.5f, CorePos, RootPos + ReadyLocal, near };
+            for (int s = 0; s < seeds.Length; s++)
+                for (int ring = 0; ring <= 4; ring++)
+                {
+                    int n = ring == 0 ? 1 : 8;
+                    for (int i = 0; i < n; i++)
+                    {
+                        float a = i * Mathf.PI * 2f / n;
+                        Vector3 p = seeds[s] + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * (ring * 2.2f);
+                        if (Physics.Raycast(new Vector3(p.x, RootPos.y + 40f, p.z), Vector3.down, out var hit, 90f, GameInfo.LevelLayer)
+                            && hit.point.y > WaterManager.GetWaterHeight(hit.point) + 0.35f)
+                        {
+                            spot = hit.point + Vector3.up * StandHeight;
+                            return true;
+                        }
+                    }
+                }
+            return false;
+        }
         // In the water beside the dock, where a respawn (or the F4 test key) parks the boat.
         public static readonly Vector3 BerthLocal = new Vector3(4f, 0f, -42f);
         public Vector3 BerthPos { get { var p = Center + BerthLocal; p.y = WaterManager.GetWaterHeight(p); return p; } }
@@ -95,6 +135,9 @@ namespace HtfFortress
 
         private GameObject _root;
         private Vector3 _anchor = new Vector3(float.NaN, 0f, 0f);
+        private Vector3 _hostCenter, _sentCenter = new Vector3(float.NaN, 0f, 0f);
+        private bool _hasHostCenter;
+        private float _nextPlacement;
         private NetworkManager _registeredOn;
         private bool _wasUnlocked;
 
@@ -102,14 +145,17 @@ namespace HtfFortress
         // client: results panel
         private GameObject _results;
         private float _resultsUntil;
+        private Coroutine _resultRoll;
         public bool ResultsShowing => _results && _results.activeSelf;
 
         static FortressIsland()
         {
-            GenericWriter<RoundResult>.SetWrite((w, v) => { w.WriteInt32(v.Waves); w.WriteInt32(v.Kills); w.WriteInt32(v.Built); w.WriteInt32(v.Best); w.WriteBoolean(v.NewRecord); w.WriteBoolean(v.CoreLost); w.WriteBoolean(v.Victory); w.WriteString(v.Table ?? ""); w.WriteInt32(v.Souls); w.WriteInt32(v.SoulsTotal); w.WriteInt32(v.SoulsFrom); w.WriteString(v.SoulLines ?? ""); });
+            GenericWriter<RoundResult>.SetWrite((w, v) => { w.WriteInt32(v.Waves); w.WriteInt32(v.Kills); w.WriteInt32(v.Built); w.WriteInt32(v.Best); w.WriteBoolean(v.NewRecord); w.WriteBoolean(v.CoreLost); w.WriteBoolean(v.Victory); w.WriteString(v.Table ?? ""); w.WriteInt32(v.Souls); w.WriteInt32(v.SoulsTotal); w.WriteInt32(v.SoulsFrom); w.WriteString(v.SoulLines ?? ""); w.WriteInt32(v.Wins); w.WriteInt32(v.SettleBase); w.WriteInt32(v.SettleBonus); w.WriteInt32(v.ScaleGain); w.WriteInt32(v.ScaleSpent); w.WriteBoolean(v.Practice); });
             GenericWriter<GateRequest>.SetWrite((w, v) => w.WriteByte(v.Pull));
             GenericReader<GateRequest>.SetRead(r => new GateRequest { Pull = r.ReadByte() });
-            GenericReader<RoundResult>.SetRead(r => new RoundResult { Waves = r.ReadInt32(), Kills = r.ReadInt32(), Built = r.ReadInt32(), Best = r.ReadInt32(), NewRecord = r.ReadBoolean(), CoreLost = r.ReadBoolean(), Victory = r.ReadBoolean(), Table = r.ReadString(), Souls = r.ReadInt32(), SoulsTotal = r.ReadInt32(), SoulsFrom = r.ReadInt32(), SoulLines = r.ReadString() });
+            GenericWriter<IslandPlacement>.SetWrite((w, v) => w.WriteVector3(v.Center));
+            GenericReader<IslandPlacement>.SetRead(r => new IslandPlacement { Center = r.ReadVector3() });
+            GenericReader<RoundResult>.SetRead(r => new RoundResult { Waves = r.ReadInt32(), Kills = r.ReadInt32(), Built = r.ReadInt32(), Best = r.ReadInt32(), NewRecord = r.ReadBoolean(), CoreLost = r.ReadBoolean(), Victory = r.ReadBoolean(), Table = r.ReadString(), Souls = r.ReadInt32(), SoulsTotal = r.ReadInt32(), SoulsFrom = r.ReadInt32(), SoulLines = r.ReadString(), Wins = r.ReadInt32(), SettleBase = r.ReadInt32(), SettleBonus = r.ReadInt32(), ScaleGain = r.ReadInt32(), ScaleSpent = r.ReadInt32(), Practice = r.ReadBoolean() });
         }
 
         private void Awake() => Instance = this;
@@ -135,13 +181,14 @@ namespace HtfFortress
             {
                 _registeredOn = nm;
                 nm.ClientManager.RegisterBroadcast<RoundResult>((r, ch) => _pendingResult = r); // shown once the victory camera is done
+                nm.ClientManager.RegisterBroadcast<IslandPlacement>((p, ch) => { _hostCenter = p.Center; _hasHostCenter = true; });
                 nm.ServerManager.RegisterBroadcast(Net.Safe<GateRequest>((conn, req, ch) =>
                 {
                     var who = PlayerManager.Players.FirstOrDefault(p => p && p.Owner == conn);
                     if (req.Pull == 2) Siege.Instance.ServerRepairCore(who); // in a round: E at the door mends the lighthouse
                     else ServerToggleStart(who);
                 }));
-                nm.ClientManager.OnClientConnectionState += a => { if (a.ConnectionState == FishNet.Transporting.LocalConnectionState.Stopped) Despawn(); };
+                nm.ClientManager.OnClientConnectionState += a => { if (a.ConnectionState == FishNet.Transporting.LocalConnectionState.Stopped) { _hasHostCenter = false; Despawn(); } };
             }
 
             if (_pendingResult.HasValue && !Reveal.Playing) { ShowResults(_pendingResult.Value); _pendingResult = null; }
@@ -160,20 +207,36 @@ namespace HtfFortress
             // running still has to place it once: skipping the move just because a round was on left a client that had
             // never built the island with Center at the world origin, a kilometre from the host's island (and F4, the
             // spawn point and the lighthouse all went there).
-            Vector3 anchor = MainIslandPos();
-            bool anchorOk = !float.IsNaN(anchor.x) && !float.IsNaN(anchor.z);
+            bool host = InstanceFinder.IsServerStarted;
+            Vector3 oldCenter = Center;
+            bool hadCenter = !float.IsNaN(_anchor.x);
+            Vector3 anchor = host ? MainIslandPos() : _hostCenter;
+            bool anchorOk = host ? (!float.IsNaN(anchor.x) && !float.IsNaN(anchor.z)) : _hasHostCenter;
+            if (!host && !_hasHostCenter) { Despawn(); return; } // wait for the host's spot: never build at the origin
             bool liveRound = Siege.Instance && Siege.Instance.ViewActive;
             bool moved = float.IsNaN(_anchor.x) || (anchor - _anchor).sqrMagnitude > 1f;
-            if (anchorOk && (!_root || (!liveRound && moved)))
+            if (anchorOk && (!_root || (host ? (!liveRound && moved) : moved)))
             {
                 _anchor = anchor;
-                Center = PickCenter(_anchor);
+                Center = host ? PickCenter(_anchor) : _hostCenter;
                 Despawn();
             }
             if (!_root)
             {
-                if (!anchorOk) return; // the main island isn't loaded yet: never build at the origin
+                if (!anchorOk) return;
                 Spawn();
+            }
+            // A client that was standing on its own (wrong) copy of the island is moved to the real one, not left in the sea.
+            if (!host && hadCenter && moved && Player.LocalPlayer && Player.LocalPlayer.Transform
+                && (Player.LocalPlayer.Transform.position - oldCenter).sqrMagnitude < (IslandRadius + 15f) * (IslandRadius + 15f))
+            {
+                Player.LocalPlayer.LocalTeleport(RespawnPos, 0f, true);
+                Banner(L10n.T("islandWelcome"), 3f);
+            }
+            if (host && _root)
+            {
+                if (Time.time >= _nextPlacement) { _nextPlacement = Time.time + 2f; InstanceFinder.ServerManager.Broadcast(new IslandPlacement { Center = Center }); }
+                else if ((Center - _sentCenter).sqrMagnitude > 0.01f) { _sentCenter = Center; InstanceFinder.ServerManager.Broadcast(new IslandPlacement { Center = Center }); }
             }
 
             // Joining a round that is already on spawns you at the main island's dock, 230 m away; bring you to the
@@ -217,6 +280,12 @@ namespace HtfFortress
             if (!_root || !me || !me.Transform || !me.Transform.gameObject.activeInHierarchy || Time.time < _nextRescue) return;
             _nextRescue = Time.time + 0.5f;
             Vector3 p = me.Transform.position;
+            // In the sea beside the island (a bad F4/anchor): put them on the nearest solid island ground.
+            if (OnIsland(p, BuildRadius + 8f) && p.y <= WaterManager.GetWaterHeight(p) + 0.25f)
+            {
+                if (TrySafePlayerSpot(RespawnPos, out var safe)) { me.LocalTeleport(safe, me.Transform.eulerAngles.y, true); AutoTest.Count("rescued_from_water"); }
+                return;
+            }
             if (!OnIsland(p, BuildRadius) || Physics.Raycast(p + Vector3.up * 0.3f, Vector3.down, 8f, GameInfo.LevelLayer)) return;
             // Back onto the surface they fell through: the lowest one above them (not a roof over it).
             var above = Physics.RaycastAll(new Vector3(p.x, Center.y + 40f, p.z), Vector3.down, 80f, GameInfo.LevelLayer).Where(h => h.point.y > p.y + 0.3f).ToList();
@@ -252,6 +321,15 @@ namespace HtfFortress
             Vector3 c = cur + dir.normalized * Offshore;
             c.y = 0f;
             return c;
+        }
+
+        // Test key F4: if the island is unlocked but somehow not built yet, build it before teleporting.
+        public void DebugEnsureSpawned()
+        {
+            if (_root || !Unlocked) return;
+            Vector3 a = MainIslandPos();
+            if (float.IsNaN(a.x) || float.IsNaN(a.z)) return;
+            _anchor = a; Center = PickCenter(_anchor); Spawn();
         }
 
         private void Spawn()
@@ -338,6 +416,9 @@ namespace HtfFortress
 
             // From inside the lighthouse's own collider the ray doesn't see it (Siege.ServerStart snaps the round's core alike).
             _lighthouseLocal = (Physics.Raycast(CorePos + Vector3.up * 2f, Vector3.down, out var lh, 6f, GameInfo.LevelLayer) ? lh.point : CorePos) - Center;
+            // The lighthouse keeper walks a slow ring round the tower instead of standing still on the plaza.
+            foreach (var k in Keepers)
+                if (k && k.Role == "Lighthouse") { k.WanderAround(Center, 5.2f); break; }
             BuildSystem.Log.LogInfo($"Fortress island at {Center} (off island at {_anchor}).");
         }
 
@@ -461,7 +542,7 @@ namespace HtfFortress
             Vector2 C = new Vector2(0.5f, 0.5f), T = new Vector2(0.5f, 1f);
             var rows = Stats.Parse(r.Table).OrderByDescending(x => x.Kills + x.TurretKills).ToList();
             var mvps = Mvps(rows);
-            float h = 132f + 128f + 154f + 46f + 52f + 40f * rows.Count + (mvps.Count > 0 ? 64f : 0f) + 66f;
+            float h = 132f + 128f + 96f + 154f + 46f + 52f + 40f * rows.Count + (mvps.Count > 0 ? 64f : 0f) + 66f + 98f + 122f;
             var panel = Hud.Box(Hud.Root, C, new Vector2(0f, 20f), new Vector2(1000f, h), Hud.PanelSolid, 26f);
             _results = panel.gameObject;
             var p = panel.transform;
@@ -469,20 +550,41 @@ namespace HtfFortress
 
             var head = Hud.Box(p, T, new Vector2(0f, -10f), new Vector2(980f, 104f), r.Victory ? new Color(0.5f, 0.36f, 0.05f, 0.95f) : new Color(0.42f, 0.09f, 0.07f, 0.9f), 20f);
             Hud.Label(head.transform, L10n.T(r.Victory ? "resultVictoryTitle" : r.CoreLost ? "resultCoreTitle" : "resultWipeTitle"), 44f, C, new Vector2(0f, 10f), new Vector2(940f, 60f), TextAlignmentOptions.Center, bold: true);
-            Hud.Label(head.transform, r.NewRecord ? $"<color={Hud.Hex(Hud.Gold)}>★ {L10n.T("resultRecordShort")} ★</color>" : L10n.T("resultBest", r.Best),
-                      22f, C, new Vector2(0f, -28f), new Vector2(940f, 30f), TextAlignmentOptions.Center, Hud.Muted, bold: r.NewRecord);
+            string second = r.Practice
+                ? L10n.T("resultPractice")
+                : r.Victory
+                ? $"<color={Hud.Hex(Hud.Gold)}>★ {(r.Wins <= 1 ? L10n.T("resultVictoryFirst") : L10n.T("resultVictoryRepeat", r.Wins))} ★</color>"
+                : r.NewRecord ? $"<color={Hud.Hex(Hud.Gold)}>★ {L10n.T("resultRecordShort")} ★</color>" : L10n.T("resultBest", r.Best);
+            Hud.Label(head.transform, second, 22f, C, new Vector2(0f, -28f), new Vector2(940f, 30f), TextAlignmentOptions.Center, Hud.Muted, bold: r.NewRecord || r.Victory);
             y -= 132f;
 
-            var tiles = new[] { (r.Waves.ToString(), L10n.T("tileWaves")), (r.Kills.ToString(), L10n.T("tileKills")), (r.Built.ToString(), L10n.T("tileBuilt")) };
+            var tileLabels = new TextMeshProUGUI[3];
+            var tileNames = new[] { L10n.T("tileWaves"), L10n.T("tileKills"), L10n.T("tileBuilt") };
             for (int i = 0; i < 3; i++)
             {
                 var tile = Hud.Box(p, T, new Vector2((i - 1) * 316f, y - 6f), new Vector2(300f, 108f), Hud.Raised, 16f, pivot: T);
-                Hud.Label(tile.transform, tiles[i].Item1, 52f, T, new Vector2(0f, -6f), new Vector2(290f, 64f), TextAlignmentOptions.Center, i == 0 ? Hud.Accent : Hud.Ink, bold: true);
-                Hud.Label(tile.transform, tiles[i].Item2, 21f, new Vector2(0.5f, 0f), new Vector2(0f, 10f), new Vector2(290f, 30f), TextAlignmentOptions.Bottom, Hud.Muted);
+                tileLabels[i] = Hud.Label(tile.transform, "0", 52f, T, new Vector2(0f, -6f), new Vector2(290f, 64f), TextAlignmentOptions.Center, i == 0 ? Hud.Accent : Hud.Ink, bold: true);
+                Hud.Label(tile.transform, tileNames[i], 21f, new Vector2(0.5f, 0f), new Vector2(0f, 10f), new Vector2(290f, 30f), TextAlignmentOptions.Bottom, Hud.Muted);
             }
             y -= 128f;
 
+            // Three currencies up front, one line each, so the result never hides what the run actually pays.
+            TextMeshProUGUI[] payLabels = new TextMeshProUGUI[3];
+            {
+                var pay = Hud.Box(p, T, new Vector2(0f, y), new Vector2(940f, 88f), new Color(0.08f, 0.11f, 0.15f, 0.95f), 16f, pivot: T);
+                var bt = pay.transform;
+                string[] names = { L10n.T("soulCurrency"), L10n.T("vaultMoney"), L10n.T("scalesName") };
+                for (int i = 0; i < 3; i++)
+                {
+                    float x = (i - 1) * 306f;
+                    payLabels[i] = Hud.Label(bt, "+0", 32f, new Vector2(0.5f, 1f), new Vector2(x, -8f), new Vector2(290f, 42f), TextAlignmentOptions.Center, i == 0 ? new Color(0.88f, 0.72f, 1f) : i == 1 ? Hud.Gold : new Color(0.55f, 0.82f, 1f), bold: true);
+                    Hud.Label(bt, names[i], 16f, new Vector2(0.5f, 0f), new Vector2(x, 10f), new Vector2(290f, 22f), TextAlignmentOptions.Center, Hud.Muted);
+                }
+                y -= 96f;
+            }
+
             // The souls settlement: what the run paid and exactly how (Owen: "結算的表單應該要有那種計算爽感").
+            TextMeshProUGUI soulValue = null;
             {
                 var box = Hud.Box(p, T, new Vector2(0f, y), new Vector2(940f, 144f), new Color(0.16f, 0.13f, 0.05f, 0.95f), 16f, pivot: T);
                 var bt = box.transform;
@@ -491,9 +593,23 @@ namespace HtfFortress
                     ? L10n.T("soulSettleFrom", r.SoulsFrom, r.Waves) + "\n" + r.SoulLines + "\n" + L10n.T("soulSettleHint")
                     : L10n.T("soulSettleNone");
                 Hud.Label(bt, left, 16f, new Vector2(0f, 1f), new Vector2(18f, -46f), new Vector2(580f, 92f), TextAlignmentOptions.TopLeft, Hud.Ink);
-                Hud.Label(bt, $"<size=165%><color={Hud.Hex(Hud.Gold)}><b>+{r.Souls}</b></color></size>", 34f, new Vector2(1f, 1f), new Vector2(-24f, -34f), new Vector2(320f, 66f), TextAlignmentOptions.Center);
+                soulValue = Hud.Label(bt, $"<size=165%><color={Hud.Hex(Hud.Gold)}><b>+0</b></color></size>", 34f, new Vector2(1f, 1f), new Vector2(-24f, -34f), new Vector2(320f, 66f), TextAlignmentOptions.Center);
                 Hud.Label(bt, L10n.T("soulSettleHave", r.SoulsTotal), 18f, new Vector2(1f, 0f), new Vector2(-24f, 22f), new Vector2(320f, 26f), TextAlignmentOptions.Center, Hud.Muted);
                 y -= 154f;
+            }
+
+            // Itemised settlement: exactly how this run's money and scales were made.
+            TextMeshProUGUI baseLine = null, bonusLine = null, scaleLine = null, totalLine = null;
+            {
+                var box = Hud.Box(p, T, new Vector2(0f, y), new Vector2(940f, 112f), new Color(0.10f, 0.14f, 0.17f, 0.95f), 16f, pivot: T);
+                var bt = box.transform;
+                Hud.Label(bt, L10n.T("settleTitle"), 21f, new Vector2(0f, 1f), new Vector2(18f, -9f), new Vector2(500f, 28f), TextAlignmentOptions.Left, Hud.Accent, bold: true);
+                baseLine = Hud.Label(bt, L10n.T("settleBaseLine", r.Waves, "0"), 17f, new Vector2(0f, 1f), new Vector2(18f, -38f), new Vector2(580f, 24f), TextAlignmentOptions.Left, Hud.Ink);
+                bonusLine = Hud.Label(bt, L10n.T("settleBonusLine", "0"), 17f, new Vector2(0f, 1f), new Vector2(18f, -62f), new Vector2(580f, 24f), TextAlignmentOptions.Left, Hud.Gold);
+                scaleLine = Hud.Label(bt, L10n.T("settleScalesLine", 0, r.ScaleSpent), 17f, new Vector2(0f, 1f), new Vector2(18f, -86f), new Vector2(580f, 24f), TextAlignmentOptions.Left, new Color(0.55f, 0.82f, 1f));
+                totalLine = Hud.Label(bt, L10n.T("settleTotalLine", "0"), 22f, new Vector2(1f, 0.5f), new Vector2(-22f, 8f), new Vector2(300f, 42f), TextAlignmentOptions.Right, Hud.Gold, bold: true);
+                Hud.Label(bt, L10n.T("settleTotalLabel"), 14f, new Vector2(1f, 0.5f), new Vector2(-22f, -24f), new Vector2(300f, 22f), TextAlignmentOptions.Right, Hud.Muted);
+                y -= 122f;
             }
 
             // Player table: fixed columns (percent of the row), the header is the six cells of "tableHeader".
@@ -521,12 +637,89 @@ namespace HtfFortress
                 }
                 y -= 64f;
             }
+            // Thank-you / tip jar: the QR is small enough for a phone and the same link as the guide's Support tab.
+            var tip = Hud.Box(p, T, new Vector2(0f, y), new Vector2(940f, 86f), new Color(0.14f, 0.12f, 0.08f, 0.9f), 14f, pivot: T);
+            Hud.Picture(tip.transform, "DonateQR", new Vector2(0f, 0.5f), new Vector2(10f, 0f), new Vector2(82f, 82f), new Vector2(0f, 0.5f));
+            Hud.Label(tip.transform, L10n.T("supportResult"), 17f, new Vector2(0f, 0.5f), new Vector2(106f, 0f), new Vector2(560f, 60f), TextAlignmentOptions.Left, Hud.Ink, pivot: new Vector2(0f, 0.5f));
+            var tipBtn = Hud.Box(tip.transform, new Vector2(1f, 0.5f), new Vector2(-14f, 0f), new Vector2(220f, 42f), new Color(0.24f, 0.48f, 0.32f), 12f, pivot: new Vector2(1f, 0.5f));
+            tipBtn.raycastTarget = true;
+            tipBtn.gameObject.AddComponent<Button>().onClick.AddListener(() => Application.OpenURL("https://buymeacoffee.com/gba3124"));
+            Hud.Label(tipBtn.transform, L10n.T("supportResultBtn"), 18f, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(210f, 38f), TextAlignmentOptions.Center, Color.white, bold: true);
+            y -= 98f;
             Hud.Label(p, Hud.Keys(L10n.T("resultAgain") + "　·　" + L10n.T("resultClose")), 22f, new Vector2(0.5f, 0f), new Vector2(0f, 22f), new Vector2(940f, 34f), TextAlignmentOptions.Center, Hud.Muted);
 
             _results.SetActive(false);
             _resultsUntil = Time.time + ResultsSeconds;
             Hud.HideBanner();
+            if (_resultRoll != null) StopCoroutine(_resultRoll);
+            _resultRoll = StartCoroutine(ResultsRoll(r, tileLabels, payLabels, soulValue, baseLine, bonusLine, scaleLine, totalLine));
             Fx.Sound(r.NewRecord ? "CasinoWinEpic" : "Death", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Center, 1f, AudioDistance.Long);
+        }
+
+
+        // The settlement is a tiny slot machine: each figure rolls up in turn with a money/soul/scale sound, instead of
+        // appearing all at once (Owen: "一個一個計算 然後數字會滾動變大 有金幣音效").
+        private System.Collections.IEnumerator ResultsRoll(RoundResult r, TextMeshProUGUI[] tiles, TextMeshProUGUI[] pay, TextMeshProUGUI soul,
+                                                           TextMeshProUGUI baseLine, TextMeshProUGUI bonusLine, TextMeshProUGUI scaleLine, TextMeshProUGUI totalLine)
+        {
+            Vector3 at = Player.LocalPlayer && Player.LocalPlayer.Transform ? Player.LocalPlayer.Transform.position : Center;
+            yield return new WaitForSecondsRealtime(0.25f);
+            if (tiles != null)
+                for (int i = 0; i < tiles.Length; i++)
+                {
+                    int target = i == 0 ? r.Waves : i == 1 ? r.Kills : r.Built;
+                    yield return RollText(tiles[i], 0, target, 0.42f, v => Mathf.RoundToInt(v).ToString("N0"));
+                    if (!_results) yield break;
+                }
+            if (pay != null)
+            {
+                if (pay.Length > 0) yield return RollText(pay[0], 0, r.Souls, 0.5f, v => "+" + Mathf.RoundToInt(v));
+                if (pay.Length > 1) yield return RollText(pay[1], 0, r.SettleBase + r.SettleBonus, 0.5f, v => "+$" + Mathf.RoundToInt(v).ToString("N0"));
+                if (pay.Length > 2) yield return RollText(pay[2], 0, r.ScaleGain, 0.5f, v => "+" + Mathf.RoundToInt(v));
+                if (r.Souls > 0 || r.SettleBase + r.SettleBonus > 0 || r.ScaleGain > 0) Fx.Sound("PickupGrab", at, 0.6f, AudioDistance.Short);
+            }
+            if (soul != null)
+            {
+                yield return RollText(soul, 0, r.Souls, 0.55f, v => $"<size=165%><color={Hud.Hex(Hud.Gold)}><b>+{Mathf.RoundToInt(v)}</b></color></size>");
+                if (r.Souls > 0) Fx.Sound("QuestReceived", at, 0.8f, AudioDistance.Long);
+            }
+            if (baseLine != null)
+            {
+                yield return RollText(baseLine, 0, r.SettleBase, 0.5f, v => L10n.T("settleBaseLine", r.Waves, Mathf.RoundToInt(v).ToString("N0")));
+                if (r.SettleBase > 0) Fx.Sound("PickupGrab", at, 0.55f, AudioDistance.Short);
+            }
+            if (bonusLine != null)
+            {
+                yield return RollText(bonusLine, 0, r.SettleBonus, 0.5f, v => L10n.T("settleBonusLine", Mathf.RoundToInt(v).ToString("N0")));
+                if (r.SettleBonus > 0) Fx.Sound("PickupGrab", at, 0.6f, AudioDistance.Short);
+            }
+            if (scaleLine != null)
+            {
+                yield return RollText(scaleLine, 0, r.ScaleGain, 0.5f, v => L10n.T("settleScalesLine", Mathf.RoundToInt(v), r.ScaleSpent));
+                if (r.ScaleGain > 0) Fx.Sound("ShinyCreatureCaught_01", at, 0.6f, AudioDistance.Short);
+            }
+            if (totalLine != null)
+            {
+                yield return RollText(totalLine, 0, r.SettleBase + r.SettleBonus, 0.55f, v => L10n.T("settleTotalLine", Mathf.RoundToInt(v).ToString("N0")));
+                if (r.SettleBase + r.SettleBonus > 0) Fx.Sound("CasinoWinEpic", at, 0.75f, AudioDistance.Long);
+            }
+            _resultRoll = null;
+        }
+
+        private System.Collections.IEnumerator RollText(TextMeshProUGUI label, float from, float to, float seconds, System.Func<float, string> format)
+        {
+            if (!label) yield break;
+            float t = 0f;
+            do
+            {
+                if (!_results || !label) yield break;
+                t += Time.unscaledDeltaTime;
+                float k = Mathf.Clamp01(t / Mathf.Max(0.01f, seconds));
+                k = 1f - (1f - k) * (1f - k);
+                label.text = format(Mathf.Lerp(from, to, k));
+                yield return null;
+            } while (t < seconds);
+            label.text = format(to);
         }
 
         private const float ResultsSeconds = 15f;

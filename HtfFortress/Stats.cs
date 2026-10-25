@@ -87,11 +87,14 @@ namespace HtfFortress
             Stats.HandHit(__0, __1);
             if (__0 && Enemies.Instance && Enemies.Instance.TryGet(__0, out _))
             {
-                float mult = FortressPlugin.HandDamage.Value * (1f + Perks.Of(__1, Gear.Gauntlet)) * (Siege.Instance.IsBubbled(__0) ? 1.5f : 1f);
+                var sv = Loot.Instance ? Loot.Instance.Vault : null;
+                float mult = FortressPlugin.HandDamage.Value * (sv != null ? sv.DamageMult : 1f)
+                           * (1f + Perks.Of(__1, Gear.Gauntlet)) * (Siege.Instance.IsBubbled(__0) ? 1.5f : 1f);
+                if (sv != null && sv.CritChance > 0f && Random.value < sv.CritChance) mult *= 2f; // the keeper's crit also covers your own gun
                 // One of the game's guns as a fortress weapon: by its rarity and the wave; a legendary now and then hits three times as hard.
                 if (WeaponItems.Held(__1, out var g, out var r) && GearCatalog.IsGameGun(g))
                 {
-                    mult *= WeaponItems.GunDamage(g, r);
+                    mult *= WeaponItems.GunDamage(g, r) * (1f + 0.08f * WeaponItems.StarsOf(__1.Holding ? __1.Holding.HeldItem : null));
                     if (r == Rarity.Legendary && Random.value < WeaponItems.GunCrit) { mult *= 3f; Perks.Proc(g, __0.transform.position); }
                 }
                 __2 = Mathf.Max(1, Mathf.RoundToInt(__2 * mult));

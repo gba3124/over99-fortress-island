@@ -30,12 +30,11 @@ namespace HtfFortress
             MeshFilter game = null;
             var hide = new List<Renderer>();
             foreach (var mf in root.GetComponentsInChildren<MeshFilter>(true))
-            {
-                if (!mf.sharedMesh || !mf.sharedMesh.name.StartsWith("DripFish")) continue; // its body (and the "drip" one), not the sneakers
-                if (!game || mf.sharedMesh.name == "DripFish") game = mf;
-                if (mf.GetComponent<Renderer>() is Renderer r) hide.Add(r);
-            }
+                if (mf.sharedMesh && mf.sharedMesh.name.StartsWith("DripFish")) { if (!game || mf.sharedMesh.name == "DripFish") game = mf; }
             if (!game) return false;
+            // The game's fish came with its own sneakers (and eye/mouth pieces). Our body replaces all of it, otherwise
+            // those old sneakers hang off the new fish at the old scale and make every kind look alike.
+            foreach (var r in root.GetComponentsInChildren<Renderer>(true)) if (r) hide.Add(r);
             Transform node = game.transform;
             Vector3 fwd = Snap(node.InverseTransformDirection(root.forward)), up = Snap(node.InverseTransformDirection(root.up));
             var go = Models.Attach(model, node, Vector3.one * 0.5f);
@@ -52,6 +51,7 @@ namespace HtfFortress
                 for (int i = 0; i < cols.Length; i++)
                     if (cols[i].maxColorComponent > 0.1f) Models.Recolor(body, i, Color.Lerp(cols[i], Gilt, 0.45f)); // the eyes stay black
             }
+            Boots(go.transform, ours, kind);
             var b = ours.bounds;
             float size = Mathf.Max(b.size.x, 0.3f * b.size.z), hat = 0f;
             if (gear != null)
@@ -62,6 +62,28 @@ namespace HtfFortress
             }
             if (elite) Enemies.Wear(go.transform, "Crown", TopAt(ours, 0.27f) + Vector3.up * hat, size * 0.7f);
             return true;
+        }
+
+        // Two small boots on the new body, in that kind's own colour: the old sneakers were the biggest reason every
+        // fortress fish read as "another one of the same".
+        private static void Boots(Transform body, Mesh mesh, EnemyKind kind)
+        {
+            var c = Enemies.DyeOf(kind);
+            if (c.maxColorComponent < 0.05f || (c.r > 0.92f && c.g > 0.92f && c.b > 0.92f)) c = new Color(0.22f, 0.62f, 0.9f); // Runner's default is white
+            var mat = Models.MakeShared(Color.Lerp(c, Color.black, 0.28f));
+            var b = mesh.bounds;
+            float y = b.min.y + 0.045f, z = -0.16f;
+            foreach (float x in new[] { -0.085f, 0.085f })
+            {
+                var boot = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Object.Destroy(boot.GetComponent<Collider>());
+                boot.name = "FoeBoot";
+                boot.transform.SetParent(body, false);
+                boot.transform.localPosition = new Vector3(x, y, z);
+                boot.transform.localScale = new Vector3(0.075f, 0.07f, 0.17f);
+                var r = boot.GetComponent<Renderer>();
+                r.sharedMaterial = mat; r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; r.receiveShadows = false;
+            }
         }
 
         // Our body in the game body's place, in that node's space: as long as the game's along its head axis, our own

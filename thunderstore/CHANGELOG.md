@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.2.9
+
+**Gear stars**
+
+- Every rarity now has **0–3 stars**: 3 × same gear/rarity/star forge the next star; 3 × 3★ forge the next rarity at 0★. Legendary 3★ is the cap. New drops are 0★; old saves load as 0★.
+- Each star is **+8%** effect (3★ = +24%), with +50%/star dismantling scales and +25%/star weapon sale value.
+- The vault stores stars as substacks inside one slot per (gear, rarity): base capacity **40**, each expansion **+15**, up to **190**. The tile shows `—/★/★★/★★★`; the card shows the full star breakdown and next merge; the smithy has 0★–3★ buttons, merge chains, and star-aware merge/salvage/take/deposit/equip.
+
+**Souls**
+
+- Souls are now paid for **every new 10-wave record from wave 10** (5, 10 … 45), with the big **100** at wave 100; a full new 100-wave record pays 325, and a 76→100 run pays 185.
+- Soul damage/crit now also applies to the player's own guns, knife and fists, not only fortress weapons and turrets; the settlement lists each soul milestone.
+- Soul payouts are still **record-only**; practice/test rounds and repeated equal records pay nothing.
+
+**Helpers**
+
+- Helpers now take a **local KNN batch**: nearest reachable job, then up to a basketful of nearby jobs (6 m), instead of walking to the oldest item across the island. Other helpers skip claimed work.
+- Decisions stay at 2–4 Hz, but movement, pickup, and selling run **every frame**; a dense pile can be collected at walking speed rather than 2–4 items a second. Helpers no longer re-scan every fish for every item.
+
+**Languages**
+
+- All **16 How to Fish locales** are supported, with Auto following the game: English, Traditional/Simplified Chinese, French, German, Italian, Spanish (Spain/Mexico), Portuguese (Brazil), Russian, Polish, Turkish, Ukrainian, Japanese, Korean, Swedish. Non-Chinese/English locales are machine-translated first drafts.
+
+**Chests and loot**
+
+- Chests **accumulate** and never auto-open; each is opened with E. Later-wave chests upgrade their material: wood → iron → brass → cyan-glow steel → white/gold at 80+, with trim and a glowing orb.
+- Chest drop models now sit on the ground instead of half-buried; rarity gems were rebuilt as a closed octahedron so they no longer show as broken halves.
+
+**Settlement and UI**
+
+- The results panel rolls each figure in sequence with coin/soul/scale sounds; three top cards show **souls / money / fish scales** directly, then the itemised settlement.
+- Test/practice victories now say **「練習／測試模式・這局不計紀錄」** instead of pretending to be a first clear.
+- Fixed the turret panel HP bar running under its number; moved the active-item strip **inside** the right panel (it was clipped off 16:10 screens); moved 「一鍵全賣」 to its own row with a hover total.
+- **F4** now checks for solid ground and searches a small ring before teleporting; falling into the sea near the island is rescued automatically.
+
+**Difficulty and combat**
+
+- Late-game enemy HP now accelerates after wave 30 (wave 70 ≈2.6×, wave 100 ≈4.7× the old curve) and boss health accelerates faster (wave 100 ≈26×), while the first 50 waves stay close to the old pacing. Tower late-upgrade multipliers are back at their original 1.3× damage / 1.35× cost.
+- Turret gears are limited to **one per tower kind**; Gunpowder/ApRounds/CoreShield values are lower, so four legendary Gunpowders can no longer one-shot late bosses.
+- The repair tower no longer draws a bubble-like ring: it uses four green repair crosses and a floating cross badge, distinct from the Bubble Shield.
+- Turrets use the **classic single-piece heads** by default; the modular body/module set is not exposed as a release setting. Enemy and prop shadows are off by default, corpse cap is 160, and debug keys/verbose logging are off — the basic host-friendly preset.
+
+**Art / models**
+
+- Weapon model audit added: [GUN-MODEL-AUDIT.md](GUN-MODEL-AUDIT.md) lists every gun's model, held scale, muzzle, icon and display mismatch, with per-gun redesign briefs. Model work is scheduled separately; this release does not yet replace the gun meshes.
+
 ## 0.2.8
 
 - The test-key list in the top-right corner is clickable now: click it (or F12) to open the clickable cheat menu; the list also says so.

@@ -34,11 +34,11 @@ namespace HtfFortress
         // Owen: ten times as many helpers, as fast and as much in a basket (it was 3, 5.4 m/s, 6 fish), at prices that grow
         // exponentially. In the game's coins (x10 dollars, Siege.Money): the 2nd helper $1,950, the 10th $15,900, the 30th
         // $3.0M; a level of speed or basket $1,200 at first, $8,800 at Lv10, $65,000 at Lv20, $2.8M for the last.
-        public const int MaxHelpers = 30, MaxLevel = 40;
-        // The first 15 helpers are villagers; past that the stall hires seagulls (Owen): they fly (so fish can't catch them),
+        public const int MaxHelpers = 10, MaxLevel = 40;
+        // The first 5 helpers are villagers; the last 5 are seagulls (Owen): they fly (so fish can't catch them),
         // are quicker, pick things up from farther, and search the whole island instead of the 60 m around them.
-        public const int HumanHelpers = 15;
-        public const float GullReach = 3.6f, GullSpeed = 1.45f, GullFly = 1.9f, HumanSearch = 60f, GullSearch = 200f;
+        public const int HumanHelpers = 5;
+        public const float GullReach = 3.6f, GullSpeed = 1.45f, GullFly = 1.9f, HumanSearch = 60f, GullSearch = 200f, GullSeaReach = 200f;
         public static int HirePrice(int have) => Mathf.RoundToInt(150f * Mathf.Pow(1.3f, have));
         public static int UpgradePrice(int level) => Mathf.RoundToInt(120f * Mathf.Pow(1.22f, level)); // a level of speed or basket, from `level`
         public const int OvenPrice = 400;
@@ -92,7 +92,7 @@ namespace HtfFortress
                 nm.ClientManager.RegisterBroadcast<HelperViews>((b, ch) => { if (b.Views != null) for (int i = 0; i < b.Views.Length; i++) OnView(b.Views[i]); });
                 nm.ClientManager.OnClientConnectionState += a => { if (a.ConnectionState == LocalConnectionState.Stopped) ClearViews(); };
             }
-            if (InstanceFinder.IsServerStarted) ServerTick();
+            if (InstanceFinder.IsServerStarted) { ServerTick(); ServerGlide(); ServerReach(); }
             ClientTick();
         }
 
@@ -101,10 +101,11 @@ namespace HtfFortress
         // =====================================================================================================
 
         // Goal: what it's going for, a body (Creature) or a Loot.Lying key.
-        private class Hand { public byte Id; public Vector3 Pos, GoalPos; public float Yaw, Hp = 1f, KoUntil; public int Load, Value; public object Goal; public byte State;
+        private class Hand { public byte Id; public Vector3 Pos, GoalPos; public float Yaw, TargetY, Hp = 1f, KoUntil; public int Load, Value; public object Goal; public byte State; public readonly List<object> Plan = new List<object>();
             public bool Gull => Id > HumanHelpers; }
         private readonly List<Hand> _hands = new List<Hand>();
         private float _last, _nextSend;
+        private int _lastCap = 2;
 
         // Bought at the stall, round or not, as far as the crew's money goes.
         public bool ServerBuy(byte what)
@@ -152,9 +153,10 @@ namespace HtfFortress
 
         // Reused every think (ten times a second): the fish positions, what's lying about, and who is already after what.
         private static readonly List<Vector3> _fishPos = new List<Vector3>();
-        private readonly Dictionary<object, (Vector3 pos, bool last)> _open = new Dictionary<object, (Vector3, bool)>(); // last: trophies, taken only when nothing else is left
+        private readonly Dictionary<object, (Vector3 pos, bool last, bool sea, bool unsafePos)> _open = new Dictionary<object, (Vector3 pos, bool last, bool sea, bool unsafePos)>(); // sea: a gull-only rescue outside the island
+        private readonly List<object> _jobs = new List<object>(); // shared FIFO: oldest unclaimed thing first
         private readonly HashSet<object> _claimed = new HashSet<object>();
-        private static bool Unsafe(Vector3 at)
+        private static bool Danger(Vector3 at)
         {
             for (int i = 0; i < _fishPos.Count; i++) if ((_fishPos[i] - at).Flat().sqrMagnitude < FishAvoid * FishAvoid) return true;
             return false;
@@ -166,7 +168,15 @@ namespace HtfFortress
         private void ServerTick()
         {
             if (Time.time < _nextThink) return;
-            _nextThink = Time.time + 0.1f;
+            // Idle helpers do not need to scan the island five times a second. Busy ones (carrying / walking to a body /
+            // walking home) keep the faster 4 Hz; everyone standing at the stall drops to 2 Hz.
+            float gap = 0.5f;
+            for (int i = 0; i < _hands.Count; i++)
+            {
+                var h = _hands[i];
+                if (h.Load > 0 || h.Goal != null || h.State != 0) { gap = 0.25f; break; }
+            }
+            _nextThink = Time.time + gap;
             float dt = Mathf.Min(0.3f, Time.time - _last);
             _last = Time.time;
             var island = FortressIsland.Instance;
@@ -187,13 +197,14 @@ namespace HtfFortress
             {
                 byte id = (byte)(_hands.Count + 1);
                 var p = Home(island, id);
-                _hands.Add(new Hand { Id = id, Pos = new Vector3(p.x, Ground(p) + (id > HumanHelpers ? GullFly : 0f), p.z) });
+                float gy = Ground(p) + (id > HumanHelpers ? GullFly : 0f);
+                _hands.Add(new Hand { Id = id, Pos = new Vector3(p.x, gy, p.z), TargetY = gy });
             }
             if (_hands.Count == 0 || FortressPlugin.Frozen) return;
             if (Time.time < _heldUntil) { Broadcast(Basket(v.HelperLoad)); return; } // auto-test: standing still for a picture
 
             float speed = Speed(v.HelperSpeed);
-            int cap = Basket(v.HelperLoad);
+            int cap = Basket(v.HelperLoad); _lastCap = cap;
             // Reused every think: the lists below used to be rebuilt (and sorted) ten times a second for every helper.
             _fishPos.Clear();
             var alive = FortressPlugin.Alive;
@@ -205,17 +216,37 @@ namespace HtfFortress
             // What there is to pick up: the bodies for the baskets, and everything else lying on the island (Loot.ServerLying).
             _open.Clear();
             foreach (var c in FortressNet.Instance.ServerCorpses())
-                if (island.OnIsland(c.transform.position, FortressIsland.IslandRadius + 4f)) _open[c] = (c.transform.position, false);
-            foreach (var t in Loot.Instance.ServerLying()) _open[t.Key] = (t.Pos, t.Last);
+            {
+                Vector3 cp = c.transform.position;
+                bool onIsland = island.OnIsland(cp, FortressIsland.IslandRadius + 4f);
+                if (!onIsland && (cp - island.Center).sqrMagnitude > GullSeaReach * GullSeaReach) continue; // too far out even for a gull
+                _open[c] = (cp, false, !onIsland, Danger(cp)); // bodies out at sea are for the seagulls, not the villagers
+            }
+            foreach (var t in Loot.Instance.ServerLying())
+            {
+                bool onIsland = island.OnIsland(t.Pos, FortressIsland.IslandRadius + 4f);
+                if (!onIsland && (t.Pos - island.Center).sqrMagnitude > GullSeaReach * GullSeaReach) continue;
+                _open[t.Key] = (t.Pos, t.Last, !onIsland, Danger(t.Pos));
+            }
+            // One shared work queue for all helpers: the first eligible job is the oldest thing still waiting (FIFO),
+            // not a fresh nearest-item scan per helper. The queue is rebuilt from what is actually still there.
+            _jobs.Clear();
+            foreach (var k in _open.Keys) _jobs.Add(k);
             _claimed.Clear();
-            for (int i = 0; i < _hands.Count; i++) if (_hands[i].Goal != null) _claimed.Add(_hands[i].Goal);
+            for (int i = 0; i < _hands.Count; i++)
+            {
+                var h = _hands[i];
+                if (h.Goal != null) _claimed.Add(h.Goal);
+                for (int j = 0; j < h.Plan.Count; j++) _claimed.Add(h.Plan[j]);
+            }
             foreach (var h in _hands)
             {
                 if (h.State == 3)
                 {
                     if (Time.time < h.KoUntil) continue;
                     var home = Home(island, h.Id);
-                    h.Pos = new Vector3(home.x, Ground(home), home.z);
+                    float hy = Ground(home);
+                    h.Pos = new Vector3(home.x, hy, home.z); h.TargetY = hy;
                     h.State = 0;
                     h.Hp = 1f;
                 }
@@ -231,52 +262,122 @@ namespace HtfFortress
                 }
                 else h.Hp = Mathf.Min(1f, h.Hp + 0.03f * dt);
 
-                // The nearest thing no other helper is after and no fish is near, while the basket has room (full, it's off to
-                // the stall).
-                if (h.Load >= cap || h.Goal == null || !_open.TryGetValue(h.Goal, out var cur) || (!h.Gull && Unsafe(cur.pos)))
+                // One helper owns a KNN batch around the nearest drop, not the oldest item on the island: it fills its
+                // basket with what is next to each other, and other helpers skip that batch. When the batch is empty it
+                // re-plans. (Owen: "附近的可以拿的拿一拿"; FIFO had helpers marching across the whole island.)
+                bool goalOk = h.Goal != null && _open.TryGetValue(h.Goal, out var cur) && (h.Gull || (!cur.sea && !cur.unsafePos));
+                if (h.Load >= cap)
                 {
-                    if (h.Goal != null) _claimed.Remove(h.Goal);
-                    h.Goal = null;
-                    float best = float.MaxValue, search = h.Gull ? GullSearch : HumanSearch;
-                    if (h.Load < cap)
-                    {
-                        // Two passes: the ordinary loot first, trophies (last) only when there is nothing else to fetch.
-                        for (int pass = 0; pass < 2 && h.Goal == null; pass++)
-                            foreach (var kv in _open)
-                            {
-                                if (kv.Value.last && pass == 0) continue;
-                                float d2 = (kv.Value.pos - h.Pos).sqrMagnitude;
-                                if (d2 < best && d2 <= search * search && !_claimed.Contains(kv.Key) && (h.Gull || !Unsafe(kv.Value.pos)))
-                                { best = d2; h.Goal = kv.Key; h.GoalPos = kv.Value.pos; }
-                            }
-                    }
-                    if (h.Goal != null) _claimed.Add(h.Goal);
+                    ReleasePlan(h);
+                    h.GoalPos = island.CounterPos;
                 }
+                else
+                {
+                    if (!goalOk && h.Goal != null)
+                    {
+                        _claimed.Remove(h.Goal); h.Plan.Remove(h.Goal); h.Goal = null;
+                    }
+                    if (h.Goal == null) NextInPlan(h);
+                    if (h.Goal == null) PlanNearest(h, cap);
+                }
+                if (h.Goal != null) h.State = 1;
+                else if (h.Load > 0) { h.State = 2; h.GoalPos = island.CounterPos; }
+                else h.State = 0;
+                // Position is advanced every frame by ServerGlide: walking in 0.25-0.5 s steps was the visible stutter.
+                h.TargetY = Ground(h.Pos) + (h.Gull ? GullFly : 0f);
+            }
+            Broadcast(cap);
+        }
+
+
+        // A helper claims up to a basketful of nearby jobs: the nearest seed, then everything within a short radius of
+        // that seed, ordered by walking distance from the helper. This is the KNN batch the island was missing.
+        public const float ClusterRadius = 6f;
+        private void ReleasePlan(Hand h)
+        {
+            if (h.Goal != null) _claimed.Remove(h.Goal);
+            foreach (var k in h.Plan) _claimed.Remove(k);
+            h.Plan.Clear();
+            h.Goal = null;
+        }
+        private bool Eligible(Hand h, object key, Vector3 pos, bool lastOne, bool sea, bool unsafePos, float search)
+        {
+            if (_claimed.Contains(key)) return false;
+            if (lastOne) return false; // trophies are a second pass only
+            if (sea && !h.Gull) return false;
+            if (!h.Gull && unsafePos) return false;
+            return (pos - h.Pos).sqrMagnitude <= search * search;
+        }
+        private void NextInPlan(Hand h)
+        {
+            if (h.Load >= _lastCap) { ReleasePlan(h); return; }
+            object bestKey = null; float best = float.MaxValue;
+            for (int i = h.Plan.Count - 1; i >= 0; i--)
+            {
+                var key = h.Plan[i];
+                if (!_open.TryGetValue(key, out var job)) { _claimed.Remove(key); h.Plan.RemoveAt(i); continue; }
+                float d2 = (job.pos - h.Pos).sqrMagnitude;
+                if (d2 < best) { best = d2; bestKey = key; h.GoalPos = job.pos; }
+            }
+            h.Goal = bestKey;
+        }
+        private void PlanNearest(Hand h, int cap)
+        {
+            if (h.Load >= cap) return;
+            float search = h.Gull ? GullSearch : HumanSearch;
+            object seed = null; float seedD = float.MaxValue;
+            // Ordinary loot first; a trophy only if there is nothing else reachable.
+            for (int pass = 0; pass < 2 && seed == null; pass++)
+                for (int i = 0; i < _jobs.Count; i++)
+                {
+                    var key = _jobs[i];
+                    if (!_open.TryGetValue(key, out var job)) continue;
+                    if (pass == 0 && job.last) continue;
+                    if (pass == 1 && !job.last) continue;
+                    if (_claimed.Contains(key) || (!h.Gull && (job.sea || job.unsafePos))) continue;
+                    if ((job.pos - h.Pos).sqrMagnitude > search * search) continue;
+                    float d2 = (job.pos - h.Pos).sqrMagnitude;
+                    if (d2 < seedD) { seedD = d2; seed = key; }
+                }
+            if (seed == null || !_open.TryGetValue(seed, out var seedJob)) return;
+            int room = Mathf.Max(1, cap - h.Load);
+            var near = new List<(object key, Vector3 pos, float d)>();
+            for (int i = 0; i < _jobs.Count && near.Count < 64; i++)
+            {
+                var key = _jobs[i];
+                if (!_open.TryGetValue(key, out var job)) continue;
+                if ((job.pos - seedJob.pos).sqrMagnitude > ClusterRadius * ClusterRadius) continue;
+                if (_claimed.Contains(key) || (!h.Gull && (job.sea || job.unsafePos))) continue;
+                if ((job.pos - h.Pos).sqrMagnitude > search * search) continue;
+                near.Add((key, job.pos, (job.pos - h.Pos).sqrMagnitude));
+            }
+            near.Sort((a, b) => a.d.CompareTo(b.d));
+            for (int i = 0; i < near.Count && h.Plan.Count < room; i++)
+            {
+                var key = near[i].key;
+                if (_claimed.Contains(key)) continue;
+                h.Plan.Add(key); _claimed.Add(key);
+            }
+            NextInPlan(h);
+        }
+
+        // Host movement, every frame. Decisions stay at 2-4 Hz; only the cheap part (walk toward the cached goal) runs at
+        // frame rate, so both the host's own helpers and the 10 Hz HelperViews stay smooth.
+        private void ServerGlide()
+        {
+            if (_hands.Count == 0 || FortressPlugin.Frozen || Time.time < _heldUntil) return;
+            var island = FortressIsland.Instance;
+            var v = Loot.Instance ? Loot.Instance.Vault : null;
+            if (!island || !island.Exists || v == null) return;
+            float speed = Speed(v.HelperSpeed);
+            float dt = Mathf.Min(0.1f, Time.deltaTime);
+            bool any = false;
+            foreach (var h in _hands)
+            {
+                if (h.State == 3) continue;
                 Vector3 goal;
-                if (h.Goal != null)
-                {
-                    h.State = 1;
-                    goal = h.GoalPos;
-                    float reach = h.Gull ? GullReach : Reach;
-                    if ((goal - h.Pos).Flat().sqrMagnitude < reach * reach)
-                    {
-                        if (h.Goal is Creature body)
-                        {
-                            int worth = FortressNet.Instance.ServerTakeCorpse(body);
-                            if (worth > 0) { h.Load++; h.Value += worth; Fx.Send(FxKind.Scoop, goal, h.Pos + Vector3.up); AutoTest.Count("helper_picked"); }
-                        }
-                        else if (Loot.Instance.ServerHelperPick(h.Goal, h.Pos + Vector3.up)) AutoTest.Count("helper_looted");
-                        _open.Remove(h.Goal);
-                        _claimed.Remove(h.Goal);
-                        h.Goal = null;
-                    }
-                }
-                else if (h.Load > 0)
-                {
-                    h.State = 2;
-                    goal = island.CounterPos;
-                    if ((goal - h.Pos).Flat().sqrMagnitude < 2.2f * 2.2f) { Sell(h, v, island.CounterPos); continue; }
-                }
+                if (h.Goal != null) { h.State = 1; goal = h.GoalPos; }
+                else if (h.Load > 0) { h.State = 2; goal = island.CounterPos; }
                 else { h.State = 0; goal = Home(island, h.Id); }
                 Vector3 to = (goal - h.Pos).Flat();
                 float d = to.magnitude;
@@ -284,11 +385,16 @@ namespace HtfFortress
                 {
                     h.Pos += to / d * Mathf.Min(d, speed * (h.Gull ? GullSpeed : 1f) * dt);
                     h.Yaw = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
+                    any = true;
                 }
-                float wantY = Ground(h.Pos) + (h.Gull ? GullFly : 0f);
-                h.Pos.y = Mathf.MoveTowards(h.Pos.y, wantY, (h.Gull ? 6f : 8f) * dt);
+                float wantY = h.TargetY;
+                if (Mathf.Abs(h.Pos.y - wantY) > 0.001f)
+                {
+                    h.Pos.y = Mathf.MoveTowards(h.Pos.y, wantY, (h.Gull ? 6f : 8f) * dt);
+                    any = true;
+                }
             }
-            Broadcast(cap);
+            if (any) Broadcast(_lastCap);
         }
 
         // Only the ones that moved or changed, and each at least once a second (a screen drops one unseen for 3 s): thirty
@@ -313,6 +419,40 @@ namespace HtfFortress
         private static bool Same(HelperView a, HelperView b) =>
             (a.Pos - b.Pos).sqrMagnitude < 0.0025f && Mathf.Abs(Mathf.DeltaAngle(a.Yaw, b.Yaw)) < 1f && a.Load == b.Load && a.Cap == b.Cap && a.Hp == b.Hp && a.State == b.State;
 
+        // Reaching/picking/selling runs every frame too: the old 2-4 Hz decision tick was fine for *deciding* what to
+        // fetch, but it also limited collection to two or four items a second. A helper now takes what it touches at once.
+        private void ServerReach()
+        {
+            if (_hands.Count == 0 || FortressPlugin.Frozen || Time.time < _heldUntil) return;
+            var island = FortressIsland.Instance;
+            var v = Loot.Instance ? Loot.Instance.Vault : null;
+            if (!island || !island.Exists || v == null) return;
+            int cap = _lastCap;
+            foreach (var h in _hands)
+            {
+                if (h.State == 3) continue;
+                if (h.Goal != null && _open.TryGetValue(h.Goal, out var job))
+                {
+                    float reach = h.Gull ? GullReach : Reach;
+                    if ((job.pos - h.Pos).Flat().sqrMagnitude < reach * reach)
+                    {
+                        object taken = h.Goal;
+                        if (taken is Creature body)
+                        {
+                            int worth = FortressNet.Instance.ServerTakeCorpse(body);
+                            if (worth > 0) { h.Load++; h.Value += worth; Fx.Send(FxKind.Scoop, job.pos, h.Pos + Vector3.up); AutoTest.Count("helper_picked"); }
+                        }
+                        else if (Loot.Instance.ServerHelperPick(taken, h.Pos + Vector3.up)) AutoTest.Count("helper_looted");
+                        _open.Remove(taken); _claimed.Remove(taken); h.Plan.Remove(taken); h.Goal = null;
+                        if (h.Load < cap) NextInPlan(h);
+                        if (h.Load >= cap || h.Goal == null) ReleasePlan(h);
+                    }
+                }
+                else if (h.Goal == null && h.Load > 0 && (island.CounterPos - h.Pos).Flat().sqrMagnitude < 2.2f * 2.2f)
+                    Sell(h, v, island.CounterPos);
+            }
+        }
+
         private void Sell(Hand h, VaultData v, Vector3 counter)
         {
             int value = Mathf.RoundToInt(h.Value * (1f + (v.Oven ? OvenBonus : 0f)));
@@ -333,7 +473,7 @@ namespace HtfFortress
             h.KoUntil = Time.time + KoSeconds;
             h.Load = 0;
             h.Value = 0;
-            h.Goal = null;
+            ReleasePlan(h);
             Fx.Send(FxKind.Dust, h.Pos, h.Pos);
             AutoTest.Count("helper_down");
         }
@@ -376,7 +516,7 @@ namespace HtfFortress
                 if (s.Kind == 1)
                 {
                     // A seagull (tools/make_seagull.py): the same villager slot past HumanHelpers, but it flies.
-                    var gull = Models.Attach("Seagull", root, new Vector3(0.7f, 0.2f, 0.7f), new Vector3(0f, 0.3f, 0f), shadows: false, share: true);
+                    var gull = Models.Attach("Seagull", root, new Vector3(0.7f, 0.2f, 0.7f), new Vector3(0f, 0.3f, 0f), shadows: false, share: false);
                     gull.transform.localScale = Vector3.one * 0.95f;
                     v = _views[s.Id] = new View { Root = root, Gull = true, Shown = s.Pos };
                 }
@@ -387,7 +527,7 @@ namespace HtfFortress
                     var bag = new GameObject("Basket").transform; // held out in front in both hands
                     bag.SetParent(person.transform, false);
                     bag.localPosition = new Vector3(0f, 0.86f, 0.5f);
-                    Models.Attach("HelperBasket", bag, Vector3.one * 0.42f, shadows: false, share: true);
+                    Models.Attach("HelperBasket", bag, Vector3.one * 0.42f, shadows: false, share: false);
                     v = _views[s.Id] = new View { Root = root, Person = person, Bag = bag, Shown = s.Pos };
                 }
             }
@@ -467,7 +607,7 @@ namespace HtfFortress
                     float dist = Vector3.Distance(cam.transform.position, v.Shown);
                     if (dist > 30f) continue;
                     Vector3 sp = cam.WorldToScreenPoint(v.Shown + Vector3.up * (v.Gull ? 1.2f : 2.1f));
-                    if (sp.z < 0f) continue;
+                    if (sp.z < 0f || sp.x < -40f || sp.x > Screen.width + 40f || sp.y < -40f || sp.y > Screen.height + 40f) continue; // no half-clipped plates at the screen edge
                     if (used >= _plates.Count)
                     {
                         var rt = Hud.Node(Hud.Root, "HelperPlate", Vector2.zero, Vector2.zero, new Vector2(160f, 40f), new Vector2(0.5f, 0f));

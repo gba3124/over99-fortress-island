@@ -61,12 +61,12 @@ namespace HtfFortress
                 Put(Vector3.Lerp(from, Home, 1f - (1f - k) * (1f - k)), r * Quaternion.Euler(-30f * (1f - k), 0f, 0f));
                 yield return null;
             }
-            Put(Home, r);
+            Put(Stand(Home), r);
         }
 
         protected override IEnumerator Act()
         {
-            yield return WalkTo(Heart(), 2.4f, 6.5f, Phase2 ? 2.5f : 4f);
+            yield return WalkTo(TowerPoint(34f), 5.0f, 2.8f, Phase2 ? 3.2f : 5f); // a melee boss: get right up to the tower
             switch (Pick(4f, 3f, Phase2 ? 1.5f : 2.2f))
             {
                 case 0: yield return Guillotine(Phase2 ? 2 : 1); break;
@@ -96,6 +96,8 @@ namespace HtfFortress
 
         private Vector3 Target()
         {
+            var turret = TurretsNear(11f).OrderBy(x => (x.Pos - Pos).sqrMagnitude).FirstOrDefault();
+            if (turret.Id != 0) return turret.Pos;
             var p = Best(x => (x.Pos - Pos).Flat().magnitude < 11f, x => x.MaxHp + (Catalog.IsTurret(x.Type) ? 200f : 0f) - (x.Pos - Pos).Flat().magnitude * 10f);
             if ((Core - Pos).Flat().magnitude < 11f && (!p.HasValue || Random.value < 0.4f)) return Core;
             if (p.HasValue) return p.Value.Pos;
@@ -129,7 +131,7 @@ namespace HtfFortress
             Send("warden.shell", Pos, Pos, Mathf.RoundToInt(seconds * 1000f));
             Shout("wardenShell");
             AutoTest.Count("warden_shell");
-            yield return WalkTo(Core, 1.6f, 4f, seconds);
+            yield return WalkTo(TowerPoint(28f), 3.6f, 2.2f, seconds);
             TurretMult = 1f;
         }
     }
@@ -166,13 +168,13 @@ namespace HtfFortress
 
         protected override IEnumerator Act()
         {
-            Vector3 goal = Heart();
-            for (float t = 0f; t < (Phase2 ? 2f : 3f) && Alive && (goal - Pos).Flat().magnitude > 9f; t += Time.deltaTime)
+            Vector3 goal = TowerPoint(30f);
+            for (float t = 0f; t < (Phase2 ? 2.5f : 3.5f) && Alive && (goal - Pos).Flat().magnitude > 4.5f; t += Time.deltaTime)
             {
                 Vector3 dir = (goal - Pos).Flat().normalized;
                 var wall = WallAhead(dir);
                 if (wall != null) { BuildSystem.Instance.ServerDamagePiece(wall.Value.Id, Scaled(40f)); Send("stomp", wall.Value.Pos, wall.Value.Pos); yield return 0.5f; continue; }
-                RollTo(Stand(Pos + dir * 3.5f * SlowFactor * Time.deltaTime));
+                RollTo(Stand(Pos + dir * 4.5f * SlowFactor * Time.deltaTime));
                 yield return null;
             }
             switch (Pick(4f, 3.5f, 2.5f))
@@ -186,7 +188,7 @@ namespace HtfFortress
 
         private IEnumerator Crush(int lanes)
         {
-            Vector3 dir = (Heart() - Pos).Flat().normalized;
+            Vector3 dir = (TowerPoint(30f) - Pos).Flat().normalized;
             for (int i = 0; i < lanes && Alive; i++)
             {
                 Vector3 a = Pos, b = Across(a, dir, 32f);
@@ -273,7 +275,7 @@ namespace HtfFortress
         protected override IEnumerator Act()
         {
             float a = Mathf.Atan2(Pos.z - Center.z, Pos.x - Center.x) + Random.Range(-0.9f, 0.9f);
-            Vector3 to = Center + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * Random.Range(20f, 25f);
+            Vector3 to = Center + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * Random.Range(16f, 20f);
             to.y = GroundY(to) + Foot + Hover;
             yield return Glide(to, 3.5f);
             yield return Turn(Core, 0.5f);
@@ -310,7 +312,7 @@ namespace HtfFortress
                 Vector3 look = p.CamObject ? p.CamObject.forward : p.Transform.forward;
                 Vector3 to = lantern - eye;
                 if (to.magnitude > 45f || Vector3.Angle(look, to) > 50f || Physics.Linecast(eye, lantern, GameInfo.LevelLayer)) continue;
-                Siege.HurtPlayer(p, Mathf.Min(70, Scaled(18f)), (Pos - p.Transform.position).Flat().normalized * 16f + Vector3.up * 5f);
+                Siege.HurtPlayer(p, Mathf.Min(80, Scaled(18f)), (Pos - p.Transform.position).Flat().normalized * 16f + Vector3.up * 5f);
                 n++;
             }
             AutoTest.Count("angler_lure");
@@ -403,7 +405,7 @@ namespace HtfFortress
 
         protected override IEnumerator Act()
         {
-            Vector3 to = SpotNear(Heart(), 9f, 15f);
+            Vector3 to = SpotNear(TowerPoint(30f), 3.5f, 6.5f); // the horse closes in before it leaps
             yield return Leap(Stand(to), 5f, 0.9f);
             Send("steed.land", Pos, Pos);
             Hit(Circle(Pos, Reach + 1f), 30f, 12f, 0f, Pos, 6f);
@@ -418,7 +420,7 @@ namespace HtfFortress
 
         private IEnumerator Charge(int times)
         {
-            Vector3 dir = (Heart() - Pos).Flat().normalized;
+            Vector3 dir = (TowerPoint(30f) - Pos).Flat().normalized;
             for (int i = 0; i < times && Alive; i++)
             {
                 Vector3 a = Pos, b = Across(a, dir, 34f);
@@ -518,7 +520,7 @@ namespace HtfFortress
 
         protected override IEnumerator Act()
         {
-            if (Random.value < 0.75f) yield return Burrow(SpotNear(Heart(), 7f, 14f));
+            if (Random.value < 0.9f) yield return Burrow(SpotNear(TowerPoint(30f), 3.5f, 8f)); // ambush closer to the fort, not from the beach
             switch (Pick(4f, 3.5f, 2.5f))
             {
                 case 0: yield return Spires(Phase2 ? 5 : 3); break;
@@ -550,7 +552,7 @@ namespace HtfFortress
 
         private IEnumerator Spires(int lines)
         {
-            Vector3 main = (Heart() - Pos).Flat().normalized, at = new Vector3(Pos.x, GroundY(Pos), Pos.z);
+            Vector3 main = (TowerPoint(30f) - Pos).Flat().normalized, at = new Vector3(Pos.x, GroundY(Pos), Pos.z);
             var ends = new List<Vector3>();
             for (int i = 0; i < lines; i++)
             {
@@ -592,7 +594,7 @@ namespace HtfFortress
 
         private IEnumerator Gaze()
         {
-            Vector3 dir = (Heart() - Pos).Flat().normalized, at = new Vector3(Pos.x, GroundY(Pos), Pos.z);
+            Vector3 dir = (TowerPoint(30f) - Pos).Flat().normalized, at = new Vector3(Pos.x, GroundY(Pos), Pos.z);
             yield return Turn(Pos + dir, 0.4f);
             Shout("stoneGaze");
             Send("stone.eyes", Pos, Pos, 1500);
@@ -606,7 +608,7 @@ namespace HtfFortress
                 Send("stone.petrify", t.Pos, Pos, Mathf.RoundToInt(hold * 1000f), t.Id);
                 AutoTest.Count("stone_petrified");
             }
-            HurtPlayers(cone, Mathf.Min(70, Scaled(24f)), Pos, 5f);
+            HurtPlayers(cone, Mathf.Min(80, Scaled(24f)), Pos, 5f);
             AutoTest.Count("stone_gaze");
             yield return 0.5f;
         }
@@ -662,7 +664,7 @@ namespace HtfFortress
 
         private IEnumerator Torpedo()
         {
-            Vector3 target = Heart(), run = Quaternion.Euler(0f, Random.Range(-35f, 35f), 0f) * (target - Pos).Flat().normalized;
+            Vector3 target = TowerPoint(32f), run = Quaternion.Euler(0f, Random.Range(-35f, 35f), 0f) * (target - Pos).Flat().normalized;
             Vector3 a = target - run * 20f, b = target + run * 20f;
             a.y = GroundY(a); b.y = GroundY(b);
             yield return Glide(a - run * 10f + Vector3.up * 14f, 24f);
@@ -702,7 +704,8 @@ namespace HtfFortress
         private IEnumerator Boom()
         {
             Vector3 dir = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f) * Vector3.forward;
-            Vector3 a = Center - dir * 30f, b = Center + dir * 30f;
+            Vector3 aim = TowerPoint(28f);
+            Vector3 a = aim - dir * 30f, b = aim + dir * 30f;
             a.y = GroundY(a); b.y = GroundY(b);
             yield return Glide(a - dir * 12f + Vector3.up * 24f, 26f);
             Shout("skyfishBoom");
@@ -877,7 +880,7 @@ namespace HtfFortress
                 {
                     Vector3 d = (at - p.Transform.position).Flat();
                     if (d.magnitude > 16f) continue;
-                    if (d.magnitude < 4f) Siege.HurtPlayer(p, Mathf.Min(70, Scaled(6f)), Vector3.up * 4f);
+                    if (d.magnitude < 4f) Siege.HurtPlayer(p, Mathf.Min(80, Scaled(6f)), Vector3.up * 4f);
                     else Siege.HurtPlayer(p, 1, d.normalized * 7f + Vector3.up);
                 }
                 yield return 0.5f;
@@ -971,7 +974,7 @@ namespace HtfFortress
                 var inBox = Lane(c - f * half, c + f * half, half * 2f);
                 foreach (var p in Pieces.Where(p => inBox(p.Pos)).ToList()) BuildSystem.Instance.ServerDamagePiece(p.Id, Mathf.Max(Scaled(140f), Mathf.RoundToInt(p.MaxHp * 0.45f)));
                 if (inBox(Core)) Siege.Instance.DamageCore(Scaled(60f));
-                HurtPlayers(inBox, Mathf.Min(70, Scaled(25f)), c, 6f);
+                HurtPlayers(inBox, Mathf.Min(80, Scaled(25f)), c, 6f);
                 Send("voxel.delete", c, to, 0, Mathf.RoundToInt(half * 100f));
             }
             AutoTest.Count("voxel_delete");
@@ -1111,7 +1114,7 @@ namespace HtfFortress
 
         private IEnumerator GateLeap()
         {
-            Vector3 at = Heart();
+            Vector3 at = TowerPoint(30f);
             at.y = GroundY(at);
             float r = Phase2 ? 6.5f : 5.5f;
             yield return Glide(Vector3.Lerp(Pos, at, 0.4f) + Vector3.up * 18f, 16f);
@@ -1197,7 +1200,7 @@ namespace HtfFortress
         protected override IEnumerator Act()
         {
             float a = Mathf.Atan2(Pos.z - Center.z, Pos.x - Center.x) + Random.Range(-0.8f, 0.8f);
-            Vector3 to = Center + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * 25f;
+            Vector3 to = Center + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * 18f; // close enough for ordinary towers, not just snipers
             to.y = Sea + Alt;
             yield return Glide(to, 5f);
             yield return Turn(Core, 0.6f);

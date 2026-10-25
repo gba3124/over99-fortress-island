@@ -45,7 +45,7 @@ namespace HtfFortress
 
         // A mouse menu is up (vault, piece menu, the help panel): the game's own input is held and the cursor is free.
         public static bool ModalOpen => MenuOpen || Tips.HelpShown;
-        public static bool MenuOpen => VaultUI.IsOpen || PieceMenu.IsOpen || StallMenu.IsOpen || Reveal.Playing; // any but the help (it gives way to these)
+        public static bool MenuOpen => VaultUI.IsOpen || PieceMenu.IsOpen || StallMenu.IsOpen || KeeperMenu.IsOpen || Reveal.Playing; // any but the help (it gives way to these)
 
         public static TMP_FontAsset Font => AccessTools.Field(typeof(LocalizationManager), "_defaultFontAsset")?.GetValue(
             AccessTools.Field(typeof(LocalizationManager), "_instance")?.GetValue(null)) as TMP_FontAsset;

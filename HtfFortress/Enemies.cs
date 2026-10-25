@@ -103,6 +103,8 @@ namespace HtfFortress
         // clients: tags waiting for their object to show up
         private readonly List<(EnemyTag tag, float until)> _pending = new List<(EnemyTag, float)>();
         private readonly HashSet<int> _dressed = new HashSet<int>();
+        private readonly Dictionary<int, Renderer[]> _rends = new Dictionary<int, Renderer[]>();
+        private float _nextLod;
         private NetworkManager _registeredOn;
 
         static Enemies()
@@ -247,7 +249,7 @@ namespace HtfFortress
                         _tops[id] = top;
                     }
                     Vector3 sp = cam.WorldToScreenPoint(nob.transform.position + Vector3.up * (top.above + 0.35f));
-                    if (sp.z < 0f) continue;
+                    if (sp.z < 0f || sp.x < -40f || sp.x > Screen.width + 40f || sp.y < -40f || sp.y > Screen.height + 40f) continue; // no half-clipped plates at the screen edge
                     if (used >= _plates.Count)
                     {
                         var rt = Hud.Node(Hud.Root, "Plate", Vector2.zero, Vector2.zero, new Vector2(160f, 40f), new Vector2(0.5f, 0f));
@@ -292,16 +294,34 @@ namespace HtfFortress
                 var (tag, until) = _pending[i];
                 if (TryDress(tag) || Time.time > until) _pending.RemoveAt(i);
             }
+            if (Time.unscaledTime >= _nextLod) { _nextLod = Time.unscaledTime + 0.35f; ApplyRenderLod(); }
             // Forget fish that are gone (the lists are walked every frame for markers, plates and tips).
             var cm = InstanceFinder.ClientManager;
             if (cm != null && Time.time >= _nextPrune)
             {
                 _nextPrune = Time.time + 5f;
                 _dressed.RemoveWhere(id => !cm.Objects.Spawned.ContainsKey(id));
-                foreach (int id in _clientTags.Keys.Where(id => !_dressed.Contains(id)).ToList()) { _clientTags.Remove(id); _seenMax.Remove(id); _tops.Remove(id); }
+                foreach (int id in _clientTags.Keys.Where(id => !_dressed.Contains(id)).ToList()) { _clientTags.Remove(id); _seenMax.Remove(id); _tops.Remove(id); _rends.Remove(id); }
             }
         }
         private float _nextPrune;
+
+        // Render LOD: 400 trash fish behind you still cost draw calls and skinned-mesh work. Only bosses and fish within
+        // 90 m of the camera are drawn; the host's simulation is untouched.
+        private void ApplyRenderLod()
+        {
+            var cam = GameInfo.CurCamera;
+            if (!cam || _rends.Count == 0 || InstanceFinder.ClientManager == null) return;
+            Vector3 eye = cam.transform.position;
+            foreach (int id in _dressed)
+            {
+                if (!_rends.TryGetValue(id, out var rs) || rs == null || rs.Length == 0) continue;
+                if (_clientTags.TryGetValue(id, out var tag) && EnemyCatalog.IsBoss(tag.Kind)) continue; // bosses are never hidden
+                if (!InstanceFinder.ClientManager.Objects.Spawned.TryGetValue(id, out var nob) || !nob) continue;
+                bool show = (nob.transform.position - eye).sqrMagnitude < 90f * 90f;
+                for (int i = 0; i < rs.Length; i++) if (rs[i] && rs[i].enabled != show) rs[i].enabled = show;
+            }
+        }
 
         // Client: scale the fish and give it its gear. The tag can arrive a frame before the object spawns, so it is retried.
         private bool TryDress(EnemyTag tag)
@@ -337,6 +357,13 @@ namespace HtfFortress
                 if (tag.Elite) Wear(root, "Crown", topLocal, width * 0.7f / stats.Scale);
             }
             _dressed.Add(tag.ObjectId);
+            _rends[tag.ObjectId] = root.GetComponentsInChildren<Renderer>();
+            if (FortressPlugin.Instance == null || !FortressPlugin.Instance.EnemyShadowsOn)
+                foreach (var r in root.GetComponentsInChildren<Renderer>())
+                {
+                    r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    r.receiveShadows = false;
+                }
             AutoTest.Count("dressed_" + tag.Kind);
             return true;
         }
@@ -383,32 +410,47 @@ namespace HtfFortress
         }
         private static readonly Color EliteDye = new Color(1f, 0.85f, 0.42f); // an elite's dye is gilded on top of its kind's
 
+        // Shared tinted materials: 400 fish used to create 400 material instances and, worse, a tinted texture per
+        // material. The fish of one kind all look the same, so they share one material per (source material, kind, elite).
+        private static readonly Dictionary<(Material, EnemyKind, bool), Material> TintedMats = new Dictionary<(Material, EnemyKind, bool), Material>();
+
         private static void Tint(Transform root, EnemyKind kind, bool elite)
         {
             Color c = DyeOf(kind) * (elite ? EliteDye : Color.white);
             c.a = 1f;
             if (c == Color.white) return;
             if (!_blit) { var sh = Shader.Find("UI/Default"); if (!sh) return; _blit = new Material(sh); }
-            var own = root.gameObject.AddComponent<Models.OwnMaterials>(); // the copies go when the fish does
             foreach (var r in root.GetComponentsInChildren<Renderer>())
             {
-                var mats = r.materials; // per-fish instances
-                own.Mats.AddRange(mats);
-                foreach (var m in mats)
-                    foreach (string prop in new[] { "_Colors", "_BaseMap", "_MainTex" })
+                var srcs = r.sharedMaterials;
+                if (srcs == null || srcs.Length == 0) continue;
+                var dsts = new Material[srcs.Length];
+                for (int i = 0; i < srcs.Length; i++)
+                {
+                    var srcMat = srcs[i];
+                    if (!srcMat) { dsts[i] = srcMat; continue; }
+                    var key = (srcMat, kind, elite);
+                    if (!TintedMats.TryGetValue(key, out var tinted))
                     {
-                        if (!m.HasProperty(prop) || !(m.GetTexture(prop) is Texture src)) continue;
-                        if (!Tinted.TryGetValue((src, kind, elite), out var dst))
+                        tinted = new Material(srcMat) { name = srcMat.name + " (" + kind + (elite ? " elite" : "") + ")" };
+                        foreach (string prop in new[] { "_Colors", "_BaseMap", "_MainTex" })
                         {
-                            var rt = new RenderTexture(src.width, src.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { filterMode = src.filterMode, wrapMode = src.wrapMode };
-                            _blit.color = c;
-                            Graphics.Blit(src, rt, _blit);
-                            Tinted[(src, kind, elite)] = dst = rt;
+                            if (!tinted.HasProperty(prop) || !(tinted.GetTexture(prop) is Texture src)) continue;
+                            if (!Tinted.TryGetValue((src, kind, elite), out var tex))
+                            {
+                                var rt = new RenderTexture(src.width, src.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { filterMode = src.filterMode, wrapMode = src.wrapMode };
+                                _blit.color = c;
+                                Graphics.Blit(src, rt, _blit);
+                                Tinted[(src, kind, elite)] = tex = rt;
+                            }
+                            tinted.SetTexture(prop, tex);
+                            break;
                         }
-                        m.SetTexture(prop, dst);
-                        break;
+                        TintedMats[key] = tinted;
                     }
-                r.materials = mats;
+                    dsts[i] = tinted;
+                }
+                r.sharedMaterials = dsts;
             }
         }
 

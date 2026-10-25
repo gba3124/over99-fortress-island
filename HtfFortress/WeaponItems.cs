@@ -13,6 +13,7 @@ namespace HtfFortress
     {
         public Gear Gear;
         public Rarity Rarity;
+        public int Stars;
     }
 
     // Fortress weapons are the game's own items: picked up with E, carried in the hotbar (1-9), dropped with Q, held
@@ -277,14 +278,16 @@ namespace HtfFortress
         }
 
         // Host: put a weapon in the world (a drop, a chest, a starter).
-        public static Item ServerSpawn(Gear g, Rarity r, Vector3 at)
+        public static Item ServerSpawn(Gear g, Rarity r, Vector3 at, int stars = 0)
         {
             var prefab = Prefab(g, r);
             if (!prefab || !ItemManager.Instance) return null;
             var item = ItemManager.Instance.SpawnNewItem(prefab, at, Quaternion.Euler(0f, Random.Range(0f, 360f), 0f));
+            if (item && item.GetComponent<FortressWeaponItem>() is FortressWeaponItem tag) tag.Stars = Mathf.Clamp(stars, 0, GearCatalog.MaxStars);
             AutoTest.Count("weapon_item_spawned");
             return item;
         }
+        public static int StarsOf(Item item) => item && item.GetComponent<FortressWeaponItem>() is FortressWeaponItem tag ? tag.Stars : 0;
 
         // The fortress weapon this player holds right now (the host knows everyone's held item).
         public static bool Held(Player p, out Gear g, out Rarity r)
@@ -373,9 +376,29 @@ namespace HtfFortress
             _item = GetComponent<Item>();
             _seed = Random.value * 10f;
             _gem = new GameObject("RarityGem").transform;
-            var model = Models.Attach("LootGem", _gem, Vector3.one * 0.4f); // 1 m tall as modelled
-            Models.Paint(model, GearCatalog.Color(Rarity));
-            foreach (var r in model.GetComponentsInChildren<Renderer>()) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            // A closed, hand-built octahedron instead of the old LootGem OBJ: that mesh had half its faces wound inward,
+            // so from most angles it looked like a broken half-gem (Owen's screenshots).
+            var mesh = new Mesh { name = "RarityGemMesh" };
+            mesh.vertices = new[]
+            {
+                new Vector3(0f, 0.5f, 0f), new Vector3(0.3f, 0.08f, 0f), new Vector3(0.15f, 0.08f, -0.26f),
+                new Vector3(-0.15f, 0.08f, -0.26f), new Vector3(-0.3f, 0.08f, 0f), new Vector3(-0.15f, 0.08f, 0.26f),
+                new Vector3(0.15f, 0.08f, 0.26f), new Vector3(0f, -0.5f, 0f)
+            };
+            mesh.triangles = new[]
+            {
+                0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5, 0, 5, 6, 0, 6, 1,
+                7, 2, 1, 7, 3, 2, 7, 4, 3, 7, 5, 4, 7, 6, 5, 7, 1, 6
+            };
+            mesh.RecalculateNormals(); mesh.RecalculateBounds();
+            var gemGo = new GameObject("GemMesh");
+            gemGo.transform.SetParent(_gem, false);
+            gemGo.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var gemMat = Models.MakeShared(GearCatalog.Color(Rarity), GearCatalog.Color(Rarity) * 0.8f);
+            var mr = gemGo.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = gemMat;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
             _gem.gameObject.SetActive(false);
         }
 
@@ -389,9 +412,18 @@ namespace HtfFortress
             float t = Time.time + _seed;
             var cam = GameInfo.CurCamera;
             float far = cam ? Mathf.Clamp((cam.transform.position - transform.position).magnitude / 10f, 1f, 3f) : 1f;
-            _gem.position = transform.position + Vector3.up * (Height + 0.06f * Mathf.Sin(t * 2.2f));
+            // Anchor to the item's renderer, not a fixed world height: a loot that is high up or moves keeps its glow at
+            // the item, and a small thing on the ground doesn't get a light floating in the sky.
+            float baseY = transform.position.y;
+            var body = GetComponentInChildren<Renderer>();
+            if (body) baseY = body.bounds.max.y;
+            float scale = (0.1f + 0.04f * (int)Rarity) * far; // rare 0.14 m, epic 0.18, legendary 0.22
+            _gem.localScale = Vector3.one * scale;
+            // Clear the item's whole bounds plus the gem's own half-height: a gem tucked into a barrel or the ground reads
+            // as a broken half-gem (and is what the playtest saw every time near a weapon).
+            float half = 0.5f * scale;
+            _gem.position = new Vector3(transform.position.x, baseY + half + 0.07f + 0.06f * Mathf.Sin(t * 2.2f), transform.position.z);
             _gem.rotation = Quaternion.Euler(0f, t * 90f, 0f);
-            _gem.localScale = Vector3.one * (0.1f + 0.04f * (int)Rarity) * far; // rare 0.14 m, epic 0.18, legendary 0.22
         }
 
         // A pooled (despawned) item is only switched off, and then LateUpdate no longer runs to hide the gem.

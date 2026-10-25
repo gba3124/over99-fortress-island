@@ -23,6 +23,7 @@ namespace HtfFortress
         private static readonly Dictionary<EnemyKind, Item> Prefabs = new Dictionary<EnemyKind, Item>();
 
         public static byte IdOf(EnemyKind k) => (byte)(FirstId + System.Array.IndexOf(EnemyCatalog.BossOrder, k));
+        public static bool IsItemId(byte id) => id >= FirstId && id < FirstId + EnemyCatalog.BossOrder.Length; // a legendary trophy
         // What it sells for (dollars): twice the boss's kill reward, $2,400 for the warden's claw up to $20,000 for the Eye.
         // What one sells for: the first boss's (wave 10) as much as the main game's last boss ($15,000), each one after 40% more,
         // the tenth's (wave 100) $310,000; in fort coins, so they move with its prices.

@@ -23,10 +23,10 @@ namespace HtfFortress
         public const int Bullets = 0, FireRate = 1, Magazine = 2;  // the game's guns (their range is Reach too)
         public static readonly int[] Shown = { 0, 1, 3, 2 };       // the smithy's order: power, fire rate, range, trait
 
-        // Fish scales for the next level up from `lvl`: 8, 15, 25, 40, 60 as before, then 22% dearer a level (a line to Lv10
+        // Fish scales for the next level up from `lvl`: 8, 15, 25, 40, 60 as before, then 6% dearer a level (a line to Lv10
         // ~700 in all, Lv20 ~6,400, Lv30 ~48,000; Sim prints what a run brings in). Past int it can't be bought.
         private static readonly int[] FirstCosts = { 8, 15, 25, 40, 60 };
-        public const double CostGrowth = 1.12;
+        public const double CostGrowth = 1.18; // must keep up with the exponential scale income, not the linear wave count
         public static int Cost(int lvl) => lvl < 0 ? 0 : lvl < FirstCosts.Length ? FirstCosts[lvl]
             : (int)System.Math.Min(int.MaxValue, System.Math.Round(FirstCosts[FirstCosts.Length - 1] * System.Math.Pow(CostGrowth, lvl - FirstCosts.Length + 1)));
 
@@ -36,41 +36,48 @@ namespace HtfFortress
         public static float Soft(int lvl) => lvl <= 5 ? Mathf.Max(0, lvl) : 5f + 10f * (lvl - 5) / (lvl + 5f);
         // A weapon whose number is a hold, a pull or a push (seconds, metres), not damage.
         public static bool IsControl(Gear g) => g == Gear.BubbleGun || g == Gear.Whirlpool || g == Gear.Conch || g == Gear.NetLauncher || g == Gear.WaterCannon;
-        // Power: damage +10% a level for good; a control weapon's seconds or metres the same to Lv5, then tapering (x2.5 at most).
-        public static float PowerMult(int lvl, Gear g = Gear.Laser) => 1f + 0.1f * (IsControl(g) ? Soft(lvl) : Mathf.Max(0, lvl));
-        // Fire rate: the time between shots (and reloading, the bow's draw): -13% at Lv1, -40% at Lv5, never under a fifth.
-        public static float TimeMult(int lvl) => 0.2f + 0.8f / (1f + 0.2f * Mathf.Max(0, lvl));
-        // Range: +9% at Lv1, +33% at Lv5, +50% at Lv10, never twice as far.
-        public static float ReachMult(int lvl) => 1f + Mathf.Max(0, lvl) / (Mathf.Max(0, lvl) + 10f);
-        public const float BulletStep = 0.1f;                         // a game gun's damage a level past its last bullet upgrade
-        public static int MagAdd(int mag, int lvl) => Mathf.RoundToInt(Mathf.Max(1, Mathf.RoundToInt(mag * 0.2f)) * Soft(lvl));
+        // No diminishing returns left in the trait/control lines: every level is a full level.
+        public static float Grow(int lvl) => Mathf.Max(0, lvl);
+        // Power: +15% damage a level for good; a control weapon's seconds/metres use Grow (still climbing past Lv15).
+        public static float PowerMult(int lvl, Gear g = Gear.Laser) => 1f + 0.15f * (IsControl(g) ? Grow(lvl) : Mathf.Max(0, lvl));
+        // Fire rate: the time between shots (and reloading, the bow's draw). The old curve tapers off, but every level now
+        // also gets a guaranteed +1% rate (Owen: scales keep coming, so an upgrade must never feel dead); floor 100x faster.
+        public static float TimeMult(int lvl)
+        {
+            int l = Mathf.Max(0, lvl);
+            return Mathf.Max(0.01f, Mathf.Pow(0.95f, l)); // a flat -5% cooldown (+5.3% rate) every level; floor 100x
+        }
+        // Range: +12% a level, straight line, no taper.
+        public static float ReachMult(int lvl) => 1f + 0.12f * Mathf.Max(0, lvl);
+        public const float BulletStep = 0.15f;                        // a game gun's damage a level past its last bullet upgrade
+        public static int MagAdd(int mag, int lvl) => Mathf.RoundToInt(Mathf.Max(1, Mathf.RoundToInt(mag * 0.3f)) * Grow(lvl));
 
         // A fortress weapon's trait, per level (Soft levels).
         public static float TraitStep(Gear g)
         {
             switch (g)
             {
-                case Gear.Laser: return 0.2f;       // the most it ramps up to on one fish (x3)
-                case Gear.PoisonGas: return 1.2f;   // seconds the cloud hangs (6)
-                case Gear.Boomerang: return 0.3f;   // seconds a fish it hits is slowed
-                case Gear.SharkWhistle: return 3f;  // seconds the shark hunts
-                case Gear.BubbleGun: return 3f;     // the burst when a bubble pops (a legendary's 20 and this; the others only this)
-                case Gear.Hook: return 0.3f;        // seconds the fish is stunned after the pull
-                case Gear.Whirlpool: return 4f;     // damage a second to what it holds (5)
-                case Gear.Conch: return 3f;         // degrees wider either side (30)
-                case Gear.NetLauncher: return 0.5f; // the net's radius (3.5)
-                case Gear.JellyGun: return 1.2f;    // seconds the jellyfish hangs (6)
-                case Gear.WaterCannon: return 0.5f; // seconds more in the tank
-                case Gear.PufferBomb: return 0.5f;  // the burst's radius (3.5)
-                case Gear.StarThrower: return 1f;   // more fish each star cuts through (2)
-                case Gear.LobsterClaw: return 0.5f; // the splash's radius where the thrown fish lands (2.5)
-                case Gear.Rocket: return 0.4f;      // the blast's radius (3)
-                case Gear.Absorber: return 3f;      // degrees wider it sucks in (30)
-                case Gear.Gatling: return 0.1f;     // seconds sooner its barrels are spun up (2.0)
+                case Gear.Laser: return 0.35f;       // the most it ramps up to on one fish (x3)
+                case Gear.PoisonGas: return 1.8f;   // seconds the cloud hangs (6)
+                case Gear.Boomerang: return 0.5f;   // seconds a fish it hits is slowed
+                case Gear.SharkWhistle: return 4f;  // seconds the shark hunts
+                case Gear.BubbleGun: return 4f;     // the burst when a bubble pops (a legendary's 20 and this; the others only this)
+                case Gear.Hook: return 0.5f;        // seconds the fish is stunned after the pull
+                case Gear.Whirlpool: return 6f;     // damage a second to what it holds (5)
+                case Gear.Conch: return 5f;         // degrees wider either side (30)
+                case Gear.NetLauncher: return 0.8f; // the net's radius (3.5)
+                case Gear.JellyGun: return 2f;    // seconds the jellyfish hangs (6)
+                case Gear.WaterCannon: return 0.8f; // seconds more in the tank
+                case Gear.PufferBomb: return 0.8f;  // the burst's radius (3.5)
+                case Gear.StarThrower: return 2f;   // more fish each star cuts through (2)
+                case Gear.LobsterClaw: return 0.8f; // the splash's radius where the thrown fish lands (2.5)
+                case Gear.Rocket: return 0.35f;      // the blast's radius (3)
+                case Gear.Absorber: return 5f;      // degrees wider it sucks in (30)
+                case Gear.Gatling: return 0.2f;     // seconds sooner its barrels are spun up (2.0)
             }
             return 0f;
         }
-        public static float TraitAdd(Gear g, int lvl) => TraitStep(g) * Soft(lvl);
+        public static float TraitAdd(Gear g, int lvl) => TraitStep(g) * Grow(lvl);
         // What the trait's number counts: seconds, metres, damage, times, fish, degrees.
         private static string TraitUnit(Gear g) =>
             g == Gear.Laser ? "modUnitTimes" : g == Gear.BubbleGun || g == Gear.Whirlpool ? "modUnitDamage" : g == Gear.StarThrower ? "modUnitFish"

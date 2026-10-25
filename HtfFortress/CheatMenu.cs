@@ -73,7 +73,7 @@ namespace HtfFortress
             }
             var canvasGo = Hud.Canvas("FortressCheat", 620, ref _canvas).gameObject;
             DontDestroyOnLoad(canvasGo);
-            var img = Hud.Box(canvasGo.transform, new Vector2(1f, 1f), new Vector2(-16f, -16f), new Vector2(600f, 780f), Hud.PanelSolid, 18f, pivot: new Vector2(1f, 1f));
+            var img = Hud.Box(canvasGo.transform, new Vector2(1f, 1f), new Vector2(-16f, -16f), new Vector2(600f, 1010f), Hud.PanelSolid, 18f, pivot: new Vector2(1f, 1f));
             img.raycastTarget = true;
             _panel = img.rectTransform;
 
@@ -86,12 +86,16 @@ namespace HtfFortress
             int row = 0;
             Btn(X0, y - DY * row, L10n.T("cheatStart"), () => P.TestKey(P.ToggleKey, false), out _roundText);
             Btn(X1, y - DY * row++, L10n.T("cheatCoins"), () => P.TestKey(Key.F5, false), out _);
+            Btn(X0, y - DY * row, L10n.T("cheatCoinsBig"), () => P.TestKey(Key.F5, true), out _);
+            Btn(X1, y - DY * row++, L10n.T("cheatCoinsHuge"), () => P.TestKey(Key.F5, false, true), out _);
             Btn(X0, y - DY * row, L10n.T("cheatGodOn"), () => P.TestKey(Key.F6, false), out _godText);
             Btn(X1, y - DY * row++, L10n.T("cheatKill"), () => P.TestKey(Key.F7, false), out _);
+            Btn(X0, y - DY * row, L10n.T("cheatHorde50"), () => P.DebugSpawnHorde(50), out _);
+            Btn(X1, y - DY * row++, L10n.T("cheatHorde200"), () => P.DebugSpawnHorde(200), out _);
             Btn(X0, y - DY * row, L10n.T("cheatRepair"), () => P.TestKey(Key.F3, false), out _);
             Btn(X1, y - DY * row++, L10n.T("cheatBoss"), () => P.TestKey(Key.F1, false), out _);
             Btn(X0, y - DY * row, L10n.T("cheatBossHurt"), () => P.TestKey(Key.F2, false), out _);
-            Btn(X1, y - DY * row++, L10n.T("cheatFreezeOn"), () => P.TestKey(Key.F11, false), out _freezeText);
+            Btn(X1, y - DY * row++, L10n.T("cheatFreezeOn"), () => P.TestKey(Key.F11, true), out _freezeText);
             Btn(X0, y - DY * row, L10n.T("cheatNextWave"), () => P.TestKey(Key.F8, false), out _);
             Btn(X1, y - DY * row++, L10n.T("cheatJump5"), () => P.TestKey(Key.F8, true), out _);
             Btn(X0, y - DY * row, L10n.T("cheatTeleport"), () => P.TestKey(Key.F4, false), out _);

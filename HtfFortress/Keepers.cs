@@ -78,6 +78,11 @@ namespace HtfFortress
         public AudioSource Voice;
         private float _yaw, _baseYaw, _talkUntil, _lookYaw, _lookPitch;
         private const float SeeRange = 7f, MaxTurn = 70f;
+        // The lighthouse keeper walks a slow ring round the tower; when anyone comes close or talks to him he stops and faces them.
+        private bool _wanders;
+        private Vector3 _wanderCenter, _wanderTo;
+        private float _wanderRadius = 5f, _wanderPause, _walkPhase, _nextWander, _wanderAngle;
+        public void WanderAround(Vector3 center, float radius) { _wanders = true; _wanderCenter = center; _wanderRadius = radius; _wanderTo = transform.position; _wanderPause = 1f; Vector3 d = transform.position - center; _wanderAngle = Mathf.Atan2(d.z, d.x); }
 
         private void Start()
         {
@@ -99,8 +104,43 @@ namespace HtfFortress
             var me = Player.LocalPlayer;
             Vector3? eye = me && me.Camera ? me.Camera.CamTransform.position : (Vector3?)null;
             bool near = eye is Vector3 e0 && (e0 - transform.position).sqrMagnitude < SeeRange * SeeRange;
+            bool talking = Time.time < _talkUntil;
+            bool moving = false;
+            float speed = 0f;
+
+            if (_wanders && !near && !talking)
+            {
+                if (_wanderPause > 0f) _wanderPause -= Time.deltaTime;
+                else
+                {
+                    Vector3 flat = _wanderTo - transform.position; flat.y = 0f;
+                    if (flat.sqrMagnitude < 0.22f)
+                    {
+                        // Stop and look around for a moment before the next slow lap.
+                        _nextWander = UnityEngine.Random.Range(2.2f, 5.5f);
+                        _wanderPause = _nextWander;
+                        float a = UnityEngine.Random.Range(0f, Mathf.PI * 2f), r = UnityEngine.Random.Range(_wanderRadius * 0.72f, _wanderRadius);
+                        _wanderTo = _wanderCenter + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
+                        _wanderTo.y = BossFx.Ground(_wanderTo);
+                    }
+                    else
+                    {
+                        Vector3 step = flat.normalized * 0.65f * Time.deltaTime;
+                        Vector3 next = transform.position + Vector3.MoveTowards(Vector3.zero, flat, step.magnitude);
+                        next.y = BossFx.Ground(next);
+                        transform.position = next;
+                        moving = true; speed = 0.65f;
+                    }
+                }
+            }
+
             float want = _baseYaw, lookYaw = 0f, lookPitch = 0f;
-            if (near && eye is Vector3 e)
+            if (moving)
+            {
+                Vector3 d = _wanderTo - transform.position;
+                want = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+            }
+            else if (near && eye is Vector3 e)
             {
                 Vector3 d = e - transform.position;
                 float toward = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
@@ -110,13 +150,13 @@ namespace HtfFortress
                 lookYaw = Mathf.Clamp(Mathf.Atan2(local.x, local.z) * Mathf.Rad2Deg, -40f, 40f);
                 lookPitch = Mathf.Clamp(-Mathf.Atan2(local.y, new Vector2(local.x, local.z).magnitude) * Mathf.Rad2Deg, -25f, 25f);
             }
-            _yaw = Mathf.MoveTowardsAngle(_yaw, want, 140f * Time.deltaTime);
+            _yaw = Mathf.MoveTowardsAngle(_yaw, want, (moving ? 180f : 140f) * Time.deltaTime);
             Person.transform.rotation = Quaternion.Euler(0f, _yaw, 0f);
+            if (moving) _walkPhase += Time.deltaTime * 8f;
             float k = 1f - Mathf.Exp(-8f * Time.deltaTime);
             _lookYaw = Mathf.Lerp(_lookYaw, lookYaw, k);
             _lookPitch = Mathf.Lerp(_lookPitch, lookPitch, k);
-            bool talking = Time.time < _talkUntil;
-            Person.Pose(0f, 0f, false, talking ? 1f : 0f, _lookYaw, _lookPitch + (talking ? Mathf.Sin(Time.time * 14f) * 6f : 0f));
+            Person.Pose(_walkPhase, moving ? 1f : 0f, false, talking ? 1f : 0f, _lookYaw, _lookPitch + (talking ? Mathf.Sin(Time.time * 14f) * 6f : 0f));
             if (Voice && Voice.isPlaying && !talking) Voice.Stop();
         }
     }

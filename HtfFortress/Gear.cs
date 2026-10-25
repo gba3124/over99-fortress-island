@@ -36,11 +36,11 @@ namespace HtfFortress
         // drops about 70 pieces; dismantling the spares is roughly 60-100 scales): the first steps come within a run or
         // two, the last team slot is a long-term goal next to legendary enhancing (15-90 a level). The second number stays
         // in the tuple (the format the vault, the shop and the tests share) but is 0 = no wave needed.
-        public static readonly (int scales, int best)[] TeamSlotPrices = { (40, 0), (100, 0), (200, 0), (350, 0) };
+        public static readonly (int scales, int best)[] TeamSlotPrices = { (40, 0), (100, 0), (200, 0), (350, 0), (500, 0), (700, 0) };
         public static readonly (int scales, int best)[] PersonalSlotPrices = { (60, 0), (180, 0) };
         public static readonly (int scales, int best)[] StoragePrices =
             { (20, 0), (30, 0), (45, 0), (60, 0), (80, 0), (100, 0), (125, 0), (150, 0), (180, 0), (220, 0) };
-        public const int StorageBase = 30, StorageStep = 10, Stack = 50;
+        public const int StorageBase = 40, StorageStep = 15, Stack = 50;
 
         public static (int scales, int best)[] PricesOf(Expansion e) =>
             e == Expansion.TeamSlot ? TeamSlotPrices : e == Expansion.PersonalSlot ? PersonalSlotPrices : StoragePrices;
@@ -48,9 +48,13 @@ namespace HtfFortress
         public static (int scales, int best)? NextPrice(Expansion e, int bought) => bought < PricesOf(e).Length ? PricesOf(e)[bought] : ((int, int)?)null;
         public static readonly Gear[] All = (Gear[])Enum.GetValues(typeof(Gear));
         public static readonly Rarity[] Rarities = (Rarity[])Enum.GetValues(typeof(Rarity));
+        public const int MaxStars = 3;
         public static bool IsFortress(Gear g) => g <= Gear.WarChest;
         public static bool IsActive(Gear g) => g >= Gear.Overclock && g <= Gear.Shockwave;
         public static bool IsWeapon(Gear g) => g >= Gear.Laser;
+        // Retired equipment: there is no hand net to hold any more, so the net's personal/active gear has no job.
+        // The enum members stay so old vault files still parse; they are just never dropped, bought or shown.
+        public static bool Retired(Gear g) => g == Gear.BigNet || g == Gear.NetCannon;
         public static bool IsGameGun(Gear g) => g >= Gear.Pistol && g <= Gear.Bow;
         public static bool IsSpecial(Gear g) => g >= Gear.Absorber;
         public static readonly Gear[] WeaponKinds = All.Where(IsWeapon).ToArray();
@@ -62,14 +66,14 @@ namespace HtfFortress
         // Common / Rare / Epic / Legendary.
         private static readonly float[][] Values =
         {
-            new[] { 0.08f, 0.15f, 0.25f, 0.40f }, // Gunpowder: turret damage +%
+            new[] { 0.05f, 0.10f, 0.16f, 0.25f }, // Gunpowder: turret damage +%
             new[] { 0.08f, 0.15f, 0.22f, 0.30f }, // Scope: turret range +%
-            new[] { 0.20f, 0.40f, 0.70f, 1.00f }, // ApRounds: vs tank / boss +%
+            new[] { 0.10f, 0.20f, 0.35f, 0.50f }, // ApRounds: vs tank / boss +%
             new[] { 2f, 4f, 7f, 12f },            // Incendiary: burn damage per second, 3 s
             new[] { 0.10f, 0.15f, 0.20f, 0.30f }, // FrostCore: every turret hit slows
             new[] { 1f, 2f, 3f, 4f },             // TeslaCoil: extra chain targets
             new[] { 0.15f, 0.30f, 0.50f, 0.80f }, // Rebar: wall health +%
-            new[] { 0.20f, 0.40f, 0.70f, 1.00f }, // CoreShield: lighthouse health +%
+            new[] { 0.10f, 0.20f, 0.35f, 0.50f }, // CoreShield: lighthouse health +%
             new[] { 0.25f, 0.5f, 0.8f, 1.2f },    // WarChest: wave-clear bonus +
             new[] { 0.10f, 0.20f, 0.30f, 0.45f }, // SharkArmor: damage taken -%
             new[] { 3f, 6f, 10f, 15f },           // BigNet: net capacity +
@@ -181,7 +185,8 @@ namespace HtfFortress
         // A weapon comes up as often as when there were fourteen (players found that the right amount), any of them alike.
         public static Gear RandomGear()
         {
-            var g = All[UnityEngine.Random.Range(0, (int)Gear.LobsterClaw + 1)];
+            Gear g;
+            do { g = All[UnityEngine.Random.Range(0, (int)Gear.LobsterClaw + 1)]; } while (Retired(g));
             return IsWeapon(g) ? Droppable[UnityEngine.Random.Range(0, Droppable.Length)] : g;
         }
     }
@@ -228,11 +233,30 @@ namespace HtfFortress
     // The team vault: what's owned (not equipped), the fortress loadout and each player's personal slots, and the game's own
     // items thrown in. Plain text, one record per line, so the save file and the network message are the same thing (the
     // message only counts the game's items: their states stay with the host).
+    // A piece in the vault: equipment kind, rarity, and stars (0 = the base "no star", 1..3 = forged).
+    // Implicit conversion from the old (Gear,Rarity) keeps existing call sites readable while the star field rolls in.
+    public readonly struct GearKey : System.IEquatable<GearKey>
+    {
+        public readonly Gear G; public readonly Rarity R; public readonly int S;
+        public Gear Item1 => G; public Rarity Item2 => R; public int Stars => S; public int Item3 => S;
+        public GearKey(Gear g, Rarity r, int s) { G = g; R = r; S = Mathf.Clamp(s, 0, GearCatalog.MaxStars); }
+        public static implicit operator GearKey((Gear, Rarity) t) => new GearKey(t.Item1, t.Item2, 0);
+        public static implicit operator (Gear, Rarity)(GearKey k) => (k.G, k.R);
+        public static bool operator ==(GearKey a, GearKey b) => a.G == b.G && a.R == b.R && a.S == b.S;
+        public static bool operator !=(GearKey a, GearKey b) => !(a == b);
+        public bool Equals(GearKey o) => this == o;
+        public override bool Equals(object o) => o is GearKey k && this == k;
+        public override int GetHashCode() => ((int)G * 397 ^ (int)R) * 31 + S;
+        public override string ToString() => $"{R} {G}" + (S > 0 ? " " + new string('*', S) : "");
+        public void Deconstruct(out Gear g, out Rarity r) { g = G; r = R; }
+        public void Deconstruct(out Gear g, out Rarity r, out int s) { g = G; r = R; s = S; }
+    }
+
     public class VaultData
     {
-        public readonly Dictionary<(Gear, Rarity), int> Owned = new Dictionary<(Gear, Rarity), int>();
-        public readonly List<(Gear, Rarity)> Fortress = new List<(Gear, Rarity)>();
-        public readonly Dictionary<ulong, List<(Gear, Rarity)>> Personal = new Dictionary<ulong, List<(Gear, Rarity)>>();
+        public readonly Dictionary<GearKey, int> Owned = new Dictionary<GearKey, int>();
+        public readonly List<GearKey> Fortress = new List<GearKey>();
+        public readonly Dictionary<ulong, List<GearKey>> Personal = new Dictionary<ulong, List<GearKey>>();
         public readonly Dictionary<ulong, string> Names = new Dictionary<ulong, string>();
         public readonly HashSet<PieceType> Unlocked = new HashSet<PieceType>(); // blueprint turrets the team has found
         public int Scales;                                                      // fish scales, the team's crafting currency
@@ -240,12 +264,16 @@ namespace HtfFortress
         public readonly Dictionary<(ulong, Gear, int), int> Mods = new Dictionary<(ulong, Gear, int), int>(); // (player, weapon kind, line): level (WeaponMods)
         public int Best;                                                        // most waves cleared in a real round on this save
         public int Souls;                                                       // souls from records (wave 100 and beyond): paid at the lighthouse keeper
-        public int SoulDmg, SoulCrit, SoulCoins, SoulScales, SoulCore;           // the keeper's permanent tree (levels, bought with souls)
+        public int SoulDmg, SoulCrit, SoulCoins, SoulScales, SoulCore, SoulDiscount, SoulTurretDmg, SoulKnock, SoulHealth; // the keeper's permanent tree (levels, bought with souls)
         public float DamageMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulDmg));
         public float CritChance => Mathf.Min(1f, 0.02f * Mathf.Max(0, SoulCrit));
         public float ScaleMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulScales));
         public float CoreMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulCore));
-        public int StartCoins => Mathf.Max(0, SoulCoins) * 500;                  // in fort coins
+        public float TowerDiscount => Mathf.Max(0.1f, 1f - 0.1f * Mathf.Max(0, SoulDiscount)); // 10% a level, capped at 90% off
+        public float TurretDamageMult => Mathf.Pow(1.10f, Mathf.Max(0, SoulTurretDmg)); // tower damage only: +10% a level
+        public float KnockbackMult => 1f + 0.25f * Mathf.Max(0, SoulKnock); // explosions / water push +25% a level
+        public float HealthTakenMult => 1f / (1f + 0.10f * Mathf.Max(0, SoulHealth)); // character health: +10% effective HP a level
+        public float SettleMult => 1f + 0.10f * Mathf.Max(0, SoulCoins); // settlement money, +10% a level
         public readonly HashSet<ulong> Starter = new HashSet<ulong>();          // players who got their first laser gun
         public readonly Dictionary<Expansion, int> Bought = new Dictionary<Expansion, int>(); // expansions bought so far
         public readonly List<(string date, string team)> Wins = new List<(string, string)>();  // every OVER 99 on this save
@@ -264,10 +292,11 @@ namespace HtfFortress
         public readonly Dictionary<byte, int> ItemCount = new Dictionary<byte, int>();  // how many of each (all a client gets)
         public int StorageSlots => GearCatalog.StorageBase + GearCatalog.StorageStep * BoughtOf(Expansion.Storage);
         private static int Stacks(int n) => (n + GearCatalog.Stack - 1) / GearCatalog.Stack;
-        public int SlotsUsed => Owned.Values.Sum(Stacks) + ItemCount.Values.Sum(Stacks);
+        // One vault slot per (gear, rarity); its 0-3 star counts are sub-stacks inside that slot.
+        public int SlotsUsed => Owned.Keys.Select(k => (k.G, k.R)).Distinct().Count() + ItemCount.Values.Sum(Stacks);
         public bool VaultFull => SlotsUsed >= StorageSlots;
-        // One more fits: on a stack that isn't full, or in a free slot.
-        public bool Fits(Gear g, Rarity r) => Count(g, r) % GearCatalog.Stack != 0 || !VaultFull;
+        private bool HasGroup(Gear g, Rarity r) => Owned.Keys.Any(k => k.G == g && k.R == r);
+        public bool Fits(Gear g, Rarity r, int stars = 0) => HasGroup(g, r) || !VaultFull;
         public bool FitsItem(byte id) => CountItem(id) % GearCatalog.Stack != 0 || !VaultFull;
 
         public int CountItem(byte id) => ItemCount.TryGetValue(id, out int n) ? n : 0;
@@ -292,20 +321,30 @@ namespace HtfFortress
         }
 
         public int EnhanceOf(Gear g) => Enhance.TryGetValue(g, out int n) ? n : 0;
-        // A piece's number with its enhancement (only legendaries are enhanced).
-        public float ValueOf(Gear g, Rarity r) => GearCatalog.Value(g, r) * (r == Rarity.Legendary ? 1f + GearCatalog.EnhanceStep * EnhanceOf(g) : 1f);
+        // A star is +8% on the piece's own rarity value; three lower stars still stay below the next rarity's base.
+        public static float StarMult(int stars) => 1f + 0.08f * Mathf.Clamp(stars, 0, GearCatalog.MaxStars);
+        public float ValueOf(Gear g, Rarity r, int stars = 0) => GearCatalog.Value(g, r) * StarMult(stars) * (r == Rarity.Legendary ? 1f + GearCatalog.EnhanceStep * EnhanceOf(g) : 1f);
         // "[Legendary] Laser +3": gear's +N is its enhancement, a weapon's `player`'s mods on its kind.
         public string LabelOf(Gear g, Rarity r, ulong player = 0) => GearCatalog.Label(g, r) + (PlusOf(g, r, player) is int n && n > 0 ? $"<color=#{GearCatalog.Hex(r)}> +{n}</color>" : "");
         public int PlusOf(Gear g, Rarity r, ulong player) => GearCatalog.IsWeapon(g) ? ModTotal(player, g) : r == Rarity.Legendary ? EnhanceOf(g) : 0;
         public int ModOf(ulong player, Gear g, int track) => Mods.TryGetValue((player, g, track), out int n) ? n : 0;
         public int ModTotal(ulong player, Gear g) => Enumerable.Range(0, WeaponMods.Tracks).Sum(t => ModOf(player, g, t));
         // A weapon's number for one player: with their power (the game's guns have bullets instead, on the shooter's machine).
-        public float WeaponValue(ulong player, Gear g, Rarity r) => ValueOf(g, r) * (GearCatalog.IsGameGun(g) ? 1f : WeaponMods.PowerMult(ModOf(player, g, WeaponMods.Power), g));
+        public float WeaponValue(ulong player, Gear g, Rarity r, int stars = 0) => ValueOf(g, r, stars) * (GearCatalog.IsGameGun(g) ? 1f : WeaponMods.PowerMult(ModOf(player, g, WeaponMods.Power), g));
         // What a piece does for one player: a weapon with their power and speed, the rest as the team has it.
         public string EffectFor(ulong player, Gear g, Rarity r) =>
             !GearCatalog.IsWeapon(g) ? GearCatalog.Effect(g, r, ValueOf(g, r)) : GearCatalog.Effect(g, r, WeaponValue(player, g, r), WeaponMods.TimeMult(ModOf(player, g, WeaponMods.Rate)));
+        // The best star this player has for a weapon kind (their loadout, or a copy still in the vault).
+        public int BestStar(ulong player, Gear g, Rarity r)
+        {
+            int best = 0;
+            if (Personal.TryGetValue(player, out var l))
+                foreach (var x in l) if (x.Item1 == g && x.Item2 == r) best = Mathf.Max(best, x.Stars);
+            foreach (var kv in Owned) if (kv.Key.Item1 == g && kv.Key.Item2 == r) best = Mathf.Max(best, kv.Key.Stars);
+            return best;
+        }
         public bool OwnsLegendary(Gear g) =>
-            Count(g, Rarity.Legendary) > 0 || Fortress.Any(f => f.Item1 == g && f.Item2 == Rarity.Legendary) || Personal.Values.Any(l => l.Any(x => x.Item1 == g && x.Item2 == Rarity.Legendary));
+            Owned.Keys.Any(k => k.Item1 == g && k.Item2 == Rarity.Legendary) || Fortress.Any(f => f.Item1 == g && f.Item2 == Rarity.Legendary) || Personal.Values.Any(l => l.Any(x => x.Item1 == g && x.Item2 == Rarity.Legendary));
 
         // The quartermaster's one-click sale (Owen: "一鍵賣（可以按類別或品質）"): everything in a tab (0 all, 1 gear, 2 weapons,
         // 3 the game's items) of one colour, or of every colour (null; only then the game's items, which have none). Weapons
@@ -319,8 +358,8 @@ namespace HtfFortress
             int money = 0, scales = 0, n = 0;
             foreach (var kv in Owned.Where(kv => OnSale(kv.Key.Item1, kv.Key.Item2, tab, colour)))
             {
-                if (GearCatalog.IsWeapon(kv.Key.Item1)) money += WeaponItems.Worth(kv.Key.Item2) * kv.Value;
-                else scales += GearCatalog.SalvageScales[(int)kv.Key.Item2] * kv.Value;
+                if (GearCatalog.IsWeapon(kv.Key.Item1)) money += Mathf.RoundToInt(WeaponItems.Worth(kv.Key.Item2) * (1f + 0.25f * kv.Key.Stars)) * kv.Value;
+                else scales += Mathf.RoundToInt(GearCatalog.SalvageScales[(int)kv.Key.Item2] * (1f + 0.5f * kv.Key.Stars)) * kv.Value;
                 n += kv.Value;
             }
             if (ItemsOnSale(tab, colour)) n += ItemCount.Values.Sum();
@@ -338,28 +377,33 @@ namespace HtfFortress
 
         public bool CanBuild(PieceType t) => !Catalog.NeedsBlueprint(t) || Unlocked.Contains(t);
 
-        public int Count(Gear g, Rarity r) => Owned.TryGetValue((g, r), out int n) ? n : 0;
-        public void Add(Gear g, Rarity r, int n = 1)
+        public int Count(Gear g, Rarity r, int stars = 0) => Owned.TryGetValue(new GearKey(g, r, stars), out int n) ? n : 0;
+        public int Count(GearKey k) => Owned.TryGetValue(k, out int n) ? n : 0;
+        public void AddStar(Gear g, Rarity r, int stars, int n = 1)
         {
-            int c = Count(g, r) + n;
-            if (c <= 0) Owned.Remove((g, r)); else Owned[(g, r)] = c;
+            if (GearCatalog.Retired(g)) return;
+            var k = new GearKey(g, r, stars);
+            int c = Count(k) + n;
+            if (c <= 0) Owned.Remove(k); else Owned[k] = c;
         }
+        public void Add(Gear g, Rarity r, int n = 1) => AddStar(g, r, 0, n);
+        public void Add(GearKey k, int n = 1) => AddStar(k.G, k.R, k.S, n);
 
-        public List<(Gear, Rarity)> Slots(ulong player) => Personal.TryGetValue(player, out var l) ? l : (Personal[player] = new List<(Gear, Rarity)>());
+        public List<GearKey> Slots(ulong player) => Personal.TryGetValue(player, out var l) ? l : (Personal[player] = new List<GearKey>());
 
         // What one kind of gear worn adds, every one of it together (GearCatalog.Stacked): the fortress loadout, or one
         // player's slots (0 if none).
-        public float FortressValue(Gear g) => GearCatalog.Stacked(g, Fortress.Where(x => x.Item1 == g).Select(x => ValueOf(g, x.Item2)));
+        public float FortressValue(Gear g) => GearCatalog.Stacked(g, Fortress.Where(x => x.Item1 == g).Select(x => ValueOf(g, x.Item2, x.Stars)));
         public float PersonalValue(ulong player, Gear g) =>
-            Personal.TryGetValue(player, out var l) ? GearCatalog.Stacked(g, l.Where(x => x.Item1 == g).Select(x => ValueOf(g, x.Item2))) : 0f;
+            Personal.TryGetValue(player, out var l) ? GearCatalog.Stacked(g, l.Where(x => x.Item1 == g).Select(x => ValueOf(g, x.Item2, x.Stars))) : 0f;
 
         // forClients: the game's items as counts only (their states stay with the host).
         public string Write(bool forClients = false)
         {
             var lines = new List<string>();
-            foreach (var kv in Owned) lines.Add($"own {kv.Key.Item1} {kv.Key.Item2} {kv.Value}");
-            foreach (var f in Fortress) lines.Add($"fort {f.Item1} {f.Item2}");
-            foreach (var kv in Personal) foreach (var s in kv.Value) lines.Add($"pers {kv.Key} {s.Item1} {s.Item2}");
+            foreach (var kv in Owned) lines.Add($"own {kv.Key.Item1} {kv.Key.Item2} {kv.Key.Stars} {kv.Value}");
+            foreach (var f in Fortress) lines.Add($"fort {f.Item1} {f.Item2} {f.Stars}");
+            foreach (var kv in Personal) foreach (var s in kv.Value) lines.Add($"pers {kv.Key} {s.Item1} {s.Item2} {s.Stars}");
             foreach (var kv in Names) lines.Add($"name {kv.Key} {kv.Value.Replace("\n", " ")}");
             foreach (var t in Unlocked) lines.Add($"unlock {t} 1");
             lines.Add($"scales {Scales} 0");
@@ -367,7 +411,7 @@ namespace HtfFortress
             foreach (var kv in Mods) lines.Add($"mod {kv.Key.Item1} {kv.Key.Item2} {kv.Key.Item3} {kv.Value}");
             lines.Add($"best {Best} 0");
             lines.Add($"souls {Souls} 0");
-            lines.Add($"soulup {SoulDmg} {SoulCrit} {SoulCoins} {SoulScales} {SoulCore}");
+            lines.Add($"soulup {SoulDmg} {SoulCrit} {SoulCoins} {SoulScales} {SoulCore} {SoulDiscount} {SoulTurretDmg} {SoulKnock} {SoulHealth}");
             foreach (var k in Starter) lines.Add($"starter {k} 1");
             foreach (var kv in Bought) lines.Add($"buy {kv.Key} {kv.Value}");
             foreach (var w in Wins) lines.Add($"win {w.date} {w.team.Split('、').Length} {w.team.Replace("\n", " ")}");
@@ -385,7 +429,11 @@ namespace HtfFortress
         public int Mergeable()
         {
             int n = 0;
-            foreach (var kv in Owned) if (kv.Key.Item2 < Rarity.Legendary) n += kv.Value / 3;
+            foreach (var kv in Owned)
+            {
+                if (kv.Value < 3) continue;
+                if (kv.Key.Stars < GearCatalog.MaxStars || kv.Key.Item2 < Rarity.Legendary) n += kv.Value / 3;
+            }
             return n;
         }
         public int MergeAll()
@@ -395,13 +443,14 @@ namespace HtfFortress
             while (changed)
             {
                 changed = false;
-                foreach (var k in Owned.Keys.ToList())
+                foreach (var k in Owned.Keys.OrderBy(k => k.Stars).ThenBy(k => k.Item2).ToList())
                 {
-                    if (k.Item2 >= Rarity.Legendary) continue;
-                    while (Count(k.Item1, k.Item2) >= 3)
+                    if (k.Stars >= GearCatalog.MaxStars && k.Item2 >= Rarity.Legendary) continue;
+                    while (Count(k) >= 3)
                     {
-                        Add(k.Item1, k.Item2, -3);
-                        Add(k.Item1, k.Item2 + 1);
+                        Add(k, -3);
+                        if (k.Stars < GearCatalog.MaxStars) AddStar(k.Item1, k.Item2, k.Stars + 1);
+                        else AddStar(k.Item1, k.Item2 + 1, 0);
                         total++;
                         changed = true;
                     }
@@ -412,34 +461,38 @@ namespace HtfFortress
         }
 
         // One vault action by player `key` (host). Returns false and changes nothing when it isn't allowed.
-        public bool Apply(VaultAction action, Gear g, Rarity r, int slot, ulong key)
+        public bool Apply(VaultAction action, Gear g, Rarity r, int slot, ulong key, int stars = 0)
         {
+            if (GearCatalog.Retired(g)) return false;
             switch (action)
             {
                 case VaultAction.MergeAll:
                     return MergeAll() > 0;
                 case VaultAction.Merge:
-                    if (r >= Rarity.Legendary || Count(g, r) < 3) return false;
-                    Add(g, r, -3);
-                    Add(g, r + 1);
+                    if (Count(g, r, stars) < 3) return false;
+                    if (stars >= GearCatalog.MaxStars && r >= Rarity.Legendary) return false;
+                    AddStar(g, r, stars, -3);
+                    if (stars < GearCatalog.MaxStars) AddStar(g, r, stars + 1);
+                    else AddStar(g, r + 1, 0);
                     AutoTest.Count("merged");
                     return true;
                 case VaultAction.EquipFortress:
-                    if (!GearCatalog.IsFortress(g) || Count(g, r) < 1 || Fortress.Count >= SlotsOf(0)) return false; // the same kind twice adds up
-                    Add(g, r, -1);
-                    Fortress.Add((g, r));
+                    if (!GearCatalog.IsFortress(g) || Count(g, r, stars) < 1 || Fortress.Count >= SlotsOf(0)) return false;
+                    if (Fortress.Any(f => f.Item1 == g)) return false; // one of each kind: stacking four Gunpowders made a fort one-shot wave 70
+                    AddStar(g, r, stars, -1);
+                    Fortress.Add(new GearKey(g, r, stars));
                     return true;
                 case VaultAction.EquipPersonal:
                     var slots = Slots(key);
                     int kind = GearCatalog.SlotKind(g);
-                    if (kind == 0 || kind == 2 || Count(g, r) < 1 || slots.Count(s => GearCatalog.SlotKind(s.Item1) == kind) >= SlotsOf(kind)) return false;
-                    Add(g, r, -1);
-                    slots.Add((g, r));
+                    if (kind == 0 || kind == 2 || Count(g, r, stars) < 1 || slots.Count(s => GearCatalog.SlotKind(s.Item1) == kind) >= SlotsOf(kind)) return false;
+                    AddStar(g, r, stars, -1);
+                    slots.Add(new GearKey(g, r, stars));
                     return true;
                 case VaultAction.Salvage:
-                    if (Count(g, r) < 1) return false;
-                    Add(g, r, -1);
-                    Scales += GearCatalog.SalvageScales[(int)r];
+                    if (Count(g, r, stars) < 1) return false;
+                    AddStar(g, r, stars, -1);
+                    Scales += Mathf.RoundToInt(GearCatalog.SalvageScales[(int)r] * (1f + 0.5f * stars));
                     AutoTest.Count("salvaged");
                     return true;
                 case VaultAction.Ascend:
@@ -477,17 +530,17 @@ namespace HtfFortress
                     return true;
                 // Taken off by what it is, not by its place: with two players at the desk, places shift under you.
                 case VaultAction.UnequipFortress:
-                    int fi = Fortress.FindIndex(f => f.Item1 == g && f.Item2 == r);
+                    int fi = Fortress.FindIndex(f => f.Item1 == g && f.Item2 == r && f.Stars == stars);
                     if (fi < 0) return false;
                     Fortress.RemoveAt(fi);
-                    Add(g, r);
+                    AddStar(g, r, stars);
                     return true;
                 case VaultAction.UnequipPersonal:
                     var mine = Slots(key);
-                    int pi = mine.FindIndex(x => x.Item1 == g && x.Item2 == r);
+                    int pi = mine.FindIndex(x => x.Item1 == g && x.Item2 == r && x.Stars == stars);
                     if (pi < 0) return false;
                     mine.RemoveAt(pi);
-                    Add(g, r);
+                    AddStar(g, r, stars);
                     return true;
             }
             return false;
@@ -512,11 +565,31 @@ namespace HtfFortress
                 {
                     switch (f[0])
                     {
-                        case "own": v.Add(P<Gear>(f[1]), P<Rarity>(f[2]), int.Parse(f[3])); break;
-                        case "fort": v.Fortress.Add((P<Gear>(f[1]), P<Rarity>(f[2]))); break;
+                        case "own":
+                            {
+                                var g = P<Gear>(f[1]); var r = P<Rarity>(f[2]);
+                                if (GearCatalog.Retired(g)) break;
+                                var cells = f[3].Split(' ');
+                                if (cells.Length >= 2) v.AddStar(g, r, int.Parse(cells[0]), int.Parse(cells[1])); // old line: count only = 0 stars
+                                else v.Add(g, r, int.Parse(cells[0]));
+                                break;
+                            }
+                        case "fort":
+                            {
+                                var g = P<Gear>(f[1]); var r = P<Rarity>(f[2]);
+                                if (GearCatalog.Retired(g)) break;
+                                int st = f.Length > 3 ? int.Parse(f[3]) : 0;
+                                int i = v.Fortress.FindIndex(x => x.Item1 == g);
+                                if (i < 0) v.Fortress.Add(new GearKey(g, r, st)); else if (r > v.Fortress[i].Item2 || (r == v.Fortress[i].Item2 && st > v.Fortress[i].Stars)) v.Fortress[i] = new GearKey(g, r, st);
+                                break;
+                            }
                         case "pers": // active gear isn't worn any more: one worn before goes back into the vault
-                            var pg = P<Gear>(f[2]); var pr = P<Rarity>(f[3]);
-                            if (GearCatalog.IsActive(pg)) v.Add(pg, pr); else v.Slots(ulong.Parse(f[1])).Add((pg, pr));
+                            var pp = f[3].Split(' ');
+                            var pg = P<Gear>(f[2]); var pr = P<Rarity>(pp[0]);
+                            int ps = pp.Length > 1 ? int.Parse(pp[1]) : 0;
+                            if (GearCatalog.Retired(pg)) break;
+                            if (GearCatalog.IsActive(pg)) v.AddStar(pg, pr, ps);
+                            else v.Slots(ulong.Parse(f[1])).Add(new GearKey(pg, pr, ps));
                             break;
                         case "name": v.Names[ulong.Parse(f[1])] = f.Length > 3 ? f[2] + " " + f[3] : f[2]; break;
                         case "unlock": v.Unlocked.Add(P<PieceType>(f[1])); break;
@@ -528,7 +601,11 @@ namespace HtfFortress
                         case "soulup":
                             var su = f[3].Split(' ');
                             v.SoulDmg = int.Parse(f[1]); v.SoulCrit = Mathf.Max(0, int.Parse(f[2]));
-                            v.SoulCoins = Mathf.Max(0, int.Parse(su[0])); v.SoulScales = Mathf.Max(0, int.Parse(su[1])); v.SoulCore = Mathf.Max(0, int.Parse(su[2])); break;
+                            v.SoulCoins = Mathf.Max(0, int.Parse(su[0])); v.SoulScales = Mathf.Max(0, int.Parse(su[1])); v.SoulCore = Mathf.Max(0, int.Parse(su[2]));
+                            v.SoulDiscount = su.Length > 3 ? Mathf.Max(0, int.Parse(su[3])) : 0;
+                            v.SoulTurretDmg = su.Length > 4 ? Mathf.Max(0, int.Parse(su[4])) : 0;
+                            v.SoulKnock = su.Length > 5 ? Mathf.Max(0, int.Parse(su[5])) : 0;
+                            v.SoulHealth = su.Length > 6 ? Mathf.Max(0, int.Parse(su[6])) : 0; break;
                         case "starter": v.Starter.Add(ulong.Parse(f[1])); break;
                         case "buy": v.Bought[P<Expansion>(f[1])] = int.Parse(f[2]); break;
                         case "win": v.Wins.Add((f[1], f.Length > 3 ? f[3] : "")); break;
@@ -617,7 +694,20 @@ namespace HtfFortress
         public static int Cost(int baseCost, Player builder) => Discount(baseCost, Of(builder, Gear.ToolBelt));
         public static int MyCost(int baseCost) =>
             Discount(baseCost, Player.LocalPlayer && Loot.Instance ? Loot.Instance.ClientVault.PersonalValue(Loot.KeyOf(Player.LocalPlayer), Gear.ToolBelt) : 0f);
-        private static int Discount(int c, float off) => off > 0f ? Mathf.Max(1, Mathf.CeilToInt(c * (1f - off))) : c;
+        // The keeper's discount is only for tower upgrades (not building or repairs).
+        public static float Knockback => V != null ? V.KnockbackMult : 1f;
+        public static int TowerUpgradeCost(int baseCost, Player builder)
+        {
+            int c = Cost(baseCost, builder);
+            return Discount(c, V != null ? 1f - V.TowerDiscount : 0f);
+        }
+        public static int MyTowerUpgradeCost(int baseCost)
+        {
+            int c = MyCost(baseCost);
+            var v = Loot.Instance ? Loot.Instance.ClientVault : null;
+            return Discount(c, v != null ? 1f - v.TowerDiscount : 0f);
+        }
+        private static int Discount(int c, float off) => off > 0f ? Mathf.Max(1, Mathf.CeilToInt(c * (1f - Mathf.Clamp01(off)))) : c;
 
         public static int MaxHp(PieceType t, int level) =>
             t == PieceType.Wall ? Mathf.RoundToInt(Catalog.MaxHp(t, level) * (1f + Team(Gear.Rebar))) : Catalog.MaxHp(t, level);

@@ -336,22 +336,62 @@ ge = math.radians(GAPS[2])
 gx, gz = 21.5 * math.cos(ge), 21.5 * math.sin(ge)
 tx, tz = -math.sin(ge), math.cos(ge)  # across the lane
 gy = height(gx, gz)
-for s in (-1, 1):
-    px, pz = gx + tx * s * 3.4, gz + tz * s * 3.4
-    for k in range(6):  # a pillar of stacked blocks, a little uneven
-        island.box((1.3 - k * 0.03, 1.3 - k * 0.03, 0.62), G(px + rng.uniform(-0.05, 0.05), gy + 0.31 + k * 0.62, pz + rng.uniform(-0.05, 0.05)),
-                   stone if k % 2 else rock, rot=(0, 0, ge + rng.uniform(-0.05, 0.05)))
-    for k in range(4):  # the wall running off to the cliffs, crumbling away
-        wx, wz = px + tx * s * (1.4 + k * 1.3), pz + tz * s * (1.4 + k * 1.3)
-        hh = max(0.5, 2.6 - k * 0.6 + rng.uniform(-0.3, 0.3))
-        island.box((1.3, 0.8, hh), G(wx, height(wx, wz) + hh / 2, wz), stone, rot=(0, 0, ge))
-for k in range(9):  # the arch over the lane
-    t = math.pi * k / 8.0
-    ax, az = gx + tx * 3.4 * math.cos(t), gz + tz * 3.4 * math.cos(t)
-    island.box((0.9, 1.1, 0.75), G(ax, gy + 3.7 + 1.2 * math.sin(t), az), rock if k % 2 else stone, rot=(0, -math.cos(t) * 0.0, ge))
-for k in range(3):  # fallen blocks
-    fx, fz = gx + tx * rng.uniform(-6, 6) + math.cos(ge) * rng.uniform(1.5, 3.5), gz + tz * rng.uniform(-6, 6) + math.sin(ge) * rng.uniform(1.5, 3.5)
-    island.box((0.8, 0.9, 0.6), G(fx, height(fx, fz) + 0.25, fz), stone, rot=(rng.uniform(-0.3, 0.3), rng.uniform(-0.3, 0.3), rng.uniform(0, 3.1)))
+
+
+def gate_block(x, y, z, w, d, h, m, yaw, rx=0.0, ry=0.0):
+    island.box((w, d, h), G(x, y, z), m, rot=(rx, ry, yaw))
+
+
+# Two weathered pillars: a plinth, seven slightly different courses, a capital, mortar lines and cracks.
+for side in (-1, 1):
+    px, pz = gx + tx * side * 3.4, gz + tz * side * 3.4
+    gate_block(px, gy + 0.12, pz, 1.75, 1.55, 0.24, stone, ge)
+    gate_block(px, gy + 0.30, pz, 1.55, 1.38, 0.16, dark, ge)
+    for k in range(7):
+        y = gy + 0.40 + k * 0.43
+        w = 1.34 - k * 0.055 + rng.uniform(-0.04, 0.04)
+        d = 1.26 - k * 0.05 + rng.uniform(-0.03, 0.03)
+        gate_block(px + rng.uniform(-0.035, 0.035), y, pz + rng.uniform(-0.035, 0.035),
+                   w, d, 0.40, stone if k % 3 else rock, ge + rng.uniform(-0.035, 0.035),
+                   rng.uniform(-0.012, 0.012), rng.uniform(-0.012, 0.012))
+        gate_block(px, y + 0.205, pz, w + 0.035, d + 0.035, 0.012, dark, ge)
+    gate_block(px, gy + 3.46, pz, 1.55, 1.42, 0.18, stone, ge)
+    # A few chips and a dark crack down the seaward face.
+    gate_block(px + tx * side * 0.72, gy + 1.55, pz + tz * side * 0.72, 0.035, 0.10, 1.8, dark, ge)
+    for k in range(3):
+        gate_block(px + tx * side * 0.70, gy + 0.85 + k * 0.9, pz + tz * side * 0.70,
+                   0.06, 0.12, 0.18, dark, ge)
+
+# A proper arch: many small voussoirs following the curve, a bigger keystone, one broken gap and fallen rubble.
+R = 3.4
+spring = gy + 3.52
+# Many small overlapping stones make a continuous curved arch. No tilt on each stone: tilting them opened visible
+# gaps and made the top look like a pile of floating crates (Owen's screenshot).
+n = 31
+for k in range(n):
+    t = math.pi * k / (n - 1)
+    if k == 20:  # the broken quarter
+        continue
+    ax, az = gx + tx * R * math.cos(t), gz + tz * R * math.cos(t)
+    ay = spring + R * math.sin(t)
+    gate_block(ax, ay, az, 0.62, 0.72, 0.52, stone if k % 2 else rock, ge)
+    if k % 6 == 0:
+        gate_block(ax + tx * 0.02, ay + 0.02, az + tz * 0.02, 0.48, 0.58, 0.38, dark, ge)
+# The keystone, slightly proud of the ring.
+gate_block(gx, spring + R + 0.20, gz, 0.86, 0.82, 0.55, stone, ge)
+
+# Cap stones / fallen blocks around the feet.
+for k in range(5):
+    fx, fz = gx + tx * rng.uniform(-5.5, 5.5) + math.cos(ge) * rng.uniform(1.8, 3.8), gz + tz * rng.uniform(-5.5, 5.5) + math.sin(ge) * rng.uniform(1.8, 3.8)
+    gate_block(fx, height(fx, fz) + 0.22, fz, rng.uniform(0.55, 1.0), rng.uniform(0.5, 0.85), rng.uniform(0.28, 0.5),
+               rock if k % 2 else stone, rng.uniform(0, TAU), rng.uniform(-0.25, 0.25), rng.uniform(-0.25, 0.25))
+
+# Moss on the north face and a little vine over one shoulder.
+for x, z, s in ((gx - tx * 3.0, gz - tz * 3.0, 0.8), (gx + tx * 2.8, gz + tz * 2.8, 0.55)):
+    gate_block(x, height(x, z) + 0.08, z, s, s * 0.7, 0.10, moss, ge)
+for k in range(4):
+    gate_block(gx - tx * 3.4, spring + 0.35 + k * 0.45, gz - tz * 3.4, 0.10, 0.12, 0.32, moss, ge + k * 0.35,
+               rng.uniform(-0.12, 0.12), rng.uniform(-0.12, 0.12))
 
 # ---------- the terraces: stone-walled platforms between the lanes, steps toward the lighthouse ----------
 for a, r in TERRACES:

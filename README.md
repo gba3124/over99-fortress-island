@@ -4,16 +4,16 @@
 
 A co-op fortress mode for *How to Fish*, as a BepInEx 5 mod. Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Hold the lighthouse with your friends and go OVER 99.
 
-**Get it:** [Thunderstore](https://thunderstore.io/c/how-to-fish/p/gba3124/OVER_99_Fortress_Island/) · **Languages:** English, Traditional Chinese, Simplified Chinese (follows the game) · **Full guide (Traditional Chinese):** [docs/README.zh-TW.md](docs/README.zh-TW.md) · **Design notes:** [DESIGN.md](DESIGN.md)
+**Get it:** [Thunderstore](https://thunderstore.io/c/how-to-fish/p/gba3124/OVER_99_Fortress_Island/) · **Languages:** all 16 How to Fish locales (follows the game; Auto/override in config) · **Full guide (Traditional Chinese):** [docs/README.zh-TW.md](docs/README.zh-TW.md) · **Current design + 3D art brief:** [CURRENT-DESIGN.md](CURRENT-DESIGN.md) · **Older design draft:** [DESIGN.md](DESIGN.md) · **Balance audit:** [BALANCE.md](BALANCE.md)
 
 ## What it adds
 
 - A fortress island that rises out of the sea after the final boss, with a lighthouse to defend
 - 100 waves of fish in sneakers, in 10 kinds that each have their own trick
 - 10 original bosses, one every 10 waves
-- Walls, 7 turrets, a spike trap and 2 support towers, with no cap on upgrades
-- 17 new weapons and 20 kinds of gear you keep between runs
-- A village on the pier with a fish stall, a smithy and a shared vault
+- Walls, 9 turrets (4 modules per branch family), a spike trap and 3 support towers, with no cap on upgrades
+- 17 fortress weapons + the game's guns, gear with a 10-slot tower loadout, and meta-progression with souls
+- A village on the pier with a fish stall (helpers + backup fish), a smithy, a shared vault and the lighthouse keeper's soul tree
 - Solo or co-op. Everyone must run the same version; the mod checks and warns you
 
 ## Build

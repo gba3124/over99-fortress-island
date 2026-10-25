@@ -13,12 +13,16 @@ using UnityEngine.InputSystem;
 namespace HtfFortress
 {
     // Host -> everyone: one player's net. Client -> host: buy the next net size.
-    public struct NetState : IBroadcast { public int PlayerId; public int Count; public int Capacity; public int Value; }
+    public struct NetState : IBroadcast { public int PlayerId; public int Count; public int Capacity; public int Value; public int Backup; }
+    // Host -> everyone: how many backup fish one player has hanging on their belt (0 = none).
+    public struct FoodPack : IBroadcast { public int PlayerId; public int Count; }
     // Client -> host at the fish stall: Sell = sell my net, else buy the team a bigger net.
     // Level (buying a bigger net): the net size the player saw, so two at once buy one size, not two.
     public struct NetRequest : IBroadcast { public bool Sell; public int Level; public bool Food; } // Food: buy a grilled fish at the stall
     // Client -> host: a swing of the hand net, from the camera.
     public struct NetSwing : IBroadcast { public Vector3 Origin; public Vector3 Dir; }
+    // Client -> host only: this player's own auto-eat rules (never rebroadcast: each player chooses when they eat).
+    public struct EatRule : IBroadcast { public bool Hungry; public bool LowHealth; }
 
     // The fishing net: walk over dead fish to scoop them up (up to the net's size), then sell the whole net
     // at the fish stall by the dock for team coins. The stall also sells bigger nets (a team upgrade).
@@ -36,37 +40,48 @@ namespace HtfFortress
         // A late wave is about 200 fish (wave 100); 160 leaves a whole wave's bodies plus a backlog for the net and helpers.
         private static int CorpseCap => FortressPlugin.Instance != null ? FortressPlugin.Instance.CorpseCapValue : 160;
         private readonly Dictionary<int, (int count, int value)> _nets = new Dictionary<int, (int, int)>();
+        private readonly Dictionary<int, int> _backup = new Dictionary<int, int>(); // player id -> grilled fish on the belt
+        private readonly Dictionary<int, (GameObject root, int shown)> _waistFish = new Dictionary<int, (GameObject, int)>(); // client models
+        private readonly Dictionary<int, int> _pack = new Dictionary<int, int>(); // client copy of the belt counts
+        private readonly Dictionary<int, (bool hungry, bool hurt)> _eatRules = new Dictionary<int, (bool, bool)>(); // host copy, by player id
+        private int _lastRuleBits = -1;
+        public const int BackupPack = 5, BackupCost = 100, BackupFullness = 40, BackupHeal = 10;
         private int _netLevel;
         private float _nextTick;
         // client
         private NetState _mine;
         public bool ClientNetFull => _mine.Capacity > 0 && _mine.Count >= _mine.Capacity;
+        public int ClientBackup => _mine.Backup;
+        public void PreviewBackup(int add) { _mine.Backup = Mathf.Max(0, _mine.Backup + add); }
         // The team net's size step as this player sees it (their own Big Net gear adds on top of it).
         public int ClientNetLevel
         {
             get
             {
                 var v = Loot.Instance ? Loot.Instance.ClientVault : null;
-                int bonus = v != null && Player.LocalPlayer ? Mathf.RoundToInt(v.PersonalValue(Loot.KeyOf(Player.LocalPlayer), Gear.BigNet)) : 0;
-                return System.Array.IndexOf(Capacity, _mine.Capacity - bonus);
+                return System.Array.IndexOf(Capacity, _mine.Capacity);
             }
         }
         private NetworkManager _registeredOn;
 
         static FortressNet()
         {
-            GenericWriter<NetState>.SetWrite((w, v) => { w.WriteInt32(v.PlayerId); w.WriteInt32(v.Count); w.WriteInt32(v.Capacity); w.WriteInt32(v.Value); });
-            GenericReader<NetState>.SetRead(r => new NetState { PlayerId = r.ReadInt32(), Count = r.ReadInt32(), Capacity = r.ReadInt32(), Value = r.ReadInt32() });
+            GenericWriter<NetState>.SetWrite((w, v) => { w.WriteInt32(v.PlayerId); w.WriteInt32(v.Count); w.WriteInt32(v.Capacity); w.WriteInt32(v.Value); w.WriteInt32(v.Backup); });
+            GenericReader<NetState>.SetRead(r => new NetState { PlayerId = r.ReadInt32(), Count = r.ReadInt32(), Capacity = r.ReadInt32(), Value = r.ReadInt32(), Backup = r.ReadInt32() });
+            GenericWriter<FoodPack>.SetWrite((w, v) => { w.WriteInt32(v.PlayerId); w.WriteInt32(v.Count); });
+            GenericReader<FoodPack>.SetRead(r => new FoodPack { PlayerId = r.ReadInt32(), Count = r.ReadInt32() });
             GenericWriter<NetRequest>.SetWrite((w, v) => { w.WriteBoolean(v.Sell); w.WriteInt32(v.Level); w.WriteBoolean(v.Food); });
             GenericReader<NetRequest>.SetRead(r => new NetRequest { Sell = r.ReadBoolean(), Level = r.ReadInt32(), Food = r.ReadBoolean() });
             GenericWriter<NetSwing>.SetWrite((w, v) => { w.WriteVector3(v.Origin); w.WriteVector3(v.Dir); });
             GenericReader<NetSwing>.SetRead(r => new NetSwing { Origin = r.ReadVector3(), Dir = r.ReadVector3() });
+            GenericWriter<EatRule>.SetWrite((w, v) => { w.WriteBoolean(v.Hungry); w.WriteBoolean(v.LowHealth); });
+            GenericReader<EatRule>.SetRead(r => new EatRule { Hungry = r.ReadBoolean(), LowHealth = r.ReadBoolean() });
         }
 
         private void Awake() => Instance = this;
 
         private int Cap => Capacity[Mathf.Clamp(_netLevel, 0, Capacity.Length - 1)];
-        private int CapOf(int playerId) => Cap + Mathf.RoundToInt(Perks.Of(playerId, Gear.BigNet)); // + the Big Net gear
+        private int CapOf(int playerId) => Cap;
 
         // ---------- host API ----------
 
@@ -138,7 +153,8 @@ namespace HtfFortress
         private void Send(int playerId)
         {
             _nets.TryGetValue(playerId, out var n);
-            InstanceFinder.ServerManager.Broadcast(new NetState { PlayerId = playerId, Count = n.count, Capacity = CapOf(playerId), Value = n.value });
+            _backup.TryGetValue(playerId, out int back);
+            InstanceFinder.ServerManager.Broadcast(new NetState { PlayerId = playerId, Count = n.count, Capacity = CapOf(playerId), Value = n.value, Backup = back });
         }
 
         private void Update()
@@ -148,10 +164,11 @@ namespace HtfFortress
             {
                 _registeredOn = nm;
                 nm.ClientManager.RegisterBroadcast<NetState>((s, ch) => { if (Player.LocalPlayer && s.PlayerId == Player.LocalPlayer.ObjectId) _mine = s; });
+                nm.ClientManager.RegisterBroadcast<FoodPack>((s, ch) => { _pack[s.PlayerId] = s.Count; RefreshWaist(); });
                 nm.ServerManager.RegisterBroadcast(Net.Safe<NetRequest>((conn, r, ch) =>
                 {
                     var who = PlayerManager.Players.FirstOrDefault(p => p && p.Owner == conn);
-                    if (r.Food) { if (who) ServerBuyFood(who); return; }
+                    if (r.Food) { if (who) { if (r.Level > 0) ServerBuyBackup(who); else ServerBuyFood(who); } return; }
                     if (!r.Sell) { if (r.Level == _netLevel) ServerUpgrade(); return; }
                     if (who) ServerSell(who);
                 }));
@@ -160,14 +177,39 @@ namespace HtfFortress
                     var who = PlayerManager.Players.FirstOrDefault(p => p && p.Owner == conn);
                     if (who) ServerSwing(who, s.Origin, s.Dir);
                 }));
+                nm.ServerManager.RegisterBroadcast(Net.Safe<EatRule>((conn, r, ch) =>
+                {
+                    var who = PlayerManager.Players.FirstOrDefault(p => p && p.Owner == conn);
+                    if (who) _eatRules[who.ObjectId] = (r.Hungry, r.LowHealth);
+                }));
                 nm.ClientManager.OnClientConnectionState += a => { if (a.ConnectionState == LocalConnectionState.Stopped) _mine = default; };
+                nm.SceneManager.OnClientLoadedStartScenes += (conn, asServer) =>
+                {
+                    if (!asServer) return;
+                    // A late joiner needs the belts that are already on other players, not just its own NetState.
+                    foreach (var kv in _backup) InstanceFinder.ServerManager.Broadcast(conn, new FoodPack { PlayerId = kv.Key, Count = kv.Value });
+                };
+            }
+            // Tell the host when this player's own rule changes (it is not a team-wide setting).
+            if (InstanceFinder.IsClientStarted && Player.LocalPlayer && Player.LocalPlayer.Vitals)
+            {
+                int bits = (ClientSettings.AutoEatHungry != null && ClientSettings.AutoEatHungry.Value ? 1 : 0)
+                         | (ClientSettings.AutoEatLowHealth != null && ClientSettings.AutoEatLowHealth.Value ? 2 : 0);
+                if (bits != _lastRuleBits)
+                {
+                    _lastRuleBits = bits;
+                    if (InstanceFinder.IsServerStarted && Player.LocalPlayer) _eatRules[Player.LocalPlayer.ObjectId] = ((bits & 1) != 0, (bits & 2) != 0);
+                    if (InstanceFinder.IsClientStarted) InstanceFinder.ClientManager.Broadcast(new EatRule { Hungry = (bits & 1) != 0, LowHealth = (bits & 2) != 0 });
+                }
             }
             if (InstanceFinder.IsServerStarted && Time.time >= _nextTick) { _nextTick = Time.time + 0.25f; ServerTick(); }
-            ClientInput();
+            RefreshWaist();
+            // The hand net is gone (Owen): the helpers pick the fish up. Only the corpse pool and the stall's helpers remain.
         }
 
         private void ServerTick()
         {
+            AutoEatBackup();
             var island = FortressIsland.Instance;
             if (!island || !island.Exists) return;
             // Expire old corpses.
@@ -184,16 +226,7 @@ namespace HtfFortress
                 bool changed = !_nets.TryGetValue(p.ObjectId, out var net); // a new face: tell them their net size (with their Big Net)
                 int cap = CapOf(p.ObjectId);
                 // Legendary big net: a full net sells itself (at 80%) wherever you are.
-                if (net.count >= cap && Perks.Legend(p, Gear.BigNet) && (pos - counter).sqrMagnitude >= CounterRadius * CounterRadius)
-                {
-                    int value = Mathf.RoundToInt(net.value * 0.8f * (1f + Perks.Of(p, Gear.FishGloves)));
-                    Siege.Instance.ServerAddCoins(value);
-                    Stats.Fished(p.ObjectId, value);
-                    Fx.Send(FxKind.Sell, pos, pos, 0, value);
-                    AutoTest.Count("legend_autosell");
-                    Perks.Proc(Gear.BigNet, pos);
-                    net = default; changed = true;
-                }
+                // (the old legendary Big Net auto-sell is retired with the hand net: helpers carry the fish now)
                 _nets[p.ObjectId] = net;
                 if (changed) Send(p.ObjectId);
             }
@@ -344,6 +377,102 @@ namespace HtfFortress
         // Past the grace and not being eaten now (someone eating keeps their fish, however long it takes; never past 20 s).
         public static bool LeftOver(float waited, bool eating) => waited >= FoodGrace && (!eating || waited >= 20f);
 
+        // Buying a stringer of grilled fish: they hang on the belt and are eaten by themselves when hunger drops below 10%.
+        private void ServerBuyBackup(Player who)
+        {
+            var island = FortressIsland.Instance;
+            if (!island || !island.Exists || !who || !who.Transform || !PlayerManager.AlivePlayers.Contains(who)
+                || !Siege.Instance.ServerTrySpend(Siege.Money(BackupCost), always: true)) return;
+            _backup.TryGetValue(who.ObjectId, out int n);
+            _backup[who.ObjectId] = n + BackupPack;
+            BroadcastPack(who.ObjectId);
+            Send(who.ObjectId);
+            AutoTest.Count("stall_backup_fish", BackupPack);
+        }
+
+        private void BroadcastPack(int playerId)
+        {
+            _backup.TryGetValue(playerId, out int n);
+            if (Player.LocalPlayer && Player.LocalPlayer.ObjectId == playerId) { _pack[playerId] = n; RefreshWaist(); }
+            if (InstanceFinder.ServerManager) InstanceFinder.ServerManager.Broadcast(new FoodPack { PlayerId = playerId, Count = n });
+        }
+
+        private void AutoEatBackup()
+        {
+            foreach (var p in PlayerManager.Players)
+            {
+                if (!p || !p.Transform || !p.Vitals || p.Dying && p.Dying.IsDead) continue;
+                if (!_backup.TryGetValue(p.ObjectId, out int n) || n <= 0) continue;
+                bool hungry = ClientSettings.AutoEatHungry == null || ClientSettings.AutoEatHungry.Value;
+                bool hurt = ClientSettings.AutoEatLowHealth != null && ClientSettings.AutoEatLowHealth.Value;
+                if (_eatRules.TryGetValue(p.ObjectId, out var rule)) { hungry = rule.hungry; hurt = rule.hurt; }
+                if (!(hungry && p.Vitals.Fullness < 10) && !(hurt && p.Vitals.Health < 50)) continue;
+                _backup[p.ObjectId] = --n;
+                p.Vitals.RestoreFullness(BackupFullness);
+                p.Vitals.Heal(BackupHeal);
+                Fx.Send(FxKind.Heal, p.Transform.position, p.Transform.position + Vector3.up);
+                BroadcastPack(p.ObjectId); Send(p.ObjectId);
+                AutoTest.Count("backup_fish_eaten");
+            }
+        }
+
+        private void RefreshWaist()
+        {
+            // Client: one small fish model per belt, attached to the player's hip.
+            foreach (var id in new List<int>(_pack.Keys))
+            {
+                _pack.TryGetValue(id, out int n);
+                var p = PlayerManager.Players.FirstOrDefault(x => x && x.ObjectId == id);
+                // Visual tiers: a belt cannot show 100 fish, so it grows a handful and then a basket; the exact number is on
+                // the stall's backup-fish line.
+                int want = n >= 100 ? 6 : n >= 50 ? 5 : n >= 20 ? 5 : n >= 15 ? 4 : n >= 10 ? 3 : n >= 5 ? 2 : 1;
+                bool basket = n >= 50;
+                if (n <= 0 || !p || !p.Transform)
+                {
+                    if (_waistFish.TryGetValue(id, out var old) && old.root) Object.Destroy(old.root);
+                    _waistFish.Remove(id); _pack.Remove(id);
+                    continue;
+                }
+                // Hide your own belt BEFORE the unchanged-model early-out below: otherwise an old local model (a hot reload,
+                // or Player.LocalPlayer being assigned after the first tick) keeps sitting in the first-person camera.
+                bool own = p == Player.LocalPlayer;
+                _waistFish.TryGetValue(id, out var have);
+                if (own)
+                {
+                    if (have.root) Object.Destroy(have.root);
+                    _waistFish.Remove(id);
+                    continue; // teammates still see it on you; you never see it in your own camera
+                }
+                if (have.root && have.shown == want + (basket ? 100 : 0)) continue;
+                if (have.root) Object.Destroy(have.root);
+                var holder = new GameObject("BackupFish");
+                holder.transform.SetParent(p.Transform, false);
+                holder.transform.localPosition = new Vector3(0f, 0.9f, 0f);
+                holder.transform.localRotation = Quaternion.identity;
+                // A small belt ring, not a wall of fish in front of the camera: left, right, back, all clearly separated.
+                var offsets = new[] { new Vector3(0.28f, 0f, 0.02f), new Vector3(-0.28f, 0f, 0.02f),
+                                      new Vector3(0.16f, -0.02f, -0.26f), new Vector3(-0.16f, -0.02f, -0.26f),
+                                      new Vector3(0.30f, 0.02f, -0.16f), new Vector3(-0.30f, 0.02f, -0.16f) };
+                var yaws = new[] { 90f, -90f, 180f, 180f, 120f, -120f };
+                int first = basket ? 2 : 0;
+                for (int i = 0; i < want; i++)
+                {
+                    var one = Models.Attach("GrilledFish", holder.transform, Vector3.one * 0.45f);
+                    one.transform.localScale = Vector3.one * (basket ? 0.18f : 0.20f); // the grilled model is ~62 cm long: 11-12 cm on the belt
+                    one.transform.localPosition = offsets[(first + i) % offsets.Length];
+                    one.transform.localRotation = Quaternion.Euler(0f, yaws[(first + i) % yaws.Length], 0f);
+                }
+                if (basket)
+                {
+                    var crate = Models.Attach("HelperBasket", holder.transform, Vector3.one * 0.4f, share: true);
+                    crate.transform.localScale = Vector3.one * 0.42f;
+                    crate.transform.localPosition = new Vector3(0f, -0.08f, -0.18f);
+                    crate.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+                }
+                _waistFish[id] = (holder, want + (basket ? 100 : 0));
+            }
+        }
+
         private void ServerUpgrade()
         {
             if (_netLevel >= UpgradeCost.Length || !Siege.Instance.ServerTrySpend(Siege.Money(UpgradeCost[_netLevel]), always: true)) return;
@@ -379,36 +508,8 @@ namespace HtfFortress
         // Bottom right: your net (count / size, value); a hint when it's full; the upgrade offer at the stall.
         private void LateUpdate()
         {
-            bool show = Siege.Instance && Siege.Instance.ViewActive && Hud.Font && !BuildSystem.Building;
-            if (!show) { if (_panel) _panel.gameObject.SetActive(false); return; }
-            if (!_panel)
-            {
-                _panel = Hud.Box(Hud.Root, new Vector2(1f, 0f), new Vector2(-24f, 150f), new Vector2(320f, 74f), Hud.Panel, 16f);
-                _netTitle = Hud.Label(_panel.transform, "", 21f, new Vector2(0f, 1f), new Vector2(16f, -8f), new Vector2(200f, 30f), TextAlignmentOptions.TopLeft);
-                _netCount = Hud.Label(_panel.transform, "", 24f, new Vector2(1f, 1f), new Vector2(-16f, -6f), new Vector2(120f, 30f), TextAlignmentOptions.TopRight, bold: true);
-                _netBar = Hud.Bar.Make(_panel.transform, new Vector2(0f, 0f), new Vector2(16f, 14f), new Vector2(288f, 14f), Hud.Accent);
-                _netFull = Hud.Label(_panel.transform, "", 20f, new Vector2(1f, 1f), new Vector2(0f, 30f), new Vector2(560f, 28f), TextAlignmentOptions.BottomRight, Hud.Bad, bold: true, outline: true); // right-aligned: the room is to its left
-            }
-            _panel.gameObject.SetActive(true);
-            int cap = _mine.Capacity > 0 ? _mine.Capacity : Capacity[0];
-            bool full = _mine.Count >= cap;
-            _netTitle.text = $"{L10n.T("netTitle")}  <size=85%><color={Hud.Hex(Hud.Gold)}>{L10n.T("netWorth", _mine.Value)}</color></size>";
-            _netCount.text = $"{_mine.Count}<size=70%><color={Hud.Hex(Hud.Muted)}> / {cap}</color></size>";
-            _netCount.color = full ? Hud.Bad : Hud.Ink;
-            _netBar.Set((float)_mine.Count / cap, full ? Hud.Bad : Hud.Accent);
-            _netFull.gameObject.SetActive(full || _mine.Count == 0);
-            _netFull.text = full ? L10n.T("netFullShort") : L10n.T("netHow");
-            _netFull.color = full ? Hud.Bad : Hud.Muted;
-            if (NearCounter())
-            {
-                var vault = Loot.Instance.ClientVault;
-                var key = Loot.KeyOf(Player.LocalPlayer);
-                int bonus = Mathf.RoundToInt(vault.PersonalValue(key, Gear.BigNet));
-                int lvl = System.Array.IndexOf(Capacity, cap - bonus);
-                int worth = Mathf.RoundToInt(_mine.Value * (1f + vault.PersonalValue(key, Gear.FishGloves)));
-                string sell = _mine.Count > 0 ? L10n.T("netSellHint", _mine.Count, worth) : L10n.T("netEmptyHint");
-                Hud.Prompt(sell + "　　" + (lvl >= 0 && lvl < UpgradeCost.Length ? L10n.T("netUpgradeHint", Capacity[lvl + 1], Siege.Money(UpgradeCost[lvl])) : L10n.T("netMax")));
-            }
+            // The bottom-right net HUD is gone with the hand net.
+            if (_panel) _panel.gameObject.SetActive(false);
         }
     }
 

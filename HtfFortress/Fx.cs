@@ -23,7 +23,11 @@ namespace HtfFortress
         Absorber, // the absorber's moves (drawn by BossMoves.PlayAbsorber): Key the move
         Drip, // a wet fish dripping (drawn by Weapons)
         Gatling, // the gatling's bullets (drawn by Weapons): PieceId how many (-1: one glancing on to the next fish), Arg how far it's spun up (%)
-        Soul } // souls rising at the lighthouse after a settlement (drawn by Weapons)
+        Soul, // souls rising at the lighthouse after a settlement (drawn by Weapons)
+        FinalBoss, // the last boss has just died: the short "the last boss falls" card (every client) // souls rising at the lighthouse after a settlement (drawn by Weapons)
+        ChestOpen, // a chest opened: Arg the best rarity inside
+        BossMusic, // a fortress boss fight: Arg 1 start, 0 stop
+        RoundEnd } // Arg 1 victory, 0 defeat: the full-screen end beat
 
     // Host -> everyone: a visual effect (and for Announce, a banner: Key = string key, Arg = number). Who = the player whose weapon did it.
     public struct FxEvent : IBroadcast { public FxKind Kind; public Vector3 From; public Vector3 To; public int PieceId; public string Key; public int Arg; public int Who; }
@@ -36,7 +40,8 @@ namespace HtfFortress
     {
         private static Fx _instance;
         private NetworkManager _registeredOn;
-        private Material _tracer, _ball, _blast, _spit, _bolt, _zap, _fire, _heal, _dust, _water;
+        private Material _tracer, _ball, _blast, _spit, _bolt, _zap, _fire, _heal, _dust, _water, _stone, _shell, _sniperTracer, _flameCore;
+        private static Mesh _flameMesh;
 
         static Fx()
         {
@@ -89,12 +94,15 @@ namespace HtfFortress
 
         // Host: send to everyone (the host's own client receives it too).
         // `damage` > 0 shows the game's own damage number where it lands.
-        public static void Send(FxKind kind, Vector3 from, Vector3 to, int pieceId = 0, int damage = 0, int who = 0) =>
-            Queue(new FxEvent { Kind = kind, From = from, To = to, PieceId = pieceId, Arg = damage, Who = who });
+        public static void Send(FxKind kind, Vector3 from, Vector3 to, int pieceId = 0, int damage = 0, int who = 0, string key = null) =>
+            Queue(new FxEvent { Kind = kind, From = from, To = to, PieceId = pieceId, Arg = damage, Who = who, Key = key });
 
         // The game's own sounds (see BepInEx/fortress-sounds.txt for every name).
         public static void Sound(string clip, Vector3 at, float volume = 1f, AudioDistance dist = AudioDistance.Medium)
         {
+            // These are looping grill/fire assets: one-shot playback left a long burning noise hanging in the air (Owen: the
+            // lighthouse had a fire crackle nobody could place). Short fire cues only now.
+            if (clip == "SizzlingLoop" || clip == "FireLoop") return;
             if (!MayPlay(clip, Time.unscaledTime)) return;
             try { AudioManager.PlayClipAt(clip, at, true, dist, volume); } catch { }
         }
@@ -180,8 +188,82 @@ namespace HtfFortress
             if (InstanceFinder.IsServerStarted && _pending.Count > 0) Flush(); // the whole frame's effects, once
         }
 
+        private Canvas _endCanvas, _pulseCanvas;
+        private UnityEngine.UI.Image _pulse;
+
+        // A short full-screen colour pulse for the Lv20 overdrive; cached so it costs one canvas, not one per blast.
+        private IEnumerator ScreenPulse(Color colour, float strength)
+        {
+            if (!Hud.Font) yield break;
+            var canvas = Hud.Canvas("FortressPulse", 880, ref _pulseCanvas);
+            if (!_pulse)
+            {
+                _pulse = Hud.Box(canvas.transform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(4000f, 3000f), colour, 0f);
+                _pulse.raycastTarget = false;
+            }
+            for (float t = 0f; t < 0.28f; t += Time.unscaledDeltaTime)
+            {
+                float k = 1f - t / 0.28f;
+                _pulse.color = new Color(colour.r, colour.g, colour.b, strength * k * k);
+                yield return null;
+            }
+            _pulse.color = new Color(colour.r, colour.g, colour.b, 0f);
+        }
+
+        // The last boss dying gets its own short, quiet beat before the victory camera: letterbox in, gold flash, "the last
+        // boss falls". Local only: every client draws it from the one host broadcast.
+        private IEnumerator FinalBossCard(Vector3 at)
+        {
+            var canvas = Hud.Canvas("FortressEnding", 900, ref _endCanvas);
+            canvas.gameObject.SetActive(true);
+            var holder = new GameObject("FinalBossCard", typeof(RectTransform), typeof(CanvasGroup));
+            holder.transform.SetParent(canvas.transform, false);
+            var rt = (RectTransform)holder.transform; rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = rt.offsetMax = Vector2.zero;
+            var group = holder.GetComponent<CanvasGroup>();
+            var flash = Hud.Box(holder.transform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(4000f, 3000f), new Color(1f, 0.85f, 0.4f, 0.28f), 0f);
+            flash.raycastTarget = false;
+            var top = Hud.Box(holder.transform, new Vector2(0.5f, 1f), Vector2.zero, new Vector2(5000f, 230f), new Color(0f, 0f, 0f, 0.92f), 0f);
+            var bottom = Hud.Box(holder.transform, new Vector2(0.5f, 0f), Vector2.zero, new Vector2(5000f, 230f), new Color(0f, 0f, 0f, 0.92f), 0f);
+            var title = Hud.Label(holder.transform, L10n.T("finalBossDown"), 86f, new Vector2(0.5f, 0.5f), new Vector2(0f, 96f), new Vector2(1800f, 150f), TMPro.TextAlignmentOptions.Center, bold: true);
+            title.color = Hud.Gold; title.enableAutoSizing = true; title.fontSizeMin = 46f; title.fontSizeMax = 96f;
+            var sub = Hud.Label(holder.transform, L10n.T("finalBossSub"), 30f, new Vector2(0.5f, 0.5f), new Vector2(0f, 10f), new Vector2(1600f, 70f), TMPro.TextAlignmentOptions.Center, Hud.Muted, bold: true);
+            Sound("CasinoWinEpic", at, 1f, AudioDistance.Long);
+            WeaponFx.Game("BigExplosion", at, Vector3.up);
+            for (float t = 0f; t < 3.2f; t += Time.unscaledDeltaTime)
+            {
+                float k = t / 3.2f;
+                group.alpha = Mathf.Clamp01(t / 0.25f) * Mathf.Clamp01((3.2f - t) / 0.5f);
+                top.rectTransform.anchoredPosition = new Vector2(0f, Mathf.Lerp(230f, 0f, Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / 0.35f))));
+                bottom.rectTransform.anchoredPosition = new Vector2(0f, -Mathf.Lerp(230f, 0f, Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / 0.35f))));
+                title.rectTransform.localScale = Vector3.one * Mathf.Lerp(1.25f, 1f, Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / 0.5f)));
+                flash.color = new Color(1f, 0.85f, 0.4f, Mathf.Lerp(0.28f, 0f, Mathf.Clamp01(t / 0.8f)));
+                yield return null;
+            }
+            if (holder) Destroy(holder);
+        }
+
+        // The turret that fired: its level makes the shot/impact bigger and louder (Owen: upgrades should feel crazy).
+        private static int TurretLevel(int id) => BuildSystem.Instance && BuildSystem.Instance.TryGetState(id, out var st) ? st.Level : 1;
+
+        // Flame's branch palette: Inferno red, Wide orange, Hellfire red-orange, Melt white-hot, Wall of fire gold, Blue flame blue.
+        private static Color FlameColour(int id)
+        {
+            int b = BuildSystem.Instance && BuildSystem.Instance.TryGetState(id, out var st) ? st.Branch : 0;
+            switch (b)
+            {
+                case 1: return new Color(1f, 0.18f, 0.06f);
+                case 2: return new Color(1f, 0.48f, 0.08f);
+                case 3: return new Color(1f, 0.10f, 0.03f);
+                case 4: return new Color(1f, 0.85f, 0.45f);
+                case 5: return new Color(1f, 0.62f, 0.10f);
+                case 6: return new Color(0.18f, 0.62f, 1f); // 藍焰
+                default: return new Color(1f, 0.52f, 0.12f);
+            }
+        }
+
         private void Play(FxEvent e)
         {
+            if (e.Kind == FxKind.FinalBoss) { StartCoroutine(FinalBossCard(e.To)); return; }
             if (e.Kind == FxKind.DeathMark)
             {
                 StartCoroutine(DeathPillar(e.From, e.Who));
@@ -226,16 +308,27 @@ namespace HtfFortress
                 _heal = Models.Make(new Color(0.45f, 1f, 0.5f), new Color(0.3f, 1f, 0.4f));
                 _dust = Models.Make(new Color(0.62f, 0.5f, 0.36f));
                 _water = Models.Make(new Color(0.55f, 0.8f, 1f), new Color(0.4f, 0.7f, 1f));
+                _stone = Models.Make(new Color(0.32f, 0.32f, 0.34f));
+                _shell = Models.Make(new Color(0.18f, 0.16f, 0.15f), new Color(0.4f, 0.12f, 0.05f));
+                _sniperTracer = Models.Make(new Color(0.75f, 0.95f, 1f), new Color(0.4f, 0.8f, 1f));
+                _flameCore = Models.Make(new Color(1f, 0.9f, 0.45f), new Color(1f, 0.7f, 0.15f));
+                _flameMesh = BuildFlameMesh();
             }
             if (e.PieceId != 0 && e.Kind != FxKind.Scoop) AimTurret(e.PieceId, e.To); // for a scoop it's the body being netted
             switch (e.Kind)
             {
-                case FxKind.Tracer: StartCoroutine(Tracer(e.From, e.To)); SoundRandom("SMGFireOutside_V", 1, 4, e.From, 0.35f); break;
-                case FxKind.Cannonball: StartCoroutine(Arc(e.From, e.To, _ball, 0.35f, 0.35f, 1.5f, true)); SoundRandom("ShotgunFireOutside_0", 1, 4, e.From, 0.8f); break;
-                case FxKind.Spit: StartCoroutine(Arc(e.From, e.To, _spit, 0.3f, SpitFlight, 2.5f, false)); SoundRandom("PiranhaVomit_V", 1, 3, e.From, 0.8f); break;
-                case FxKind.Blast: StartCoroutine(Blast(e.To, 3.5f)); Sound("Explosion", e.To, 1f, AudioDistance.Long); break;
-                case FxKind.Harpoon: StartCoroutine(Bolt(e.From, e.To)); SoundRandom("BowShoot_0", 1, 4, e.From, 0.9f); break;
-                case FxKind.Mortar: StartCoroutine(Arc(e.From, e.To, _ball, 0.45f, MortarFlight, 9f, true)); Sound("BoatFire", e.From, 0.8f); break;
+                case FxKind.Tracer: StartCoroutine(Tracer(e.From, e.To, e.Key, TurretLevel(e.PieceId))); SoundRandom("SMGFireOutside_V", 1, 4, e.From, 0.35f); break;
+                case FxKind.Cannonball: StartCoroutine(Arc(e.From, e.To, e.Key == "Cannon" ? _stone : _ball, (e.Key == "Cannon" ? 0.46f : 0.35f) * (1f + 0.035f * (TurretLevel(e.PieceId) - 1)), 0.35f, 1.5f, true, e.Key, TurretLevel(e.PieceId))); SoundRandom("ShotgunFireOutside_0", 1, 4, e.From, 0.8f); break;
+                case FxKind.Spit: StartCoroutine(Arc(e.From, e.To, _spit, 0.3f, SpitFlight, 6f, false)); SoundRandom("PiranhaVomit_V", 1, 3, e.From, 0.8f); break; // higher lob for the spitter
+                case FxKind.Blast:
+                    // Weapon explosions carry their real radius (cm) in Arg; turrets keep their level-scaled default.
+                    float blastSize = e.Arg > 0 ? e.Arg / 100f : 3.5f * (e.PieceId != 0 ? 1f + 0.055f * (TurretLevel(e.PieceId) - 1) : 1f);
+                    StartCoroutine(Blast(e.To, blastSize));
+                    if (e.PieceId != 0 && TurretLevel(e.PieceId) >= 20) StartCoroutine(ScreenPulse(new Color(1f, 0.55f, 0.12f), 0.22f));
+                    Sound("Explosion", e.To, e.PieceId != 0 ? 1f : 0.85f, AudioDistance.Long);
+                    break;
+                case FxKind.Harpoon: StartCoroutine(Bolt(e.From, e.To, e.Key)); SoundRandom("BowShoot_0", 1, 4, e.From, 0.9f); break;
+                case FxKind.Mortar: StartCoroutine(Arc(e.From, e.To, _shell, 0.45f * (1f + 0.03f * (TurretLevel(e.PieceId) - 1)), MortarFlight, 9f, true, e.Key, TurretLevel(e.PieceId))); Sound("BoatFire", e.From, 0.8f); break;
                 case FxKind.Zap: StartCoroutine(Zap(e.From, e.To)); if (e.PieceId != 0) Sound("Ignite", e.From, 0.6f); break;
                 case FxKind.Scoop:
                     if (!(Weapons.Instance && Weapons.Instance.OnScoop(e))) StartCoroutine(Fly(e.From, e.To + Vector3.up * 1.2f)); // into my own net: it shows in the bag
@@ -249,9 +342,9 @@ namespace HtfFortress
                 case FxKind.Wave: StartCoroutine(Blast(e.To, 6f, _water)); SoundRandom("WhaleLanding_0", 1, 3, e.To, 1f, AudioDistance.Long); break;
                 case FxKind.Decoy: StartCoroutine(Duck(e.To, e.Arg)); break;
                 case FxKind.Proc: GearCards.Instance.Proc((Gear)e.Arg, e.To); break;
-                case FxKind.Snipe: StartCoroutine(Tracer(e.From, e.To)); SoundRandom("SniperrifleFireOutside_V", 1, 4, e.From, 0.9f, AudioDistance.Long); break;
+                case FxKind.Snipe: StartCoroutine(Tracer(e.From, e.To, "Sniper", TurretLevel(e.PieceId))); SoundRandom("SniperrifleFireOutside_V", 1, 4, e.From, 0.9f, AudioDistance.Long); break;
                 case FxKind.Flame:
-                    for (int i = ClientSettings.Reduced ? 3 : 1; i <= 3; i++) StartCoroutine(Blast(Vector3.Lerp(e.From, e.To, i / 3f), 0.6f + 0.35f * i, _fire));
+                    StartCoroutine(FlameJet(e.From, e.To, FlameColour(e.PieceId)));
                     if (Random.value < 0.3f) Sound("Ignite", e.From, 0.5f);
                     break;
                 case FxKind.Victory: StartCoroutine(Fireworks(e.To)); Reveal.Instance.Victory(e.To - Vector3.up * 6f); break;
@@ -260,6 +353,9 @@ namespace HtfFortress
                     Sound("Explosion", e.To, 1f, AudioDistance.Long);
                     SoundRandom("WhaleLanding_0", 1, 3, e.To, 1f, AudioDistance.Long);
                     break;
+                case FxKind.ChestOpen: StartCoroutine(ChestBurst(e.To, (Rarity)e.Arg)); break;
+                case FxKind.BossMusic: BossFightMusic(e.Arg > 0); break;
+                case FxKind.RoundEnd: StartCoroutine(RoundEndScreen(e.Arg > 0)); break;
             }
         }
 
@@ -317,13 +413,18 @@ namespace HtfFortress
             if (pool.Count < 200) pool.Push(go); else Destroy(go);
         }
 
-        private IEnumerator Tracer(Vector3 from, Vector3 to)
+        private IEnumerator Tracer(Vector3 from, Vector3 to, string key = null, int level = 1)
         {
-            var go = Shape(PrimitiveType.Cube, _tracer);
+            float grow = 1f + 0.045f * (Mathf.Max(1, level) - 1);
             Vector3 d = to - from;
+            bool sniper = key == "Sniper", gun = key == "Gun";
+            var go = Shape(PrimitiveType.Cube, sniper ? _sniperTracer : _tracer);
             go.transform.SetPositionAndRotation(from + d * 0.5f, Quaternion.LookRotation(d));
-            go.transform.localScale = new Vector3(0.05f, 0.05f, d.magnitude);
-            yield return new WaitForSeconds(0.05f);
+            float w = (sniper ? 0.035f : gun ? 0.06f : 0.05f) * grow;
+            go.transform.localScale = new Vector3(w, w, d.magnitude);
+            if (gun) WeaponFx.Emit(WeaponFx.Sparks("Gold"), from, Mathf.RoundToInt(4 + level * 0.4f), d.normalized);
+            else if (sniper) WeaponFx.Emit(WeaponFx.Sparks("Cyan"), from, Mathf.RoundToInt(6 + level * 0.5f), d.normalized);
+            yield return new WaitForSeconds(sniper ? 0.09f : 0.05f);
             Done(go);
         }
 
@@ -343,13 +444,18 @@ namespace HtfFortress
         }
 
         // Harpoon: a thin bolt flying the whole line.
-        private IEnumerator Bolt(Vector3 from, Vector3 to)
+        private IEnumerator Bolt(Vector3 from, Vector3 to, string key = null)
         {
             var go = Shape(PrimitiveType.Cube, _bolt);
-            go.transform.localScale = new Vector3(0.08f, 0.08f, 1.4f);
+            go.transform.localScale = key == "Harpoon" ? new Vector3(0.06f, 0.06f, 1.8f) : new Vector3(0.08f, 0.08f, 1.4f);
             go.transform.rotation = Quaternion.LookRotation(to - from);
             const float flight = 0.3f;
-            for (float t = 0f; t < flight; t += Time.deltaTime) { go.transform.position = Vector3.Lerp(from, to, t / flight); yield return null; }
+            for (float t = 0f; t < flight; t += Time.deltaTime)
+            {
+                go.transform.position = Vector3.Lerp(from, to, t / flight);
+                if (key == "Harpoon" && Random.value < 0.25f) WeaponFx.Emit(WeaponFx.Sparks("Gray"), go.transform.position, 1, Vector3.up);
+                yield return null;
+            }
             Done(go);
         }
 
@@ -387,19 +493,147 @@ namespace HtfFortress
             foreach (var go in parts) Done(go);
         }
 
-        private IEnumerator Arc(Vector3 from, Vector3 to, Material mat, float size, float flight, float height, bool blastAtEnd)
+        private IEnumerator Arc(Vector3 from, Vector3 to, Material mat, float size, float flight, float height, bool blastAtEnd, string key = null, int level = 1)
         {
             var ball = Shape(PrimitiveType.Sphere, mat);
             ball.transform.localScale = Vector3.one * size;
+            float next = 0f;
             for (float t = 0f; t < flight; t += Time.deltaTime)
             {
                 float k = t / flight;
                 ball.transform.position = Vector3.Lerp(from, to, k) + Vector3.up * Mathf.Sin(k * Mathf.PI) * height;
+                if (t >= next)
+                {
+                    next = t + 0.06f;
+                    if (key == "Cannon") { WeaponFx.Emit(WeaponFx.Sparks("Orange"), ball.transform.position, 3, Vector3.up); WeaponFx.Emit(WeaponFx.Dust, ball.transform.position, 1, Vector3.up); }
+                    else if (key == "Mortar") WeaponFx.Emit(WeaponFx.Dust, ball.transform.position, 2, Vector3.up);
+                }
                 yield return null;
             }
             Done(ball);
-            if (blastAtEnd) { Sound("Explosion", to, 0.6f); yield return Blast(to, 2.5f); }
+            if (blastAtEnd) { Sound("Explosion", to, 0.6f); yield return Blast(to, 2.5f * (1f + 0.05f * (Mathf.Max(1, level) - 1))); }
             else { SoundRandom("ItemHitWaterMedium_V", 1, 3, to, 0.8f); yield return Blast(to, 1.2f, _spit); }
+        }
+
+        private static bool _bossMusicOn;
+        private static string _musicBeforeBoss;
+        private static AudioSource MusicSource()
+        {
+            var mm = Object.FindObjectOfType<MusicManager>();
+            return mm ? (AudioSource)typeof(MusicManager).GetField("_musicSourceLooping", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(mm) : null;
+        }
+        private static void BossFightMusic(bool on)
+        {
+            if (!Object.FindObjectOfType<MusicManager>()) return;
+            if (on)
+            {
+                if (_bossMusicOn) return;
+                _bossMusicOn = true;
+                var src = MusicSource();
+                _musicBeforeBoss = src && src.clip && src.clip.name != "BossFight1" ? src.clip.name : null;
+                MusicManager.PlayMusic("BossFight1", "BossFightIntro");
+            }
+            else
+            {
+                if (!_bossMusicOn) return;
+                _bossMusicOn = false;
+                MusicManager.StopMusic("BossFight1", "BossFightOutro");
+                if (Instance) Instance.StartCoroutine(ResumeAfterBoss());
+            }
+        }
+        private static IEnumerator ResumeAfterBoss()
+        {
+            yield return new WaitForSecondsRealtime(1.4f);
+            if (!_bossMusicOn && !string.IsNullOrEmpty(_musicBeforeBoss)) MusicManager.PlayMusic(_musicBeforeBoss);
+            _musicBeforeBoss = null;
+        }
+
+        private IEnumerator RoundEndScreen(bool victory)
+        {
+            var colour = victory ? new Color(1f, 0.72f, 0.18f) : new Color(0.65f, 0.06f, 0.04f);
+            var fade = Hud.Box(Hud.Root, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(4000f, 3000f), new Color(colour.r, colour.g, colour.b, 0f), 0f);
+            fade.raycastTarget = false;
+            for (float t = 0f; t < 0.55f; t += Time.unscaledDeltaTime)
+            {
+                fade.color = new Color(colour.r, colour.g, colour.b, 0.48f * Mathf.Clamp01(t / 0.55f));
+                yield return null;
+            }
+            yield return new WaitForSecondsRealtime(0.45f);
+            for (float t = 0f; t < 0.7f; t += Time.unscaledDeltaTime)
+            {
+                fade.color = new Color(colour.r, colour.g, colour.b, 0.48f * (1f - Mathf.Clamp01(t / 0.7f)));
+                yield return null;
+            }
+            if (fade) Object.Destroy(fade.gameObject);
+        }
+
+        private IEnumerator ChestBurst(Vector3 at, Rarity rarity)
+        {
+            var c = GearCatalog.Color(rarity);
+            int tier = (int)rarity;
+            Fx.Sound(rarity >= Rarity.Legendary ? "CasinoWinEpic" : "ShinyCreatureCaught_0" + Random.Range(1, 4), at, 1f, AudioDistance.Long);
+            BossVfx.Flash(at + Vector3.up * 1.4f, 3f + tier * 1.6f, c, 0.55f);
+            BossVfx.Shock(at + Vector3.up * 0.25f, 3.5f + tier * 1.3f, c, 0.6f);
+            BossFx.Burst(at + Vector3.up * 0.8f, "Gold", 24 + tier * 18, 0.22f);
+            for (int i = 0; i < 4; i++)
+            {
+                WeaponFx.Emit(WeaponFx.Rings, at + Vector3.up * (0.5f + i * 0.25f), 1, Vector3.up, color: c, size: 4f + tier * 1.4f + i * 1.2f);
+                yield return new WaitForSeconds(0.06f);
+            }
+            // A short beam of the best thing's colour, so a legendary chest is visible across the island.
+            var beam = WeaponFx.Line("ChestBeam", BossVfx.Glow(c, 4f + tier), 0.8f + tier * 0.35f);
+            beam.positionCount = 2; beam.SetPosition(0, at + Vector3.up * 0.3f); beam.SetPosition(1, at + Vector3.up * (7f + tier * 2f));
+            yield return new WaitForSeconds(0.3f);
+            if (beam) Object.Destroy(beam.gameObject);
+        }
+
+        // A real flamethrower cone instead of three balls: an expanding cone mesh plus a spray of short-lived embers.
+        private static Mesh BuildFlameMesh()
+        {
+            const int seg = 14, rings = 5;
+            var verts = new Vector3[seg * rings];
+            var tris = new int[(seg * (rings - 1) * 2) * 3];
+            float[] r = { 0.05f, 0.14f, 0.25f, 0.38f, 0.5f };
+            for (int k = 0; k < rings; k++)
+                for (int i = 0; i < seg; i++)
+                {
+                    float a = i * Mathf.PI * 2f / seg;
+                    verts[k * seg + i] = new Vector3(Mathf.Cos(a) * r[k], Mathf.Sin(a) * r[k], k / (float)(rings - 1));
+                }
+            int ti = 0;
+            for (int k = 0; k < rings - 1; k++)
+                for (int i = 0; i < seg; i++)
+                {
+                    int n = (i + 1) % seg, a = k * seg + i, b = k * seg + n, c = (k + 1) * seg + i, d = (k + 1) * seg + n;
+                    tris[ti++] = a; tris[ti++] = b; tris[ti++] = c;
+                    tris[ti++] = b; tris[ti++] = d; tris[ti++] = c;
+                }
+            var mesh = new Mesh { name = "FortressFlameCone" };
+            mesh.vertices = verts; mesh.triangles = tris; mesh.RecalculateNormals(); mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private IEnumerator FlameJet(Vector3 from, Vector3 to, Color flame)
+        {
+            Vector3 d = to - from;
+            float dist = Mathf.Max(0.5f, d.magnitude);
+            Vector3 dir = d.sqrMagnitude > 0.01f ? d.normalized : Vector3.forward;
+            int n = ClientSettings.Reduced ? 10 : 26;
+            for (int i = 0; i < n; i++)
+            {
+                float t = Random.value * 0.28f; // all leave from near the muzzle, then grow/spread outward
+                Vector3 p = from + dir * (dist * t) + Random.insideUnitSphere * (0.08f + 0.18f * t);
+                Vector3 spread = Quaternion.Euler(Random.Range(-9f, 9f), Random.Range(-9f, 9f), 0f) * dir;
+                Color c = Color.Lerp(new Color(1f, 0.95f, 0.6f, 1f), new Color(1f, 0.2f, 0.03f, 1f), Random.value);
+                float life = Random.Range(0.22f, 0.45f);
+                float speed = dist / life * Random.Range(0.82f, 1.08f); // the plume ends at the turret's range
+                Color pc = Color.Lerp(Color.Lerp(Color.white, flame, 0.25f), flame, Random.value);
+                WeaponFx.Emit(WeaponFx.FlameFor(flame), p, 1, spread, color: pc, size: Random.Range(0.35f, 0.75f), velocity: spread * speed, life: life);
+                if (i % 5 == 0)
+                    WeaponFx.Emit(WeaponFx.Dust, Vector3.Lerp(from, to, Random.Range(0.25f, 0.9f)), 1, dir, color: new Color(0.3f, 0.22f, 0.16f, 0.6f), size: Random.Range(0.25f, 0.55f), velocity: dir * Random.Range(3f, 6f), life: Random.Range(0.35f, 0.7f));
+            }
+            BossVfx.Flash(from + dir * 0.2f, 1.3f, flame, 0.09f);
+            yield return null;
         }
 
         private IEnumerator Blast(Vector3 at, float maxSize, Material mat = null)

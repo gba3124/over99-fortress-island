@@ -11,7 +11,14 @@ namespace HtfFortress
     public static class Catalog
     {
         public const int BranchLevel = 3;          // the last level in the tables; turrets choose A or B reaching it
-        public const float BeyondDamage = 1.2f, BeyondHp = 1.15f, BeyondCost = 1.5f, BeyondRange = 0.4f, BeyondRangeMax = 4f;
+        public const int SecondBranchLevel = BranchLevel + 6; // Lv9: six upgrades after the Lv3 branch, then A/B splits again (four kinds a turret)
+        public static int FirstOf(int branch) => branch <= 2 ? branch : branch <= 4 ? 1 : 2;   // old saves: 1/2 are first-only
+        public static int SecondOf(int branch) => branch <= 2 ? 0 : (branch == 3 || branch == 5) ? 1 : 2; // 3/5 = first side, 4/6 = second
+        public static int BranchCode(int first, int second) => first == 1 ? (second == 1 ? 3 : 4) : (second == 1 ? 5 : 6);
+        public static bool HasSecondBranch(PieceType t) => IsTurret(t);
+        public static string BranchName(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch));
+        public static string BranchDesc(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch) + "_d");
+        public const float BeyondDamage = 1.3f, BeyondHp = 1.25f, BeyondCost = 1.35f, BeyondRange = 0.4f, BeyondRangeMax = 4f;
         public const int TypeCount = 13;
         public const float MendCore = 0.5f; // a repair tower gives the lighthouse this share of what it gives a building
 
@@ -20,6 +27,46 @@ namespace HtfFortress
         public static bool Shoots(PieceType t) => IsTurret(t) && t != PieceType.Bubble && t != PieceType.Mender;
         public static bool HasBranches(PieceType t) => IsTurret(t);
         public static string HeadModel(PieceType t) => t + "Head";
+        // A modular turret keeps one shared body and swaps a branch module into it (starting with the Gun). The body is what
+        // is attached as the "Head"; the module carries the barrels and the branch's silhouette.
+        // Art pass 3 split every turret into Body + swappable head modules; Owen preferred the original, characterful
+        // single-piece heads (the build poster's silhouettes), so use those by default and keep the modular set as an option.
+        public static bool ClassicHeads = true;
+        public static bool HasModules(PieceType t) => !ClassicHeads && IsTurret(t);
+        public static string BodyModel(PieceType t) => HasModules(t) ? t + "Body" : HeadModel(t);
+        public static string ModuleModel(PieceType t, int branch)
+        {
+            if (!HasModules(t)) return null;
+            if (branch <= 0) return t + "Default";
+            return branch <= 2 ? t + (branch == 1 ? "A" : "B")
+                               : t + (FirstOf(branch) == 1 ? "A" : "B") + SecondOf(branch);
+        }
+        // The extra gun a turret grows at Lv5/10/15 (its own kind of barrel, not a copy of the whole head).
+        public static string BarrelModel(PieceType t) => t + "Barrel";
+        // Where an extra barrel sits on the head (it must line up with the real barrel, not float at the foot).
+        public static Vector3 BarrelMount(PieceType t)
+        {
+            float z = t == PieceType.Gun ? 0.46f : t == PieceType.Cannon ? 0.56f : t == PieceType.Mortar ? 0.58f
+                    : t == PieceType.Tesla ? 0.62f : t == PieceType.Flame ? 0.44f : t == PieceType.Harpoon ? 0.42f
+                    : t == PieceType.Sniper ? 0.38f : t == PieceType.Bubble ? 0.5f : 0.5f; // Mender
+            return new Vector3(0f, -0.08f, z);
+        }
+        // How many barrels the volley physically has (and how many fish/shells it fires at once): the model follows the stat, so
+        // an upgrade that adds a shot also grows a barrel (Owen: "要跟他同時可以射幾發有關").
+        public static int Barrels(PieceType t, int level, int branch)
+        {
+            switch (t)
+            {
+                case PieceType.Gun: case PieceType.Sniper: return Mathf.Max(1, Turret(t, level, branch).Targets);
+                case PieceType.Cannon: case PieceType.Harpoon: case PieceType.Mortar: return Mathf.Max(1, Turret(t, level, branch).Shots);
+                case PieceType.Tesla: case PieceType.Flame: return 1 + Milestones(level);
+                default: return 1; // bubble/mender: no barrels
+            }
+        }
+        // The ornament a path grows: A/B at Lv3, A1/A2/B1/B2 at Lv6 (BranchA... models).
+        public static string BranchOrnament(int branch) => branch <= 0 ? null : branch <= 2
+            ? "Branch" + (branch == 1 ? "A" : "B")
+            : "Branch" + (FirstOf(branch) == 1 ? "A" : "B") + (SecondOf(branch) == 1 ? "1" : "2");
 
         public static int BuildCost(PieceType t) => Siege.Money(BaseCost(t)); // in the game's dollars
 
@@ -47,7 +94,7 @@ namespace HtfFortress
         private static float Grow(float per, int level) => Mathf.Min(1e6f, Mathf.Pow(per, Beyond(level)));
         private static int Table(int level) => Mathf.Clamp(level, 1, BranchLevel) - 1;
 
-        // Cost to go from `level` to level + 1: base x level up to Lv3, then x1.5 per level.
+        // Cost to go from `level` to level + 1: base x level up to Lv3, then x1.35 per level (matched to the x1.3 damage growth).
         public static int UpgradeCost(PieceType t, int level)
         {
             int baseCost;
@@ -99,11 +146,13 @@ namespace HtfFortress
         // Branch 1 = A, 2 = B (chosen when upgrading to Lv3).
         public static TurretStats Turret(PieceType t, int level, int branch)
         {
-            var s = TableTurret(t, level, branch);
+            int first = FirstOf(branch), second = SecondOf(branch);
+            var s = TableTurret(t, level, first);
+            if (second > 0) SecondSplit(t, first, second, s);
             if (Beyond(level) == 0) return s;
             float k = Grow(BeyondDamage, level);
             s.Damage = Mathf.RoundToInt(Mathf.Min(1e8f, s.Damage * k));
-            s.Interval = Mathf.Max(0.05f, s.Interval * Mathf.Pow(0.97f, Beyond(level))); // every level also fires faster
+            s.Interval = Mathf.Max(0.05f, s.Interval * Mathf.Pow(0.96f, Beyond(level))); // every level also fires faster
             s.Burn *= k;
             s.Range += Mathf.Min(BeyondRangeMax, BeyondRange * Beyond(level));
             if (t == PieceType.Bubble) s.Shield = Mathf.Min(0.85f, s.Shield + 0.025f * Beyond(level));
@@ -125,63 +174,111 @@ namespace HtfFortress
 
         private static TurretStats TableTurret(PieceType t, int level, int branch)
         {
+            int first = FirstOf(branch);
             int i = Table(level);
             var s = new TurretStats { Shots = 1, Targets = 1, BossMult = 1f, WaterMult = 1f };
             switch (t)
             {
                 case PieceType.Gun:
                     s.Damage = new[] { 6, 9, 13 }[i]; s.Interval = new[] { 0.25f, 0.2f, 0.15f }[i]; s.Range = new[] { 16f, 18f, 20f }[i];
-                    if (branch == 1) s.Interval *= 0.5f;            // Storm
-                    if (branch == 2) s.BossMult = 3f;               // Armour piercing: x3 vs tanks/boss
+                    if (first == 1) s.Interval *= 0.5f;            // Storm
+                    if (first == 2) s.BossMult = 3f;               // Armour piercing: x3 vs tanks/boss
                     break;
                 case PieceType.Cannon:
                     s.Damage = new[] { 25, 40, 60 }[i]; s.Interval = new[] { 2f, 1.7f, 1.4f }[i]; s.Range = new[] { 18f, 21f, 24f }[i]; s.Splash = 3f;
-                    if (branch == 1) { s.Splash = 5f; s.Shots = 3; s.Damage = Mathf.RoundToInt(s.Damage * 0.6f); } // Cluster
-                    if (branch == 2) s.Damage = Mathf.RoundToInt(s.Damage * 2.5f);                                   // Heavy
+                    if (first == 1) { s.Splash = 5f; s.Shots = 3; s.Damage = Mathf.RoundToInt(s.Damage * 0.6f); } // Cluster
+                    if (first == 2) s.Damage = Mathf.RoundToInt(s.Damage * 2.5f);                                   // Heavy
                     break;
                 case PieceType.Harpoon:
                     s.Damage = new[] { 18, 28, 40 }[i]; s.Interval = new[] { 1.6f, 1.4f, 1.2f }[i]; s.Range = new[] { 20f, 23f, 26f }[i];
                     s.Pierce = true; s.Slow = 0.35f; s.SlowTime = 2f;
-                    if (branch == 1) s.Shots = 3;                          // Multi
-                    if (branch == 2) { s.Slow = 0.7f; s.SlowTime = 3.5f; } // Freeze
+                    if (first == 1) s.Shots = 3;                          // Multi
+                    if (first == 2) { s.Slow = 0.7f; s.SlowTime = 3.5f; } // Freeze
                     break;
                 case PieceType.Mortar:
                     s.Damage = new[] { 35, 55, 80 }[i]; s.Interval = new[] { 3.5f, 3f, 2.6f }[i]; s.Range = new[] { 32f, 36f, 40f }[i]; s.MinRange = 8f; s.Splash = 4f;
-                    if (branch == 1) s.Burn = 12f;   // Fire: the ground burns for a few seconds
-                    if (branch == 2) s.Shots = 3;    // Barrage
+                    if (first == 1) s.Burn = 12f;   // Fire: the ground burns for a few seconds
+                    if (first == 2) s.Shots = 3;    // Barrage
                     break;
                 case PieceType.Flame:
                     s.Damage = new[] { 6, 9, 13 }[i]; s.Interval = new[] { 0.2f, 0.18f, 0.15f }[i]; s.Range = new[] { 7f, 8f, 9f }[i]; s.Cone = 35f;
                     s.Burn = new[] { 5f, 8f, 12f }[i];
-                    if (branch == 1) s.Burn *= 2f;                          // Inferno
-                    if (branch == 2) { s.Cone = 60f; s.Range += 2f; }       // Wide
+                    if (first == 1) s.Burn *= 2f;                          // Inferno
+                    if (first == 2) { s.Cone = 60f; s.Range += 2f; }       // Wide
                     break;
                 case PieceType.Sniper:
                     s.Damage = new[] { 80, 120, 180 }[i]; s.Interval = new[] { 3f, 2.6f, 2.2f }[i]; s.Range = new[] { 40f, 45f, 50f }[i];
-                    if (branch == 1) s.BossMult = 2f;                       // Armour-breaker
-                    if (branch == 2) s.Interval *= 0.6f;                    // Rapid
+                    if (first == 1) s.BossMult = 2f;                       // Armour-breaker
+                    if (first == 2) s.Interval *= 0.6f;                    // Rapid
                     break;
                 case PieceType.Bubble: // no attack: buildings within Range take less damage
                     s.Damage = 0; s.Interval = 1f; s.Range = new[] { 8f, 9f, 10f }[i]; s.Shield = new[] { 0.3f, 0.4f, 0.5f }[i];
-                    if (branch == 1) s.Range += 4f;                         // Expanse
-                    if (branch == 2) s.Shield = 0.65f;                      // Hardened
+                    if (first == 1) s.Range += 4f;                         // Expanse
+                    if (first == 2) s.Shield = 0.65f;                      // Hardened
                     break;
                 case PieceType.Mender: // no attack: once a second every damaged building within Range gets Damage health back, the lighthouse MendCore of it
                     s.Damage = new[] { 5, 8, 12 }[i]; s.Interval = 1f; s.Range = new[] { 7f, 8f, 9f }[i];
-                    if (branch == 1) s.Range += 4f;                         // Wide
-                    if (branch == 2) s.Damage *= 2;                         // Surge
+                    if (first == 1) s.Range += 4f;                         // Wide
+                    if (first == 2) s.Damage *= 2;                         // Surge
                     break;
                 case PieceType.Tesla:
                     s.Damage = new[] { 14, 22, 33 }[i]; s.Interval = new[] { 1.2f, 1f, 0.85f }[i]; s.Range = new[] { 11f, 13f, 15f }[i];
                     s.Chain = new[] { 3, 4, 5 }[i]; s.WaterMult = 2f;
-                    if (branch == 1) s.Chain += 3;                                   // Spread
-                    if (branch == 2) { s.Damage *= 2; s.Interval *= 1.5f; }           // Overload
+                    if (first == 1) s.Chain += 3;                                   // Spread
+                    if (first == 2) { s.Damage *= 2; s.Interval *= 1.5f; }           // Overload
                     break;
             }
             return s;
         }
 
-        public static string BranchKey(PieceType t, int branch) => branch == 0 ? null : t + (branch == 1 ? "A" : "B");
+        // The Lv6 split continues its own Lv3 choice (Owen: "沿著第一個選擇延伸，每個要夠獨特"): A1/A2 only along A,
+        // B1/B2 only along B, each with its own name and effect.
+        private static void SecondSplit(PieceType t, int first, int second, TurretStats s)
+        {
+            switch (t)
+            {
+                case PieceType.Gun:
+                    if (first == 1) { if (second == 1) { s.Interval *= 0.6f; s.Targets++; } else { s.Interval *= 0.72f; s.Slow = 0.35f; s.SlowTime = 1.5f; s.Damage = Mathf.RoundToInt(s.Damage * 0.85f); } }
+                    else { if (second == 1) { s.BossMult *= 2f; s.Pierce = true; s.Damage = Mathf.RoundToInt(s.Damage * 1.3f); } else { s.Damage = Mathf.RoundToInt(s.Damage * 1.6f); s.Interval *= 1.2f; } }
+                    break;
+                case PieceType.Cannon:
+                    if (first == 1) { if (second == 1) { s.Shots += 2; s.Splash += 1f; s.Damage = Mathf.RoundToInt(s.Damage * 0.75f); } else { s.Burn = 10f; s.Splash += 1f; } }
+                    else { if (second == 1) { s.Damage = Mathf.RoundToInt(s.Damage * 1.4f); s.Splash += 1.5f; s.Interval *= 1.1f; } else { s.Splash *= 2f; s.Slow = 0.4f; s.SlowTime = 1.2f; s.Damage = Mathf.RoundToInt(s.Damage * 0.85f); } }
+                    break;
+                case PieceType.Harpoon:
+                    if (first == 1) { if (second == 1) { s.Shots += 2; s.Damage = Mathf.RoundToInt(s.Damage * 0.8f); } else { s.Chain += 2; s.Pierce = true; } }
+                    else { if (second == 1) { s.Slow = 0.9f; s.SlowTime = 5f; s.Range += 2f; } else { s.Damage = Mathf.RoundToInt(s.Damage * 1.6f); s.BossMult = 1.5f; } }
+                    break;
+                case PieceType.Mortar:
+                    if (first == 1) { if (second == 1) { s.Burn *= 2f; s.Splash += 1f; } else { s.Burn = 18f; s.Splash += 2f; s.Interval *= 1.2f; } }
+                    else { if (second == 1) { s.Shots += 2; s.Interval *= 0.9f; } else { s.Shots++; s.Splash += 2f; s.Damage = Mathf.RoundToInt(s.Damage * 0.8f); } }
+                    break;
+                case PieceType.Tesla:
+                    if (first == 1) { if (second == 1) { s.Chain += 4; s.Damage = Mathf.RoundToInt(s.Damage * 0.85f); } else { s.WaterMult = 3f; s.Slow = 0.2f; s.SlowTime = 1f; s.Chain++; } }
+                    else { if (second == 1) { s.Damage = Mathf.RoundToInt(s.Damage * 1.5f); s.Interval *= 1.1f; } else { s.Splash = 3f; s.Chain += 2; s.Damage = Mathf.RoundToInt(s.Damage * 0.8f); } }
+                    break;
+                case PieceType.Flame:
+                    if (first == 1) { if (second == 1) { s.Burn *= 2f; s.Damage = Mathf.RoundToInt(s.Damage * 1.2f); } else { s.BossMult = 2.5f; s.Burn *= 1.5f; } }
+                    else { if (second == 1) { s.Cone += 15f; s.Range += 2f; s.Burn *= 1.2f; } else { s.Slow = 0.4f; s.SlowTime = 2f; s.Burn = Mathf.RoundToInt(s.Burn * 0.8f); } }
+                    break;
+                case PieceType.Sniper:
+                    if (first == 1) { if (second == 1) { s.BossMult *= 3f; s.Damage = Mathf.RoundToInt(s.Damage * 1.2f); } else { s.Pierce = true; s.Range += 8f; s.Damage = Mathf.RoundToInt(s.Damage * 1.1f); } }
+                    else { if (second == 1) { s.Interval *= 0.55f; } else { s.Damage = Mathf.RoundToInt(s.Damage * 1.5f); s.Interval *= 1.2f; } }
+                    break;
+                case PieceType.Bubble:
+                    if (first == 1) { if (second == 1) { s.Range += 3f; s.Shield = Mathf.Min(0.85f, s.Shield + 0.1f); } else { s.Shield = Mathf.Min(0.85f, s.Shield + 0.15f); s.Range += 1f; } }
+                    else { if (second == 1) { s.Shield = Mathf.Min(0.9f, s.Shield + 0.2f); } else { s.Range += 2f; s.Shield = Mathf.Min(0.9f, s.Shield + 0.1f); } }
+                    break;
+                case PieceType.Mender:
+                    if (first == 1) { if (second == 1) { s.Range += 4f; s.Damage = Mathf.RoundToInt(s.Damage * 1.3f); } else { s.Range += 2f; s.Damage = Mathf.RoundToInt(s.Damage * 1.5f); } }
+                    else { if (second == 1) { s.Damage = Mathf.RoundToInt(s.Damage * 1.6f); } else { s.Range += 2f; s.Interval *= 0.8f; } }
+                    break;
+            }
+        }
+
+        public static string BranchKey(PieceType t, int branch) => branch == 0 ? null : branch <= 2
+            ? t + (branch == 1 ? "A" : "B")
+            : t + (FirstOf(branch) == 1 ? "A" : "B") + SecondOf(branch); // GunA1, GunB2...: each side has its own two
 
         // Collider size of each piece (turrets and spikes sit on the cell, everything else is centred on its grid slot).
         public static Vector3 Size(PieceType t)

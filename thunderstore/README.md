@@ -25,7 +25,7 @@ If the mod does not show up, check that `HtfFortress.dll` is directly inside `Be
 
 ## Languages
 
-English, Traditional Chinese and Simplified Chinese. The mod follows your game's language.
+All 16 languages How to Fish ships with: English, Traditional/Simplified Chinese, French, German, Italian, Spanish (Spain/Mexico), Portuguese (Brazil), Russian, Polish, Turkish, Ukrainian, Japanese, Korean and Swedish. Auto follows your game's locale; the config can override it.
 
 ## How it works
 
@@ -61,7 +61,7 @@ The game was not restarted, or there is a second copy of `HtfFortress.dll` somew
 Check `BepInEx/LogOutput.log` (BepInEx's own log) and `Player.log` (`%USERPROFILE%\AppData\LocalLow\Dazed Games\How to Fish\Player.log` on Windows; on Linux/Proton inside the prefix at `drive_c/users/steamuser/AppData/LocalLow/Dazed Games/How to Fish/Player.log`; on macOS Pixel Port it is in the same place inside the Pixel Port prefix). Send the last 30 lines. A crash before the menu is almost always BepInEx 6 instead of 5, or two different copies of the mod.
 
 **Co-op: things stop and jump for everyone, or only one player lags.**
-The mod writes a `perf host:` / `perf client:` line to `BepInEx/LogOutput.log` every 10 s with fps, worst frame, wave, enemies, helpers, drops, scales, pieces and `fx/10s`. A long host frame is what every client sees as "everything freezes, then jumps", so include those lines (both sides) when reporting. Settings that help on weak machines: `Performance/PropShadows = true` (back on) is the *default off*; `ClientSettings/Reduced` in the same config turns some effects off.
+The mod writes a `perf host:` / `perf client:` line to `BepInEx/LogOutput.log` every 10 s with fps, worst frame, wave, enemies, helpers, drops, scales, pieces and `fx/10s`. A long host frame is what every client sees as "everything freezes, then jumps", so include those lines (both sides) when reporting. The release ships a basic host preset: classic turret heads, enemy/prop shadows **off**, corpse cap **160**, debug keys and verbose logging **off**. Only change `Performance/CorpseCap` if a late wave needs more bodies; leave the model settings at their defaults unless a machine is struggling.
 
 **The vault seems empty after a session.**
 The team's vault is `BepInEx/fortress-vault/<save name>.txt` on the host; every sell-all leaves a `*-pre-sell-vault.txt` in `BepInEx/fortress-backups/`. Copy the newest backup over the vault file to restore it (with the game closed). Do not delete `fortress-backups/`.
@@ -193,7 +193,7 @@ The host's game runs the fish, the money and the loot, and the shared vault is s
 
 Press **I** and go to the last page for damage numbers, teammate markers and lite effects (turn those on if the game lags).
 
-More options live in the config. In your mod manager, open Config editor → `owen.htf.fortress`. Setting `Island / Unlock = Always` lets you play without beating the final boss first, and the host can also tune build time, money and damage there.
+The default config is the host-friendly preset. Only a few options are meant for normal play: `General/Language`, `Performance/CorpseCap`, and `Island/Unlock = Always` if you want the island without beating the final boss first. Advanced wave/economy/damage settings are there for testing, not required for hosting.
 
 ## About your save
 

@@ -15,6 +15,11 @@ namespace HtfFortress
 
         private void Update()
         {
+            if (FortressPlugin.Instance == null || !FortressPlugin.Instance.VerboseLogs)
+            {
+                _window = _worst = 0f; _frames = 0; _next = Time.unscaledTime + 10f;
+                return;
+            }
             float dt = Time.unscaledDeltaTime;
             _window += dt;
             _frames++;

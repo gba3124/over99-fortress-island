@@ -19,7 +19,7 @@ namespace HtfFortress
     public struct PieceRemoveRequest : IBroadcast { public int Id; }
     // FromLevel: the level the player saw. Two players upgrading the same turret at once (or one click repeated on a slow
     // link) raise it one level and pay once.
-    public struct PieceUpgradeRequest : IBroadcast { public int Id; public int Branch; public bool Repair; public int FromLevel; }
+    public struct PieceUpgradeRequest : IBroadcast { public int Id; public int Branch; public bool Repair; public int FromLevel; public bool BranchOnly; }
     public struct PieceMoveRequest : IBroadcast { public int Id; public Vector3 Pos; public float RotY; }
     public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; public int Hp; public int MaxHp; public int Level; public int Branch; }
 
@@ -59,6 +59,7 @@ namespace HtfFortress
         public static bool Building => Instance && Instance._building;
         private PieceType _type = PieceType.Wall;
         private bool _flip;
+        private int _turns; // R: quarter turns from the camera-facing direction
         private GameObject _ghost;
         private PieceType _ghostType = (PieceType)255;
         private bool _ghostValid;
@@ -84,8 +85,8 @@ namespace HtfFortress
             GenericReader<PiecePlaceRequest>.SetRead(r => new PiecePlaceRequest { Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle() });
             GenericWriter<PieceRemoveRequest>.SetWrite((w, v) => w.WriteInt32(v.Id));
             GenericReader<PieceRemoveRequest>.SetRead(r => new PieceRemoveRequest { Id = r.ReadInt32() });
-            GenericWriter<PieceUpgradeRequest>.SetWrite((w, v) => { w.WriteInt32(v.Id); w.WriteInt32(v.Branch); w.WriteBoolean(v.Repair); w.WriteInt32(v.FromLevel); });
-            GenericReader<PieceUpgradeRequest>.SetRead(r => new PieceUpgradeRequest { Id = r.ReadInt32(), Branch = r.ReadInt32(), Repair = r.ReadBoolean(), FromLevel = r.ReadInt32() });
+            GenericWriter<PieceUpgradeRequest>.SetWrite((w, v) => { w.WriteInt32(v.Id); w.WriteInt32(v.Branch); w.WriteBoolean(v.Repair); w.WriteInt32(v.FromLevel); w.WriteBoolean(v.BranchOnly); });
+            GenericReader<PieceUpgradeRequest>.SetRead(r => new PieceUpgradeRequest { Id = r.ReadInt32(), Branch = r.ReadInt32(), Repair = r.ReadBoolean(), FromLevel = r.ReadInt32(), BranchOnly = r.ReadBoolean() });
             GenericWriter<PieceMoveRequest>.SetWrite((w, v) => { w.WriteInt32(v.Id); w.WriteVector3(v.Pos); w.WriteSingle(v.RotY); });
             GenericReader<PieceMoveRequest>.SetRead(r => new PieceMoveRequest { Id = r.ReadInt32(), Pos = r.ReadVector3(), RotY = r.ReadSingle() });
             GenericWriter<PieceState>.SetWrite((w, v) =>
@@ -138,9 +139,11 @@ namespace HtfFortress
                 for (int n = 0; n < Catalog.TypeCount; n++) // skip turrets still waiting for a blueprint
                 {
                     _type = (PieceType)(((int)_type + (shift ? Catalog.TypeCount - 1 : 1)) % Catalog.TypeCount);
+                    _turns = 0;
                     if (Loot.Instance.ClientVault.CanBuild(_type)) break;
                 }
             if (kb.yKey.wasPressedThisFrame) _flip = !_flip;
+            if (kb.rKey.wasPressedThisFrame) _turns = (_turns + 1) & 3; // R turns the preview; ramps can be aligned without moving the camera
 
             UpdateGhost();
             UpdateLookInfo(out int lookedId, Reach);
@@ -158,6 +161,7 @@ namespace HtfFortress
             UpdateRemoveHold(kb.hKey.isPressed ? lookedId : _debugHold);
             _debugHold = 0;
             if (lookedId != 0 && kb.uKey.wasPressedThisFrame) Upgrade(lookedId, shift);
+            if (lookedId != 0 && kb.eKey.wasPressedThisFrame && Time.frameCount - PieceMenu.ClosedFrame > 1) PieceMenu.Instance.Open(lookedId); // every piece: E shows its details
             if (lookedId != 0 && kb.jKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = lookedId, Repair = true });
             if (lookedId != 0 && mouse != null && mouse.rightButton.wasPressedThisFrame && Time.frameCount - PieceMenu.ClosedFrame > 1) PieceMenu.Instance.Open(lookedId);
             if (lookedId != 0 && kb.mKey.wasPressedThisFrame) StartMove(lookedId);
@@ -221,6 +225,7 @@ namespace HtfFortress
             if (id == 0) return;
             bool shift = kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed;
             if (kb.uKey.wasPressedThisFrame) Upgrade(id, shift);
+            if (kb.eKey.wasPressedThisFrame && Time.frameCount - PieceMenu.ClosedFrame > 1) PieceMenu.Instance.Open(id, walkUp: true); // E: details of any tower/wall
             if (kb.jKey.wasPressedThisFrame) InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = id, Repair = true });
             if (kb.mKey.wasPressedThisFrame) StartMove(id);
         }
@@ -229,10 +234,15 @@ namespace HtfFortress
         // saying so, and the playtest found out late), in build mode or walking up to it; Shift+U still takes B straight away.
         private void Upgrade(int id, bool shift)
         {
-            if (_states.TryGetValue(id, out var s) && s.Level == Catalog.BranchLevel - 1 && Catalog.HasBranches(s.Type) && !shift)
+            if (_states.TryGetValue(id, out var s) && !shift)
             {
-                if (Time.frameCount - PieceMenu.ClosedFrame > 1) PieceMenu.Instance.Open(id, walkUp: !_building);
-                return;
+                bool firstSplit = s.Level == Catalog.BranchLevel - 1 && Catalog.HasBranches(s.Type);
+                bool secondSplit = s.Level == Catalog.SecondBranchLevel - 1 && Catalog.HasSecondBranch(s.Type) && s.Branch > 0;
+                if (firstSplit || secondSplit)
+                {
+                    if (Time.frameCount - PieceMenu.ClosedFrame > 1) PieceMenu.Instance.Open(id, walkUp: !_building);
+                    return;
+                }
             }
             InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = id, Branch = shift ? 2 : 1, FromLevel = LevelOf(id) });
         }
@@ -296,7 +306,7 @@ namespace HtfFortress
         public static int RefundEstimate(PieceState s)
         {
             int spent = Perks.MyCost(Catalog.BuildCost(s.Type));
-            for (int l = 1; l < s.Level; l++) spent += Perks.MyCost(Catalog.UpgradeCost(s.Type, l));
+            for (int l = 1; l < s.Level; l++) spent += Perks.MyTowerUpgradeCost(Catalog.UpgradeCost(s.Type, l));
             return spent / 2;
         }
 
@@ -309,6 +319,20 @@ namespace HtfFortress
         public void DebugSetBuilding(bool on, PieceType type) { _type = type; SetBuilding(on); }
 
         public void StopBuilding() => SetBuilding(false);
+
+        // Leaving a session (host lost, main menu): the build bar, ghost and cell outline must not stay on screen.
+        public void ForceCloseUI()
+        {
+            SetBuilding(false);
+            _moveId = 0;
+            if (_ghost) { _ghost.SetActive(false); Object.Destroy(_ghost); _ghost = null; _ghostType = (PieceType)255; }
+            HideCell();
+            if (_cards) _cards.gameObject.SetActive(false);
+            if (_keysBox) _keysBox.gameObject.SetActive(false);
+            if (_descBox) _descBox.gameObject.SetActive(false);
+            if (_warnBox) _warnBox.gameObject.SetActive(false);
+            if (_lookBox) _lookBox.gameObject.SetActive(false);
+        }
 
         private void SetBuilding(bool on)
         {
@@ -330,6 +354,47 @@ namespace HtfFortress
         // What the preview is: the carried piece while moving, else the piece picked on the bar.
         private PieceType GhostType => _moveId != 0 && _states.TryGetValue(_moveId, out var ms) ? ms.Type : _type;
 
+        // Candidate wall spots near `aim`: extend an existing wall by one cell, or stand a wall on a floor edge. Returns
+        // the nearest candidate within reach; UpdateGhost still does the final overlap/afford checks.
+        private bool TrySnapWall(Vector3 aim, ref Vector3 pos, ref Quaternion rot)
+        {
+            float best = 2.25f * 2.25f; bool found = false;
+            foreach (var s in _states.Values)
+            {
+                if (s.Type == PieceType.Wall)
+                {
+                    Quaternion sr = Quaternion.Euler(0f, s.RotY, 0f);
+                    Vector3 dir = sr * Vector3.right, normal = sr * Vector3.forward;
+                    for (int sign = -1; sign <= 1; sign += 2)
+                    {
+                        // Straight continuation, then a 90-degree corner at that end: magnetic, not only same-axis.
+                        Vector3 c = s.Pos + dir * (Cell * sign);
+                        float d = (new Vector2(c.x - aim.x, c.z - aim.z)).sqrMagnitude;
+                        if (d < best) { best = d; pos = c; rot = sr; found = true; }
+                        for (int side = -1; side <= 1; side += 2)
+                        {
+                            Vector3 corner = s.Pos + dir * (Cell * 0.5f * sign) + normal * (Cell * 0.5f * side);
+                            float cd = (new Vector2(corner.x - aim.x, corner.z - aim.z)).sqrMagnitude;
+                            if (cd < best) { best = cd; pos = corner; rot = Quaternion.Euler(0f, s.RotY + 90f, 0f); found = true; }
+                        }
+                    }
+                }
+                else if (s.Type == PieceType.Floor)
+                {
+                    for (int i = 0; i < 4; i++)
+                    {
+                        bool alongX = i < 2;
+                        float off = (i % 2 == 0 ? -0.5f : 0.5f) * Cell;
+                        Vector3 c = s.Pos + (alongX ? new Vector3(0f, 0f, off) : new Vector3(off, 0f, 0f));
+                        c.y = s.Pos.y + Cell * 0.5f;
+                        float d = (new Vector2(c.x - aim.x, c.z - aim.z)).sqrMagnitude;
+                        if (d < best) { best = d; pos = c; rot = Quaternion.Euler(0f, alongX ? 0f : 90f, 0f); found = true; }
+                    }
+                }
+            }
+            return found;
+        }
+
         private bool ComputePlacement(int extend, out Vector3 pos, out Quaternion rot)
         {
             var type = GhostType;
@@ -338,11 +403,12 @@ namespace HtfFortress
             bool hit = Physics.Raycast(cam.position, cam.forward, out var rh, PlaceReach, mask, QueryTriggerInteraction.Ignore);
             Vector3 aim;
             float? onLevel = null; // the base of the level of the piece under the crosshair
+            PieceState? hitPiece = null;
             if (hit)
             {
                 aim = rh.point - cam.forward * 0.05f;
                 var root = rh.collider.attachedRigidbody ? rh.collider.attachedRigidbody.gameObject : rh.collider.gameObject;
-                if (_pieceIds.TryGetValue(root, out int pid) && _states.TryGetValue(pid, out var ps)) onLevel = BaseOf(ps);
+                if (_pieceIds.TryGetValue(root, out int pid) && _states.TryGetValue(pid, out var ps)) { onLevel = BaseOf(ps); hitPiece = ps; }
             }
             else
             {
@@ -355,6 +421,7 @@ namespace HtfFortress
             bool alongX = Mathf.Abs(fwd.x) >= Mathf.Abs(fwd.z);
             float yaw = alongX ? (fwd.x >= 0 ? 90f : 270f) : (fwd.z >= 0 ? 0f : 180f);
             if (_flip) yaw += 180f;
+            yaw = Mathf.Repeat(yaw + _turns * 90f, 360f);
 
             int cx = Mathf.FloorToInt(aim.x / Cell), cz = Mathf.FloorToInt(aim.z / Cell);
             if (extend != 0) { if (alongX) cx += fwd.x >= 0 ? extend : -extend; else cz += fwd.z >= 0 ? extend : -extend; }
@@ -363,6 +430,27 @@ namespace HtfFortress
                         : Loot.Ground(mid + Vector3.up * 2.5f, 8f, out var under) ? under.y : aim.y;
             Vector3 cellCenter = new Vector3(mid.x, baseY, mid.z);
 
+            // Ramps: if a floor or another ramp is on one of the four sides, turn the ramp to face it and use its level.
+            // This is the "auto edge" that the old ramp lacked; R still overrides the facing.
+            if (type == PieceType.Ramp && _turns == 0 && !FreePlace && !(hitPiece.HasValue && hitPiece.Value.Type == PieceType.Ramp))
+            {
+                PieceState? near = null; float best = Cell * 1.65f * (Cell * 1.65f);
+                foreach (var p in _states.Values)
+                {
+                    if (p.Type != PieceType.Floor && p.Type != PieceType.Ramp) continue;
+                    Vector3 d = p.Pos - cellCenter; d.y = 0f;
+                    float d2 = d.sqrMagnitude;
+                    if (d2 < best && d2 > 0.2f) { best = d2; near = p; }
+                }
+                if (near.HasValue)
+                {
+                    Vector3 d = near.Value.Pos - cellCenter; d.y = 0f;
+                    yaw = Mathf.Repeat(Mathf.Round(Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg / 90f) * 90f, 360f);
+                    baseY = near.Value.Type == PieceType.Floor ? near.Value.Pos.y : BaseOf(near.Value);
+                    cellCenter.y = baseY;
+                }
+            }
+
             switch (type)
             {
                 case PieceType.Wall:
@@ -370,7 +458,8 @@ namespace HtfFortress
                     // Edge between the player's cell and the aimed cell; the far edge when aiming into your own cell.
                     Vector3 me = Player.LocalPlayer.Transform.position;
                     int px = Mathf.FloorToInt(me.x / Cell), pz = Mathf.FloorToInt(me.z / Cell);
-                    if (alongX)
+                    bool edgeX = Mathf.Abs(Mathf.Sin(yaw * Mathf.Deg2Rad)) > 0.5f; // a 90/270 wall stands on an X edge
+                    if (edgeX)
                     {
                         int side = cx != px ? (cx > px ? 0 : 1) : (fwd.x >= 0 ? 1 : 0);
                         pos = new Vector3((cx + side) * Cell, baseY + Cell * 0.5f, cellCenter.z);
@@ -380,7 +469,7 @@ namespace HtfFortress
                     {
                         int side = cz != pz ? (cz > pz ? 0 : 1) : (fwd.z >= 0 ? 1 : 0);
                         pos = new Vector3(cellCenter.x, baseY + Cell * 0.5f, (cz + side) * Cell);
-                        rot = Quaternion.identity;
+                        rot = Quaternion.Euler(0f, yaw, 0f);
                     }
                     break;
                 }
@@ -389,6 +478,25 @@ namespace HtfFortress
                     rot = Quaternion.identity;
                     break;
                 case PieceType.Ramp: // rises toward where you look
+                    if (_turns == 0 && hitPiece.HasValue && hitPiece.Value.Type == PieceType.Ramp)
+                    {
+                        // Standing on/climbing a ramp and aiming along it: continue the staircase in that direction, one
+                        // level up (or down when looking back down it). This is what "aim at the ramp and keep building"
+                        // should do; the old code kept placing the next ramp at the same level.
+                        var rp = hitPiece.Value;
+                        float rYaw = rp.RotY;
+                        Vector3 upSlope = new Vector3(Mathf.Sin(rYaw * Mathf.Deg2Rad), 0f, Mathf.Cos(rYaw * Mathf.Deg2Rad));
+                        // Follow the staircase's own direction, not the camera's grid axis. If the player is standing below
+                        // the ramp, the next one goes up; standing above it, the next one goes down. Camera look is only
+                        // the fallback when the player is level with the ramp.
+                        float along = Vector3.Dot(Player.LocalPlayer.Transform.position - rp.Pos, upSlope);
+                        bool upward = Mathf.Abs(along) > 0.65f ? along < 0f : Vector3.Dot(fwd, upSlope) >= 0f;
+                        Vector3 dir = upward ? upSlope : -upSlope;
+                        float baseLevel = BaseOf(rp) + (upward ? Cell : -Cell);
+                        pos = new Vector3(rp.Pos.x + dir.x * Cell, baseLevel + Cell * 0.5f, rp.Pos.z + dir.z * Cell);
+                        rot = Quaternion.Euler(-45f, rYaw, 0f);
+                        break;
+                    }
                     pos = cellCenter + Vector3.up * Cell * 0.5f;
                     rot = Quaternion.Euler(-45f, yaw, 0f);
                     break;
@@ -405,8 +513,23 @@ namespace HtfFortress
                     rot = Quaternion.Euler(0f, yaw, 0f);
                     break;
             }
+            // Magnetic wall joins: aiming near an existing wall/floor snaps the new wall to its line or edge instead of
+            // asking the player to line up a 3 m grid by eye. R / free placement opt out.
+            if (type == PieceType.Wall && !FreePlace && _turns == 0 && TrySnapWall(aim, ref pos, ref rot)) { }
+
+            // Hold Alt for free placement: no 3 m cell snap, only the ground. For turrets and traps this is the fine
+            // adjustment the grid made impossible; structural pieces still look best on the grid, but the player decides.
+            if (hit && FreePlace)
+            {
+                float fy = baseY;
+                if (Loot.Ground(new Vector3(aim.x, aim.y, aim.z) + Vector3.up * 2.5f, 8f, out var freeGround)) fy = freeGround.y;
+                pos.x = aim.x; pos.z = aim.z;
+                pos.y = type == PieceType.Wall || type == PieceType.Ramp ? fy + Cell * 0.5f : type == PieceType.Spikes ? fy + 0.07f : fy;
+            }
             return hit;
         }
+
+        private static bool FreePlace => Keyboard.current != null && Keyboard.current.leftAltKey.isPressed;
 
         // Where a piece's level starts (walls and ramps are centred a half cell up).
         private static float BaseOf(PieceState s) => s.Type == PieceType.Wall || s.Type == PieceType.Ramp ? s.Pos.y - Cell * 0.5f : s.Pos.y;
@@ -434,7 +557,7 @@ namespace HtfFortress
 
             bool hit = ComputePlacement(out var pos, out var rot);
             bool Taken(Vector3 at) => _states.Values.Any(s => s.Id != _moveId && Overlap(s.Type, s.Pos, type, at));
-            if (hit && Taken(pos) && ComputePlacement(1, out var next, out var nextRot) && !Taken(next)) { pos = next; rot = nextRot; } // aiming at your last piece: the next one along
+            if (!FreePlace && hit && Taken(pos) && ComputePlacement(1, out var next, out var nextRot) && !Taken(next)) { pos = next; rot = nextRot; } // aiming at your last piece: the next one along
             bool aboveWater = pos.y + Cell > WaterManager.GetWaterHeight(pos);
             bool free = !Taken(pos);
             bool moving = _moveId != 0; // a piece being moved was paid for and unlocked already
@@ -451,7 +574,7 @@ namespace HtfFortress
             _ghost.transform.SetPositionAndRotation(pos, rot);
             Color tint = _ghostValid ? new Color(0.3f, 0.6f, 1f) : new Color(0.9f, 0.2f, 0.2f);
             Models.Paint(_ghost, tint);
-            DrawCell(pos, tint);
+            if (FreePlace) HideCell(); else DrawCell(pos, tint); // no cell outline in free placement: it is no longer snapped to one
         }
 
         // The cell the preview is in, outlined on the ground under it (where exactly it goes, at a glance).
@@ -512,7 +635,8 @@ namespace HtfFortress
                 head.layer = layer;
                 head.transform.SetParent(go.transform, false);
                 head.transform.localPosition = new Vector3(0f, 0.85f, 0f);
-                Models.Attach(Catalog.HeadModel(t), head.transform, new Vector3(0.6f, 0.5f, 1.4f));
+                Models.Attach(Catalog.BodyModel(t), head.transform, new Vector3(0.6f, 0.5f, 1.4f));
+                AttachHeadModule(head.transform, t, 0);
             }
             else Models.Attach(t.ToString(), go.transform, size);
             return go;
@@ -530,6 +654,20 @@ namespace HtfFortress
 
         // How far it reaches. The bubble tower: a soap bubble over the ground it protects (BubbleShell). The repair tower: a
         // ring of green on the ground (no bubble: it doesn't cover anything).
+        // A flat plus sign, used by the repair tower's range marker and its head badge.
+        private static void CrossMark(Transform parent, float arm, float thick, Material m)
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                var b = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Destroy(b.GetComponent<Collider>());
+                b.transform.SetParent(parent, false);
+                b.transform.localRotation = Quaternion.Euler(i == 0 ? 0f : 90f, 0f, 0f);
+                b.transform.localScale = i == 0 ? new Vector3(arm, 0.02f, thick) : new Vector3(thick, 0.02f, arm);
+                b.GetComponent<Renderer>().sharedMaterial = m;
+            }
+        }
+
         private static Material _mendRimMat;
         private static void SetBubbleRing(GameObject go, PieceType type, int level, int branch)
         {
@@ -538,17 +676,55 @@ namespace HtfFortress
             ring.SetParent(go.transform, false);
             float r = Catalog.Turret(type, level, branch).Range;
             if (type == PieceType.Bubble) { BubbleShell.Make(ring, r); return; }
-            if (!_mendRimMat) _mendRimMat = BossVfx.Wash(new Color(0.45f, 1f, 0.55f, 0.5f));
-            var ls = go.transform.lossyScale;
-            var rim = WeaponFx.Piece(BossVfx.Ring(0.93f), _mendRimMat, ring);
-            rim.localPosition = new Vector3(0f, 0.12f / ls.y, 0f);
-            rim.localScale = new Vector3(r / ls.x, 1f, r / ls.z);
+            // Repair tower: no soap dome or solid ring (it looked like a second bubble shield). Four broken green
+            // "repair cross" markers on the ground mark the reach instead.
+            if (!_mendRimMat) _mendRimMat = BossVfx.Wash(new Color(0.36f, 1f, 0.52f, 0.55f));
+            for (int k = 0; k < 4; k++)
+            {
+                var mark = new GameObject("MendMark" + k).transform;
+                mark.SetParent(ring, false);
+                float a = k * Mathf.PI * 0.5f;
+                mark.localPosition = new Vector3(Mathf.Cos(a) * r, 0.06f, Mathf.Sin(a) * r);
+                mark.localRotation = Quaternion.Euler(0f, -a * Mathf.Rad2Deg, 0f);
+                CrossMark(mark, 0.42f, 0.16f, _mendRimMat);
+            }
+            return;
         }
 
         // How a turret shows its level: Lv2 an iron collar on the base, Lv3 a bigger head with a crystal in its branch's colour
         // (A amber, B cyan), and at Lv5, Lv10 and Lv15 another barrel beside the head: what it does then (one more fish, shell,
         // harpoon, chain jump...) is Catalog.Milestones. From Lv4 its ring of lamps lights up (SetLamps).
         private static Material _collarMat, _trimMat, _crystalA, _crystalB, _studMat;
+        // The branch module of a modular turret (the Gun for now): the same body every level, a different barrel/armour
+        // assembly for default, A, A1, A2, B, B1, B2. Swapped whenever the branch changes.
+        private static void AttachHeadModule(Transform head, PieceType type, int branch)
+        {
+            if (!head) return;
+            Drop(head.Find("HeadModule"));
+            if (!Catalog.HasModules(type)) return;
+            var model = Catalog.ModuleModel(type, branch);
+            if (string.IsNullOrEmpty(model)) return;
+            var module = Models.Attach(model, head, Vector3.one * 0.4f, shadows: false);
+            if (module) module.name = "HeadModule";
+        }
+
+        // Where a branch ornament sits on each head (authored around the head origin) and how big it is drawn there.
+        private static (Vector3, float) BranchMount(PieceType type)
+        {
+            switch (type)
+            {
+                case PieceType.Gun: return (new Vector3(0f, 0.06f, 0.58f), 0.95f);
+                case PieceType.Cannon: return (new Vector3(0f, 0.1f, 0.7f), 1.0f);
+                case PieceType.Harpoon: return (new Vector3(0f, 0.08f, 0.38f), 0.85f);
+                case PieceType.Mortar: return (new Vector3(0f, 0.1f, 0.9f), 0.85f);
+                case PieceType.Tesla: return (new Vector3(0f, 0f, 1.18f), 0.72f);
+                case PieceType.Flame: return (new Vector3(0f, 0.08f, 0.34f), 0.9f);
+                case PieceType.Sniper: return (new Vector3(0f, 0.04f, 0.33f), 0.8f);
+                case PieceType.Bubble: return (new Vector3(0f, 0f, 1.0f), 0.85f);
+                default: return (new Vector3(0f, 0.04f, 0.78f), 0.85f); // Mender
+            }
+        }
+
         private static void SetTurretLook(GameObject go, PieceType type, int level, int branch)
         {
             Drop(go.transform.Find("LevelLook"));
@@ -556,7 +732,7 @@ namespace HtfFortress
             if (head)
             {
                 foreach (Transform c in head.Cast<Transform>().ToList()) if (c.name.StartsWith("Barrel")) Drop(c);
-                head.localScale = Vector3.one * (1f + 0.07f * Mathf.Min(level - 1, 2) + 0.015f * Mathf.Min(Catalog.Beyond(level), 12));
+                head.localScale = Vector3.one * (1f + 0.08f * Mathf.Min(level - 1, 2) + 0.04f * Mathf.Min(Catalog.Beyond(level), 12)); // the gun itself grows with every level
             }
             var look = new GameObject("LevelLook").transform;
             look.SetParent(go.transform, false);
@@ -575,17 +751,46 @@ namespace HtfFortress
             }
             if (level >= 2) Part(PrimitiveType.Cylinder, look, new Vector3(0f, 0.5f, 0f), new Vector3(1.5f, 0.07f, 1.5f), _collarMat);
             if (level >= 3) Part(PrimitiveType.Cylinder, look, new Vector3(0f, 0.58f, 0f), new Vector3(1.38f, 0.03f, 1.38f), _trimMat);
-            if (level >= 3 && head && branch > 0)
-                Part(PrimitiveType.Cube, head, new Vector3(0f, 0.42f, -0.32f), Vector3.one * 0.16f, branch == 2 ? _crystalB : _crystalA, Quaternion.Euler(45f, 0f, 45f)).name = "BarrelCrystal";
-            int extra = Catalog.Milestones(level);
+            AttachHeadModule(head, type, branch);
+            if (type == PieceType.Mender && head)
+            {
+                Drop(head.Find("MendBadge"));
+                if (!_mendRimMat) _mendRimMat = BossVfx.Wash(new Color(0.36f, 1f, 0.52f, 0.55f));
+                var badge = new GameObject("MendBadge").transform;
+                badge.SetParent(head, false);
+                badge.localPosition = new Vector3(0f, 1.45f, -0.1f);
+                badge.localRotation = Quaternion.Euler(0f, 0f, 8f);
+                CrossMark(badge, 0.46f, 0.16f, _mendRimMat);
+            }
+            if (level >= 3 && head && branch > 0 && !Catalog.HasModules(type))
+            {
+                var crystal = Part(PrimitiveType.Cube, head, new Vector3(0f, 0.42f, -0.32f), Vector3.one * 0.16f, Catalog.FirstOf(branch) == 2 ? _crystalB : _crystalA, Quaternion.Euler(45f, 0f, 45f));
+                crystal.name = "BarrelCrystal";
+                // The upgrade path grows its own ornament (Owen: different paths should look different): A amber, B cyan,
+                // then A1 turbine / A2 ice / B1 heavy rail / B2 coil crown.
+                Drop(head.Find("BranchLook"));
+                var (at, sc) = BranchMount(type);
+                var ornament = Models.Attach(Catalog.BranchOrnament(branch), head, Vector3.one * 0.4f, shadows: false);
+                if (ornament)
+                {
+                    ornament.name = "BranchLook";
+                    ornament.transform.localPosition = at;
+                    ornament.transform.localScale = Vector3.one * sc;
+                }
+            }
+            // One barrel per simultaneous shot/target (the real stat), not per milestone: a Cluster cannon shows three, a
+            // Barrage mortar three, and every Lv5/10/15 milestone adds another because Catalog.Turret adds the shot too.
+            int extra = Catalog.Barrels(type, level, branch) - 1;
             for (int i = 1; i <= extra && head; i++)
             {
                 var barrel = new GameObject("Barrel" + i).transform;
                 barrel.SetParent(head, false);
-                float side = (i % 2 == 1 ? 1f : -1f) * (0.42f + 0.28f * ((i - 1) / 2));
-                barrel.localPosition = new Vector3(side, -0.05f, -0.05f);
-                barrel.localScale = Vector3.one * 0.72f;
-                Models.Attach(Catalog.HeadModel(type), barrel, new Vector3(0.6f, 0.5f, 1.4f));
+                float side = (i - (extra + 1) / 2f) * Mathf.Lerp(0.62f, 0.34f, Mathf.Clamp01((extra - 1) / 5f));
+                var mount = Catalog.BarrelMount(type);
+                barrel.localPosition = new Vector3(side, mount.y, mount.z);
+                barrel.localRotation = Quaternion.identity;
+                barrel.localScale = Vector3.one * (0.82f - 0.04f * i);
+                Models.Attach(Catalog.BarrelModel(type), barrel, new Vector3(0.25f, 0.2f, 0.8f));
             }
             SetLamps(look, level);
         }
@@ -599,20 +804,23 @@ namespace HtfFortress
         public static int LampsLit(int level) => Mathf.Min(Lamps, Catalog.Beyond(level));
         private static readonly Dictionary<int, (Mesh dim, Mesh lit)> LampMeshes = new Dictionary<int, (Mesh, Mesh)>();
         private static readonly Dictionary<int, Material> LampGlows = new Dictionary<int, Material>();
-        private static Mesh _lampSockets;
+        private static readonly Dictionary<int, Mesh> LampArcs = new Dictionary<int, Mesh>();
+        private static Mesh _lampSockets, _lampBezels;
 
         private static void SetLamps(Transform look, int level)
         {
             int lit = LampsLit(level);
             var all = Enumerable.Range(0, Lamps).Select(LampAt).ToList();
-            if (!_lampSockets) _lampSockets = Combine("FortressLampSockets", WeaponFx.Cyl, all, new Vector3(0.17f, 0.07f, 0.17f));
+            if (!_lampSockets) _lampSockets = Combine("FortressLampSockets", WeaponFx.Cyl, all, new Vector3(0.2f, 0.06f, 0.2f));
+            if (!_lampBezels) _lampBezels = Combine("FortressLampBezels", WeaponFx.Cyl, all.Select(p => p + Vector3.up * 0.06f), new Vector3(0.15f, 0.025f, 0.15f));
             if (!LampMeshes.TryGetValue(lit, out var m))
             {
-                var bulbs = all.Select(p => p + Vector3.up * 0.13f).ToList();
-                LampMeshes[lit] = m = (Combine("FortressLampsDim" + lit, WeaponFx.Ball, bulbs.Skip(lit), Vector3.one * 0.15f),
-                                       Combine("FortressLampsLit" + lit, WeaponFx.Ball, bulbs.Take(lit), Vector3.one * 0.15f));
+                var bulbs = all.Select(p => p + Vector3.up * 0.14f).ToList();
+                LampMeshes[lit] = m = (Combine("FortressLampsDim" + lit, WeaponFx.Ball, bulbs.Skip(lit), Vector3.one * 0.17f),
+                                       Combine("FortressLampsLit" + lit, WeaponFx.Ball, bulbs.Take(lit), Vector3.one * 0.17f));
             }
             WeaponFx.Piece(_lampSockets, _collarMat, look).name = "LampSockets";
+            WeaponFx.Piece(_lampBezels, _trimMat, look).name = "LampBezels";
             if (lit < Lamps) WeaponFx.Piece(m.dim, BossVfx.Solid(new Color(0.09f, 0.1f, 0.12f)), look).name = "LampsDim";
             if (lit == 0) return;
             int step = Mathf.Clamp(level, Catalog.BranchLevel + Lamps, LampsWhite);
@@ -622,6 +830,33 @@ namespace HtfFortress
                 LampGlows[step] = glow = BossVfx.Glow(Color.Lerp(new Color(1f, 0.72f, 0.2f), new Color(1f, 0.97f, 0.9f), k), Mathf.Round(5f + 3f * k));
             }
             WeaponFx.Piece(m.lit, glow, look).name = "LampsLit";
+            // A glowing arc on the brass rail shows how far round the ring has filled: the bulbs count, the arc reads at a glance.
+            if (!LampArcs.TryGetValue(lit, out var arc)) LampArcs[lit] = arc = LampArc(lit);
+            WeaponFx.Piece(arc, glow, look).name = "LampArc";
+        }
+
+        // The progress arc on the foot rail, from the back clockwise for `lit` of the 17 lamps.
+        private static Mesh LampArc(int lit)
+        {
+            float frac = Mathf.Clamp01(lit / (float)Lamps);
+            int segs = Mathf.Max(1, Mathf.CeilToInt(36f * frac));
+            var verts = new List<Vector3>();
+            var tris = new List<int>();
+            for (int i = 0; i <= segs; i++)
+            {
+                float a = Mathf.PI + frac * TAU * i / segs;
+                float c = Mathf.Cos(a), s = Mathf.Sin(a);
+                verts.Add(new Vector3(c * 1.04f, 0.075f, s * 1.04f));
+                verts.Add(new Vector3(c * 1.14f, 0.075f, s * 1.14f));
+            }
+            for (int i = 0; i < segs; i++)
+            {
+                int k = i * 2;
+                tris.AddRange(new[] { k, k + 1, k + 3, k, k + 3, k + 2 });
+            }
+            var mesh = new Mesh { name = "FortressLampArc" + lit };
+            mesh.SetVertices(verts); mesh.SetTriangles(tris, 0); mesh.RecalculateNormals(); mesh.RecalculateBounds();
+            return mesh;
         }
 
         // Lamp i round the foot: 0 at the back, then left and right in turn, the last two either side of the front (+z).
@@ -632,6 +867,7 @@ namespace HtfFortress
             return new Vector3(Mathf.Sin(th) * LampRing, 0f, Mathf.Cos(th) * LampRing);
         }
 
+        private const float TAU = Mathf.PI * 2f;
         private static Mesh Combine(string name, Mesh part, IEnumerable<Vector3> at, Vector3 size)
         {
             var mesh = new Mesh { name = name };
@@ -692,10 +928,10 @@ namespace HtfFortress
                 }
             string up;
             if (s.Level == Catalog.BranchLevel - 1 && Catalog.HasBranches(s.Type))
-                up = L10n.T("branchHint", L10n.T(Catalog.BranchKey(s.Type, 1)), L10n.T(Catalog.BranchKey(s.Type, 2)), Perks.MyCost(Catalog.UpgradeCost(s.Type, s.Level)));
-            else up = L10n.T("upgradeHint", Perks.MyCost(Catalog.UpgradeCost(s.Type, s.Level)));
+                up = L10n.T("branchHint", L10n.T(Catalog.BranchKey(s.Type, 1)), L10n.T(Catalog.BranchKey(s.Type, 2)), Perks.MyTowerUpgradeCost(Catalog.UpgradeCost(s.Type, s.Level)));
+            else up = L10n.T("upgradeHint", Perks.MyTowerUpgradeCost(Catalog.UpgradeCost(s.Type, s.Level)));
             string repair = s.Hp < s.MaxHp ? "   " + L10n.T("repairHint", Perks.MyCost(Catalog.RepairCost(s.Hp, s.MaxHp))) : "";
-            string branch = s.Branch > 0 ? " · " + L10n.T(Catalog.BranchKey(s.Type, s.Branch)) : "";
+            string branch = s.Branch > 0 ? " · " + Catalog.BranchName(s.Type, s.Branch) : "";
             _lookInfo = PieceName(s.Type, s.Level) + branch;
             // Now → after U (into Lv3: branch A's; the menu shows both).
             _lookStats = string.Join("　", PieceMenu.Deltas(s, s.Level + 1, s.Branch > 0 ? s.Branch : 1));
@@ -899,11 +1135,24 @@ namespace HtfFortress
                 return;
             }
             if (req.FromLevel != s.Level) return; // someone else's upgrade got there first
-            int cost = Perks.Cost(Catalog.UpgradeCost(s.Type, s.Level), who); // no cap: past Lv3 it just keeps getting dearer
+            if (req.BranchOnly)
+            {
+                // A turret already past Lv6 without a second split (an old save) picks it once, free.
+                if (s.Level < Catalog.SecondBranchLevel || !Catalog.HasSecondBranch(s.Type) || s.Branch > 2 || req.Branch < 3
+                    || (s.Branch > 0 && Catalog.FirstOf(req.Branch) != Catalog.FirstOf(s.Branch))) return; // only the continuation of its own choice
+                s.Branch = Catalog.BranchCode(s.Branch > 0 ? Catalog.FirstOf(s.Branch) : Catalog.FirstOf(req.Branch), Catalog.SecondOf(req.Branch));
+                _serverPieces[s.Id] = s;
+                InstanceFinder.ServerManager.Broadcast(s);
+                AutoTest.Count("second_branch");
+                return;
+            }
+            int cost = Perks.TowerUpgradeCost(Catalog.UpgradeCost(s.Type, s.Level), who); // no cap: past Lv3 it just keeps getting dearer
             if (!Siege.Instance.ServerTrySpend(cost)) return;
             if (Siege.Instance.ServerActive) _spent[s.Id] += cost;
             s.Level++;
             if (s.Level == Catalog.BranchLevel && Catalog.HasBranches(s.Type)) s.Branch = req.Branch == 2 ? 2 : 1;
+            else if (s.Level == Catalog.SecondBranchLevel && Catalog.HasSecondBranch(s.Type) && req.Branch >= 3)
+                s.Branch = Catalog.BranchCode(s.Branch > 0 ? Catalog.FirstOf(s.Branch) : Catalog.FirstOf(req.Branch), Catalog.SecondOf(req.Branch)); // the second split; a missing first branch is filled from the pick
             int newMax = Perks.MaxHp(s.Type, s.Level);
             s.Hp += newMax - s.MaxHp; // upgrading also repairs by the difference
             s.MaxHp = newMax;
@@ -937,6 +1186,25 @@ namespace HtfFortress
         public void ServerClearAll()
         {
             foreach (var p in _serverPieces.Values.ToList()) Remove(p);
+        }
+
+        // Host: rebuild a saved run's fort. Fresh ids, no cost (the saved run already paid), HP/levels/branches preserved.
+        public void ServerRestorePieces(IEnumerable<PieceState> saved)
+        {
+            ServerClearAll();
+            int max = 0;
+            foreach (var old in saved)
+            {
+                var s = old;
+                s.Id = ++max;
+                s.Removed = false;
+                _serverPieces[s.Id] = s;
+                _spent[s.Id] = 0;
+                _owner[s.Id] = -1;
+                InstanceFinder.ServerManager.Broadcast(s);
+            }
+            _nextId = max + 1;
+            RoundBuilt = saved.Count();
         }
 
         // Destroyed by enemies (not taken down): a turret lost is told to everyone.

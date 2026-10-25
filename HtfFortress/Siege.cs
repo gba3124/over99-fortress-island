@@ -18,6 +18,8 @@ namespace HtfFortress
     public struct SiegeState : IBroadcast { public bool Active; public Vector3 CorePos; public int CoreHp; public int CoreMax; public int Wave; public int Remaining; public int Coins; public bool Building; public int Countdown; public int ReadyTotal; public int ReadyIn; public int ReadyCountdown; public int BossHp; public int BossMax; public byte BossKind; public int BossCrashIn; public bool IslandOpen; public bool TestKeys; }
     // Client -> host: a friend pressed a test key (the host has them on).
     public struct TestKeyRequest : IBroadcast { public int Key; public bool Shift, Ctrl; }
+    // Client -> host: start the next wave now (the N build-time skip works for every player, not just the host).
+    public struct SkipBuildRequest : IBroadcast { public int By; }
 
     // The fortress core, and the walkers that charge it and break walls in the way.
     // All decisions run on the host; clients just draw the core and the HUD from SiegeState.
@@ -82,6 +84,8 @@ namespace HtfFortress
             });
             GenericWriter<TestKeyRequest>.SetWrite((w, v) => { w.WriteInt32(v.Key); w.WriteBoolean(v.Shift); w.WriteBoolean(v.Ctrl); });
             GenericReader<TestKeyRequest>.SetRead(r => new TestKeyRequest { Key = r.ReadInt32(), Shift = r.ReadBoolean(), Ctrl = r.ReadBoolean() });
+            GenericWriter<SkipBuildRequest>.SetWrite((w, v) => w.WriteInt32(v.By));
+            GenericReader<SkipBuildRequest>.SetRead(r => new SkipBuildRequest { By = r.ReadInt32() });
         }
 
         private void Awake() => Instance = this;
@@ -147,6 +151,22 @@ namespace HtfFortress
             Send(true);
         }
 
+        // Restore a saved mid-run checkpoint (host only): the lighthouse keeps the HP it had when the wave checkpointed.
+        public void ServerRestoreCore(int hp, int max)
+        {
+            _server.CoreMax = Mathf.Max(1, max);
+            _server.CoreHp = Mathf.Clamp(hp, 1, _server.CoreMax);
+            Send(true);
+        }
+
+        public void ServerSetCoins(int coins)
+        {
+            coins = Mathf.Max(0, coins);
+            if (MoneyManager.Instance) MoneyManager.Instance._money.Value = coins;
+            else _server.Coins = coins;
+            Send(true);
+        }
+
         public void ServerStop()
         {
             Bosses.Instance.ServerClear();
@@ -158,7 +178,7 @@ namespace HtfFortress
         // Everything remembered about this round's fish.
         private void ClearFish()
         {
-            _walkers.Clear(); _nextAttack.Clear(); _progress.Clear(); _blockedSince.Clear(); _flank.Clear(); _slow.Clear(); _airborne.Clear(); _freezeNext.Clear();
+            _walkers.Clear(); _nextAttack.Clear(); _progress.Clear(); _stuckTries.Clear(); _blockedSince.Clear(); _flank.Clear(); _slow.Clear(); _airborne.Clear(); _freezeNext.Clear();
             _carry.Clear(); _nextHop.Clear(); _nextHeal.Clear(); _hidden.Clear(); _dug.Clear();
             _nextSpit.Clear(); _nextMove.Clear(); _spitterBorn.Clear(); _decoys.Clear(); _bubbled.Clear(); _reeled.Clear();
         }
@@ -179,6 +199,7 @@ namespace HtfFortress
         private void Send(bool force)
         {
             if (!InstanceFinder.IsServerStarted) return;
+            if (Time.time >= _nextFlow) { _nextFlow = Time.time + 0.75f; RebuildFlow(); }
             _server.IslandOpen = FortressIsland.HostUnlocked; // clients show the island when the host has it, whatever their own setting
             _server.TestKeys = FortressPlugin.Instance && FortressPlugin.Instance.TestKeysOn; // and the test keys when the host has them on
             if (!force && (Time.time < _nextSend || _server.Equals(_lastSent))) return;
@@ -193,21 +214,107 @@ namespace HtfFortress
         // wall it met, so the fort was nibbled at everywhere and broken nowhere. Now the host picks ONE wall for the whole
         // horde: the wall nearest any walker (shortest walk for the fish that get there first, and the one the others drift
         // to), lowest health among near-equals. Refreshed twice a second, or at once when that wall is gone.
+        private bool _anyWalls;
+
+        // A coarse flow field toward the lighthouse, rebuilt a few times a second when there are walls. Fish sample one
+        // direction instead of each doing their own wall/target search; a fully walled fort falls back to attacking.
+        private const float FlowCell = 2f, FlowRange = 46f;
+        private Vector3 _flowOrigin;
+        private int _flowN;
+        private float[] _flowDist;
+        private Vector3[] _flowDir;
+        private bool _flowValid;
+        private float _nextFlow;
+
+        private int FlowCellOf(Vector3 p)
+        {
+            int x = Mathf.Clamp(Mathf.RoundToInt((p.x - _flowOrigin.x) / FlowCell), 0, _flowN - 1);
+            int z = Mathf.Clamp(Mathf.RoundToInt((p.z - _flowOrigin.z) / FlowCell), 0, _flowN - 1);
+            return z * _flowN + x;
+        }
+
+        private void RebuildFlow()
+        {
+            var island = FortressIsland.Instance;
+            if (island == null || !island.Exists) { _flowValid = false; return; }
+            _flowValid = false;
+            _flowOrigin = island.Center - new Vector3(FlowRange * 0.5f, 0f, FlowRange * 0.5f);
+            _flowN = Mathf.CeilToInt(FlowRange / FlowCell) + 1;
+            int n = _flowN * _flowN;
+            if (_flowDist == null || _flowDist.Length != n) { _flowDist = new float[n]; _flowDir = new Vector3[n]; }
+            for (int i = 0; i < n; i++) { _flowDist[i] = float.MaxValue; _flowDir[i] = Vector3.zero; }
+            var blocked = new bool[n];
+            var build = BuildSystem.Instance;
+            if (build != null)
+                foreach (var p in build.ServerPieces)
+                {
+                    if (p.Hp <= 0 || p.Type != PieceType.Wall) continue;
+                    int cx = Mathf.Clamp(Mathf.RoundToInt((p.Pos.x - _flowOrigin.x) / FlowCell), 0, _flowN - 1);
+                    int cz = Mathf.Clamp(Mathf.RoundToInt((p.Pos.z - _flowOrigin.z) / FlowCell), 0, _flowN - 1);
+                    for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int x = cx + dx, z = cz + dz;
+                        if (x >= 0 && x < _flowN && z >= 0 && z < _flowN) blocked[z * _flowN + x] = true;
+                    }
+                }
+            int start = FlowCellOf(island.Center);
+            blocked[start] = false;
+            var queue = new Queue<int>();
+            _flowDist[start] = 0; queue.Enqueue(start);
+            while (queue.Count > 0)
+            {
+                int cur = queue.Dequeue(); int cx = cur % _flowN, cz = cur / _flowN;
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = cx + (d == 0 ? 1 : d == 1 ? -1 : 0), nz = cz + (d == 2 ? 1 : d == 3 ? -1 : 0);
+                    if (nx < 0 || nx >= _flowN || nz < 0 || nz >= _flowN) continue;
+                    int ni = nz * _flowN + nx;
+                    if (blocked[ni] || _flowDist[ni] <= _flowDist[cur] + 1f) continue;
+                    _flowDist[ni] = _flowDist[cur] + 1f; queue.Enqueue(ni);
+                }
+            }
+            for (int z = 0; z < _flowN; z++) for (int x = 0; x < _flowN; x++)
+            {
+                int i = z * _flowN + x;
+                if (_flowDist[i] == float.MaxValue) continue;
+                float best = _flowDist[i]; Vector3 bd = Vector3.zero;
+                for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+                    int nx = x + dx, nz = z + dz;
+                    if (nx < 0 || nx >= _flowN || nz < 0 || nz >= _flowN) continue;
+                    int ni = nz * _flowN + nx;
+                    if (_flowDist[ni] < best) { best = _flowDist[ni]; bd = new Vector3(dx, 0f, dz); }
+                }
+                _flowDir[i] = bd.sqrMagnitude > 0.01f ? bd.normalized : Vector3.zero;
+            }
+            _flowValid = true;
+        }
+
+        private Vector3 FlowDir(Vector3 pos)
+        {
+            if (!_flowValid || _flowDir == null) return Vector3.zero;
+            return _flowDir[FlowCellOf(pos)];
+        }
         private void UpdateBreach()
         {
             if (Time.time < _nextBreach && _breachId != 0) return;
             _nextBreach = Time.time + 0.5f;
             var build = BuildSystem.Instance;
-            if (!build || _walkers.Count == 0) { _breachId = 0; return; }
+            if (!build || _walkers.Count == 0) { _breachId = 0; _anyWalls = false; return; }
+            _anyWalls = false;
             int best = 0; float bestD = float.MaxValue; int bestHp = int.MaxValue;
             Vector3 bestPos = default;
             foreach (var p in build.ServerPieces)
             {
                 if (p.Hp <= 0 || p.Type != PieceType.Wall) continue;
+                _anyWalls = true;
                 float d = float.MaxValue;
+                int stride = Mathf.Max(1, _walkers.Count / 64); // 400 walkers: sample 64, the nearest wall is still the same
+                int seen = 0;
                 foreach (var f in _walkers)
                 {
-                    if (!f || f.IsDead) continue;
+                    if ((seen++ % stride) != 0 || !f || f.IsDead) continue;
                     float dd = (f.transform.position - p.Pos).sqrMagnitude;
                     if (dd < d) d = dd;
                 }
@@ -215,7 +322,8 @@ namespace HtfFortress
                 if (d < bestD - 0.04f || (Mathf.Abs(d - bestD) <= 0.04f && p.Hp < bestHp))
                 { bestD = d; bestHp = p.Hp; best = p.Id; bestPos = p.Pos; }
             }
-            if (best != _breachId) BuildSystem.Log.LogInfo($"breach: walkers break wall {best} at {bestPos}");
+            if (best != _breachId && FortressPlugin.Instance != null && FortressPlugin.Instance.VerboseLogs)
+                BuildSystem.Log.LogInfo($"breach: walkers break wall {best} at {bestPos}");
             _breachId = best; _breachPos = bestPos;
         }
 
@@ -263,16 +371,49 @@ namespace HtfFortress
             if (tag.Kind == EnemyKind.Thief) { SteerThief(fish, rig, stats); return true; }
 
             Vector3 pos = fish.transform.position;
+            // Simulation LOD: 15 Hz near the camera, 7.5 Hz at 35 m, 3.75 Hz at 70 m. Between ticks the rigidbody keeps
+            // the last velocity, so movement stays smooth while 400 fish stop running a full steering query every frame.
+            var lodCam = GameInfo.CurCamera;
+            Vector3 lodEye = lodCam ? lodCam.transform.position : _server.CorePos;
+            float lodD2 = (pos - lodEye).sqrMagnitude;
+            int lodStep = lodD2 > 70f * 70f ? 16 : lodD2 > 35f * 35f ? 8 : 4;
+            if (((Time.frameCount + fish.ObjectId) & (lodStep - 1)) != 0) return true;
             // Stuck on a step, rock or tree (no progress and no attack for 6 s): hop it 2.5 m on toward the lighthouse.
-            if (!_progress.TryGetValue(fish, out var prog) || (pos - prog.pos).sqrMagnitude > 0.5f * 0.5f || SlowFactor(fish) <= 0f) _progress[fish] = prog = (pos, Time.time); // held by a stun: not stuck
-            else if (Time.time - prog.time > 6f)
+            if (!_progress.TryGetValue(fish, out var prog) || (pos - prog.pos).sqrMagnitude > 0.5f * 0.5f || SlowFactor(fish) <= 0f)
             {
-                Vector3 toCore = (_server.CorePos - pos); toCore.y = 0f;
-                Vector3 hop = pos + toCore.normalized * Mathf.Min(2.5f, toCore.magnitude * 0.5f);
-                if (Physics.Raycast(hop + Vector3.up * 8f, Vector3.down, out var ground, 16f, GameInfo.LevelLayer)) hop = ground.point + Vector3.up * (0.3f + 0.3f * stats.Scale);
-                rig.position = hop; fish.transform.position = hop;
+                _progress[fish] = prog = (pos, Time.time);
+                _stuckTries[fish] = 0;
+            }
+            else if (Time.time - prog.time > 2.5f)
+            {
+                // Stuck on a wreck, a rock, a wall corner or another fish. The first tries sidestep around it; a wreck is
+                // wider than a fish, so later tries move farther sideways instead of only trying the same centre line.
+                _stuckTries.TryGetValue(fish, out int tries); _stuckTries[fish] = ++tries;
+                Vector3 toCore = _server.CorePos - pos; toCore.y = 0f;
+                if (toCore.sqrMagnitude < 0.01f) toCore = fish.transform.forward;
+                Vector3 side = Vector3.Cross(Vector3.up, toCore.normalized);
+                float lateral = tries <= 1 ? 2.5f : tries == 2 ? 4.5f : 6.5f;
+                Vector3 hop = pos;
+                bool landed = false;
+                foreach (int sign in new[] { 1, -1 })
+                {
+                    foreach (float step in new[] { 2.5f, 4.5f, 7f })
+                    {
+                        Vector3 p = pos + toCore.normalized * Mathf.Min(step, toCore.magnitude * 0.7f) + side * (sign * lateral);
+                        if (!Physics.Raycast(p + Vector3.up * 20f, Vector3.down, out var g, 40f, GameInfo.LevelLayer)) continue;
+                        if (g.point.y < WaterManager.GetWaterHeight(g.point) + 0.2f) continue;
+                        hop = g.point + Vector3.up * (0.3f + 0.3f * stats.Scale);
+                        landed = true;
+                        break;
+                    }
+                    if (landed) break;
+                }
+                if (!landed) return true; // no ground anywhere nearby: leave it to the airborne recovery
+                rig.position = hop; fish.transform.position = hop; rig.linearVelocity = Vector3.zero;
                 _progress[fish] = (hop, Time.time);
-                BuildSystem.Log.LogInfo($"unstuck {tag.Kind} from {pos}");
+                _blockedSince.Remove(fish); _flank.Remove(fish);
+                if (FortressPlugin.Instance != null && FortressPlugin.Instance.VerboseLogs)
+                    BuildSystem.Log.LogInfo($"unstuck {tag.Kind} from {pos} to {hop} (2.5 s, try {tries}, sideways {lateral})");
                 AutoTest.Count("unstuck");
                 return true;
             }
@@ -283,12 +424,19 @@ namespace HtfFortress
                 Explode(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage), atBuilding: false);
                 return true;
             }
-            Vector3 target = prey && tag.Kind != EnemyKind.Bomber ? prey.Transform.position : _server.CorePos;
             bool decoyed = DecoyNear(pos, out var duck);
+            Vector3 coreTo = _server.CorePos - pos; coreTo.y = 0f;
+            float coreDist = coreTo.magnitude;
+            Vector3 target = prey && tag.Kind != EnemyKind.Bomber ? prey.Transform.position : _server.CorePos;
             if (decoyed) { target = duck; prey = null; }
             Vector3 to = target - pos; to.y = 0f;
             float dist = to.magnitude;
             Vector3 dir = dist > 0.01f ? to / dist : fish.transform.forward;
+            if (!prey && !decoyed && _flowValid)
+            {
+                Vector3 flow = FlowDir(pos);
+                if (flow.sqrMagnitude > 0.01f) dir = flow;
+            }
             fish.transform.forward = dir;
             if (decoyed && dist <= 1.5f + 0.5f * (stats.Scale - 1f))
             {
@@ -306,7 +454,7 @@ namespace HtfFortress
             else
             {
                 float reach = CoreHitRange + 0.4f * (stats.Scale - 1f);
-                if (dist <= reach) { Halt(rig); TryAttack(fish, null, tag, stats); return true; }
+                if (coreDist <= reach) { Halt(rig); TryAttack(fish, null, tag, stats); return true; }
             }
 
             // Flanking: after being held at a wall for 3 s, walk sideways along it for a while looking for a way round.
@@ -314,7 +462,7 @@ namespace HtfFortress
             if (flanking) dir = fl.dir;
             fish.transform.forward = dir;
 
-            Collider wall = WallAhead(pos, dir, stats);
+            Collider wall = _anyWalls ? WallAhead(pos, dir, stats) : null;
             if (wall && tag.Kind == EnemyKind.Digger && !_dug.Contains(fish)) { StartCoroutine(Burrow(fish, rig, dir)); return true; }
             // A walled-in fort used to leave fish hammering whatever wall each of them happened to meet (or nothing at all):
             // they now all break the one wall UpdateBreach picked. If the way to it is clear, walk there; at it, hit it.
@@ -711,6 +859,7 @@ namespace HtfFortress
         }
 
         private readonly Dictionary<RunningFish, (Vector3 pos, float time)> _progress = new Dictionary<RunningFish, (Vector3, float)>();
+        private readonly Dictionary<RunningFish, int> _stuckTries = new Dictionary<RunningFish, int>();
         private readonly Dictionary<RunningFish, float> _airborne = new Dictionary<RunningFish, float>(); // since when it hasn't touched ground
 
         private static void Halt(Rigidbody rig) => rig.linearVelocity = new Vector3(0f, rig.linearVelocity.y, 0f);
@@ -759,15 +908,18 @@ namespace HtfFortress
             if (Time.time < next) return;
             _nextAttack[fish] = Time.time + 1.2f;
             _progress[fish] = (fish.transform.position, Time.time);
-            int dmg = Mathf.Min(60, Mathf.RoundToInt(12f * stats.Damage * (1f + 0.05f * Mathf.Max(0, _server.Wave - 1))));
+            int dmg = PlayerDamage(Mathf.RoundToInt(12f * stats.Damage));
             HurtPlayer(prey, dmg, fish.transform.forward * 4f + Vector3.up * 2f);
             if (Perks.Legend(prey, Gear.SharkArmor)) { fish.ServerChangeHp(25); AutoTest.Count("legend_biteback"); Perks.Proc(Gear.SharkArmor, fish.transform.position); } // legendary: bite back
         }
 
+        // Player damage scales with the wave like the enemies do, but stays under their (fixed) 100 HP: a late bite hurts.
+        private int PlayerDamage(int baseDmg) => Mathf.Min(80, Mathf.RoundToInt(baseDmg * (1f + 0.08f * Mathf.Max(0, _server.Wave - 1))));
+
         public static void HurtPlayer(Player p, int dmg, Vector3 force)
         {
             if (!p || !Server.Instance) return;
-            dmg = Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Perks.Of(p, Gear.SharkArmor))));
+            dmg = Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Perks.Of(p, Gear.SharkArmor)) * (Loot.Instance && Loot.Instance.Vault != null ? Loot.Instance.Vault.HealthTakenMult : 1f)));
             Server.Instance.HitPlayer(p, dmg, force, p.Transform.position, 3);
             AutoTest.Count("player_hits");
         }
@@ -830,7 +982,7 @@ namespace HtfFortress
                 BuildSystem.Instance.ServerDamageArea(at, 3.5f, dmg);
                 if ((at - _server.CorePos).sqrMagnitude < 4.5f * 4.5f) DamageCore(dmg / 2);
             }
-            HurtPlayersAround(at, 3.5f, 35);
+            HurtPlayersAround(at, 3.5f, PlayerDamage(35));
             Fx.Send(FxKind.Blast, at, at);
             // Gone in the blast: no coins, no body, no loot (killing it before it gets there is what pays).
             FortressPlugin.Alive.Remove(fish);
@@ -895,7 +1047,7 @@ namespace HtfFortress
             if (!_server.Active) yield break;
             BuildSystem.Instance.ServerDamageArea(at, 1.6f, dmg);
             if ((at - _server.CorePos).sqrMagnitude < 2.5f * 2.5f) DamageCore(dmg);
-            HurtPlayersAround(at, 2f, 15);
+            HurtPlayersAround(at, 2f, PlayerDamage(15));
         }
 
         // ---------- per frame ----------
@@ -1162,7 +1314,7 @@ namespace HtfFortress
                 _coinText.text = "$" + ViewCoins + (Time.time < _coinPopUntil ? $" <size=72%><color={Hud.Hex(Hud.Good)}>{_coinPop}</color></size>" : "");
                 bool host = InstanceFinder.IsServerStarted;
                 int mend = _view.Building && BuildSystem.Instance ? BuildSystem.Instance.ClientRepairAllCost : 0;
-                SetPhase(_view.Building ? L10n.T("buildPhase", _view.Countdown) + (host ? "　" + L10n.T("phaseSkip", FortressPlugin.Instance.ReadyKeyName) : "")
+                SetPhase(_view.Building ? L10n.T("buildPhase", _view.Countdown) + "　" + L10n.T("phaseSkip", FortressPlugin.Instance.ReadyKeyName)
                                           + "　" + L10n.T("phaseBuildKey", BuildSystem.BuildKey.Value) + (mend > 0 ? "　" + L10n.T("phaseRepairAll", mend) : "")
                                         : $"<color={Hud.Hex(Hud.Accent)}>{L10n.T("fightPhase")}</color>"
                                           + (host && FortressPlugin.Instance.CanCallNext ? "　" + L10n.T("phaseCallNext", FortressPlugin.Instance.ReadyKeyName) : ""));
@@ -1233,6 +1385,7 @@ namespace HtfFortress
             _registeredOn = nm;
             nm.ClientManager.RegisterBroadcast<SiegeState>((s, ch) => { _view = s; HasView = true; });
             nm.ServerManager.RegisterBroadcast(Net.Safe<TestKeyRequest>((conn, r, ch) => { if (FortressPlugin.Instance) FortressPlugin.Instance.HostTestKey(r); }));
+            nm.ServerManager.RegisterBroadcast(Net.Safe<SkipBuildRequest>((conn, r, ch) => { if (FortressPlugin.Instance) FortressPlugin.Instance.ServerSkipBuild(); }));
             nm.SceneManager.OnClientLoadedStartScenes += (conn, asServer) => { if (asServer) InstanceFinder.ServerManager.Broadcast(conn, _server); };
             nm.ClientManager.OnClientConnectionState += a => { if (a.ConnectionState == LocalConnectionState.Stopped) { _view = default; HasView = false; } };
             nm.ServerManager.OnServerConnectionState += a => { if (a.ConnectionState == LocalConnectionState.Stopped) { _server = default; _walkers.Clear(); } };

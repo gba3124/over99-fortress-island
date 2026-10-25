@@ -44,11 +44,13 @@ namespace HtfFortress
         // Shared materials for the many identical small props (loot, scales, gulls, baskets): one material and one swatch
         // texture for all of them, instead of a new pair per instance (which broke batching and filled memory).
         private static readonly Dictionary<(Color, Color), Material> SharedMats = new Dictionary<(Color, Color), Material>();
+        private static readonly HashSet<Material> SharedSet = new HashSet<Material>();
         public static Material MakeShared(Color color, Color emit = default)
         {
             if (SharedMats.TryGetValue((color, emit), out var m) && m) return m;
             m = Make(color, emit);
             SharedMats[(color, emit)] = m;
+            SharedSet.Add(m);
             return m;
         }
 
@@ -165,6 +167,9 @@ namespace HtfFortress
                 foreach (var m in Mats)
                 {
                     if (!m) continue;
+                    // Shared prop materials live for the session: destroying one left every other scale/loot/gull that shared
+                    // it rendering magenta (the playtest's "some drops turned purple").
+                    if (SharedSet.Contains(m)) continue;
                     if (Swatch.TryGetValue(m, out var tex)) { if (tex) Object.Destroy(tex); Swatch.Remove(m); }
                     Painted.Remove(m);
                     Object.Destroy(m);

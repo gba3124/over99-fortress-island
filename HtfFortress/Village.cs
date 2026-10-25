@@ -8,7 +8,7 @@ using UnityEngine.UI;
 
 namespace HtfFortress
 {
-    // The fish stall's counter (talk to the fishmonger): sell what's in your net, buy a bigger net, buy a grilled fish
+    // The fish stall's counter (talk to the fishmonger): buy a grilled fish
     // (eaten on the spot), and the helpers. All paid in the crew's money, round or not (Owen: "隨時都能購"). Mouse-driven;
     // Esc, right-click or walking away closes it.
     public class StallMenu : MonoBehaviour
@@ -16,18 +16,36 @@ namespace HtfFortress
         public static StallMenu Instance;
         public static bool IsOpen { get; private set; }
         private Canvas _canvas;
-        private RectTransform _panel;
-        private string _drawn;
+        private Transform _panel;
+        private float _nextCheck, _nextRefresh;
+        private bool _dirty = true;
+
+        private TextMeshProUGUI _sellTitle, _sellDetail, _sellBtnText;
+        private Button _sellBtn;
+        private TextMeshProUGUI _netTitle, _netDetail, _netBtnText;
+        private Button _netBtn;
+        private TextMeshProUGUI _foodBtnText, _backupTitle, _backupDetail, _backupBtnText;
+        private Button _foodBtn, _backupBtn;
+        private TextMeshProUGUI[] _helpTitle = new TextMeshProUGUI[5], _helpDetail = new TextMeshProUGUI[5], _helpBtnText = new TextMeshProUGUI[5];
+        private Button[] _helpBtn = new Button[5];
+        private int _netLevel, _netCount, _netValue, _coins;
+        private bool _inRound;
+        private float _buyLockUntil;
 
         private void Awake() => Instance = this;
 
         public void Open()
         {
             if (!Hud.Font) return;
+            if (VaultUI.IsOpen && VaultUI.Instance) VaultUI.Instance.Close();
+            if (KeeperMenu.IsOpen && KeeperMenu.Instance) KeeperMenu.Instance.Close();
+            if (PieceMenu.IsOpen && PieceMenu.Instance) PieceMenu.Instance.Close();
             IsOpen = true;
-            _drawn = null;
             Hud.Canvas("FortressStall", 610, ref _canvas).gameObject.SetActive(true);
             PlayerCamera.ToggleMouse(true);
+            if (!_panel) Build();
+            _dirty = true;
+            Refresh();
             AutoTest.Count("stall_opened");
         }
 
@@ -45,123 +63,165 @@ namespace HtfFortress
                    && (Player.LocalPlayer.Transform.position - island.MarketPos).sqrMagnitude < 5f * 5f;
         }
 
-        private float _nextCheck, _nextRedraw;
         public static void RefreshSoon()
         {
             if (!Instance) return;
-            Instance._drawn = null; Instance._nextCheck = 0f; Instance._nextRedraw = 0f;
+            Instance._dirty = true;
+            Instance._nextCheck = 0f;
+            Instance._nextRefresh = 0f;
         }
+
         private void Update()
         {
             if (!IsOpen) return;
             var mouse = Mouse.current;
             if (!Near() || (mouse != null && mouse.rightButton.wasPressedThisFrame)) { Close(); return; }
-            // The key is a few strings; making it every frame and rebuilding the panel whenever one changed was most of what
-            // opening this menu cost. Check five times a second, redraw at most twice a second, and log a slow build.
             if (Time.unscaledTime < _nextCheck) return;
             _nextCheck = Time.unscaledTime + 0.2f;
-            var net = FortressNet.Instance.ClientNet;
-            var hv = Loot.Instance.ClientVault;
-            string key = $"{net.count}|{net.capacity}|{net.value}|{Siege.Instance.ViewCoins}|{Siege.Instance.ViewActive}|{hv.Helpers}|{hv.HelperSpeed}|{hv.HelperLoad}|{hv.Oven}";
-            if (key == _drawn || Time.unscaledTime < _nextRedraw) return;
-            _drawn = key;
-            float t0 = Time.realtimeSinceStartup;
-            Redraw();
-            float ms = (Time.realtimeSinceStartup - t0) * 1000f;
-            if (ms > 40f) BuildSystem.Log.LogWarning($"stall redraw {ms:0} ms");
-            _nextRedraw = Time.unscaledTime + 0.5f;
+            if (!_dirty || Time.unscaledTime < _nextRefresh) return;
+            _dirty = false;
+            _nextRefresh = Time.unscaledTime + 0.25f;
+            Refresh();
         }
 
-        private void Redraw()
+        // Build once: every row is a fixed widget, Refresh only changes its words (no Destroy/rebuild while browsing).
+        private void Build()
         {
-            if (_panel) { _panel.gameObject.SetActive(false); Destroy(_panel.gameObject); }
-            Vector2 C = new Vector2(0.5f, 0.5f), T = new Vector2(0.5f, 1f), L = new Vector2(0f, 1f);
-            var dim = Hud.Box(_canvas.transform, C, Vector2.zero, new Vector2(4000f, 3000f), new Color(0f, 0f, 0f, 0.35f), 0f);
+            var dim = Hud.Box(_canvas.transform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(4000f, 3000f), new Color(0f, 0f, 0f, 0.4f), 0f);
             dim.raycastTarget = true;
-            _panel = dim.rectTransform;
-            // Two columns: the fish (sell, the net, food) on the left, the helpers on the right.
-            var p = Hud.Box(_panel, C, new Vector2(0f, 30f), new Vector2(1500f, 830f), Hud.PanelSolid, 24f).transform;
-            Hud.Label(p, L10n.T("stallTitle"), 38f, T, new Vector2(0f, -22f), new Vector2(1400f, 48f), TextAlignmentOptions.Center, bold: true);
-            Hud.Box(p, T, new Vector2(0f, -76f), new Vector2(90f, 5f), Hud.Accent, 2.5f);
-            Hud.Label(p, "“" + L10n.T("stallLine") + "”", 21f, T, new Vector2(0f, -92f), new Vector2(1400f, 30f), TextAlignmentOptions.Center, Hud.Muted);
-            const float Left = -370f, Right = 370f;
-            Hud.Label(p, L10n.T("stallFishHead"), 23f, T, new Vector2(Left, -128f), new Vector2(700f, 30f), TextAlignmentOptions.Left, Hud.Accent, bold: true);
-            Hud.Label(p, L10n.T("stallHelpersHead"), 23f, T, new Vector2(Right, -128f), new Vector2(700f, 30f), TextAlignmentOptions.Left, Hud.Accent, bold: true);
+            _panel = Hud.Box(dim.transform, new Vector2(0.5f, 0.5f), new Vector2(0f, 20f), new Vector2(1500f, 820f), Hud.PanelSolid, 26f).transform;
+            var T = new Vector2(0.5f, 1f);
+            Hud.Label(_panel, L10n.T("stallTitle"), 38f, T, new Vector2(0f, -22f), new Vector2(1400f, 48f), TextAlignmentOptions.Center, bold: true);
+            Hud.Box(_panel, T, new Vector2(0f, -74f), new Vector2(90f, 5f), Hud.Accent, 2.5f);
+            Hud.Label(_panel, "“" + L10n.T("stallLine") + "”", 21f, T, new Vector2(0f, -90f), new Vector2(1400f, 30f), TextAlignmentOptions.Center, Hud.Muted);
+            const float LX = 30f, RX = 770f;
+            Hud.Label(_panel, L10n.T("stallFishHead"), 23f, new Vector2(0f, 1f), new Vector2(LX + 6f, -126f), new Vector2(650f, 30f), TextAlignmentOptions.Left, Hud.Accent, bold: true);
+            Hud.Label(_panel, L10n.T("stallHelpersHeadShort"), 23f, new Vector2(0f, 1f), new Vector2(RX + 6f, -126f), new Vector2(650f, 30f), TextAlignmentOptions.Left, Hud.Accent, bold: true);
 
-            bool inRound = Siege.Instance && Siege.Instance.ViewActive;
+            void Row(float x, float y, string picture, out TextMeshProUGUI title, out TextMeshProUGUI detail, out Button button, out TextMeshProUGUI buttonText)
+            {
+                var row = Hud.Box(_panel, new Vector2(0f, 1f), new Vector2(x, y), new Vector2(700f, 116f), Hud.Raised, 16f).transform;
+                Hud.Picture(row, picture, new Vector2(0f, 0.5f), new Vector2(18f, 0f), new Vector2(74f, 74f), new Vector2(0f, 0.5f));
+                title = Hud.Label(row, "", 24f, new Vector2(0f, 1f), new Vector2(112f, -14f), new Vector2(390f, 34f), TextAlignmentOptions.TopLeft, bold: true);
+                detail = Hud.Label(row, "", 18f, new Vector2(0f, 1f), new Vector2(112f, -52f), new Vector2(390f, 58f), TextAlignmentOptions.TopLeft, Hud.Muted);
+                var img = Hud.Box(row, new Vector2(1f, 0.5f), new Vector2(-18f, 0f), new Vector2(178f, 58f), new Color(0.26f, 0.42f, 0.78f), 14f);
+                img.raycastTarget = true;
+                button = img.gameObject.AddComponent<Button>();
+                var colors = button.colors; colors.highlightedColor = new Color(1.2f, 1.2f, 1.2f); colors.disabledColor = new Color(0.45f, 0.45f, 0.45f, 0.55f); button.colors = colors;
+                buttonText = Hud.Label(img.transform, "", 21f, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(166f, 50f), TextAlignmentOptions.Center, bold: true);
+                buttonText.enableAutoSizing = true; buttonText.fontSizeMin = 13f; buttonText.fontSizeMax = 21f;
+            }
+            Row(LX, -164f, "StallFood", out var foodTitle, out var foodDetail, out _foodBtn, out _foodBtnText);
+            foodTitle.text = L10n.T("stallFoodTitle"); foodDetail.text = L10n.T("stallFoodDetail");
+            Row(LX, -288f, "StallFood", out _backupTitle, out _backupDetail, out _backupBtn, out _backupBtnText);
+            string[] pics = { "StallHelper", "StallSpeed", "StallBasket", "StallOven", "StallHelper" };
+            for (int i = 0; i < 5; i++) Row(RX, -164f - 126f * i, pics[i], out _helpTitle[i], out _helpDetail[i], out _helpBtn[i], out _helpBtnText[i]);
+
+            _foodBtn.onClick.AddListener(() => { Send(new NetRequest { Food = true }, "stall_buy_food"); Close(); });
+            _backupBtn.onClick.AddListener(() =>
+            {
+                if (Time.unscaledTime < _buyLockUntil) return;
+                _buyLockUntil = Time.unscaledTime + 0.08f;
+                FortressNet.Instance.PreviewBackup(FortressNet.BackupPack);
+                Send(new NetRequest { Food = true, Level = FortressNet.BackupPack }, "stall_buy_backup");
+                Refresh();
+            });
+            for (int i = 0; i < 5; i++)
+            {
+                int what = i == 4 ? 4 : i;
+                _helpBtn[i].onClick.AddListener(() =>
+                {
+                    if (Time.unscaledTime < _buyLockUntil) return;
+                    _buyLockUntil = Time.unscaledTime + 0.08f;
+                    PreviewHelper(what);
+                    Send(new HelperBuy { What = (byte)what }, "stall_helper_" + what);
+                    Refresh();
+                });
+            }
+            Hud.Label(_panel, Hud.Keys(L10n.T("stallHint")), 18f, new Vector2(0.5f, 0f), new Vector2(0f, 20f), new Vector2(1400f, 30f), TextAlignmentOptions.Center, Hud.Muted);
+        }
+
+        // The host owns these; show the bought step on the same click, then let the vault answer correct it.
+        private static void PreviewHelper(int what)
+        {
+            var v = Loot.Instance ? Loot.Instance.ClientVault : null;
+            if (v == null) return;
+            switch (what)
+            {
+                case 0: if (v.Helpers < Helpers.MaxHelpers) v.Helpers++; break;
+                case 1: if (v.HelperSpeed < Helpers.MaxLevel) v.HelperSpeed++; break;
+                case 2: if (v.HelperLoad < Helpers.MaxLevel) v.HelperLoad++; break;
+                case 3: v.Oven = true; break;
+                case 4: if (v.Helpers > 0) v.Helpers--; break;
+            }
+        }
+
+        private static void Send<T>(T msg, string test) where T : struct, FishNet.Broadcast.IBroadcast
+        {
+            InstanceFinder.ClientManager.Broadcast(msg);
+            AutoTest.Count(test);
+        }
+
+        private void Refresh()
+        {
+            if (!_panel) return;
             var net = FortressNet.Instance.ClientNet;
             var vault = Loot.Instance.ClientVault;
             var key = Loot.KeyOf(Player.LocalPlayer);
+            _coins = Siege.Instance.ViewCoins;
+            _inRound = Siege.Instance.ViewActive;
+            _netCount = net.count; _netValue = net.value;
             int worth = Mathf.RoundToInt(net.value * (1f + vault.PersonalValue(key, Gear.FishGloves)));
-            int bonus = Mathf.RoundToInt(vault.PersonalValue(key, Gear.BigNet));
-            int lvl = Array.IndexOf(FortressNet.Capacity, net.capacity - bonus);
-            bool canGrow = lvl >= 0 && lvl < FortressNet.UpgradeCost.Length;
-            int cost = canGrow ? Siege.Money(FortressNet.UpgradeCost[lvl]) : 0;
+            _netLevel = Array.IndexOf(FortressNet.Capacity, net.capacity);
+            bool canGrow = _netLevel >= 0 && _netLevel < FortressNet.UpgradeCost.Length;
+            int netPrice = canGrow ? Siege.Money(FortressNet.UpgradeCost[_netLevel]) : 0;
 
-            // A row each: a picture, what it is, the button.
-            void Row(float x, float y, string picture, string title, string detail, string button, bool enabled, Color colour, Action click)
-            {
-                var row = Hud.Box(p, T, new Vector2(x, y), new Vector2(700f, 110f), Hud.Raised, 16f, pivot: T).transform;
-                Hud.Picture(row, picture, new Vector2(0f, 0.5f), new Vector2(18f, 0f), new Vector2(78f, 78f), new Vector2(0f, 0.5f));
-                Hud.Label(row, title, 25f, L, new Vector2(112f, -16f), new Vector2(380f, 36f), TextAlignmentOptions.TopLeft, bold: true, pivot: L);
-                Hud.Label(row, detail, 18f, L, new Vector2(112f, -56f), new Vector2(380f, 44f), TextAlignmentOptions.TopLeft, Hud.Muted, pivot: L);
-                Btn(row, new Vector2(1f, 0.5f), new Vector2(-18f, 0f), new Vector2(180f, 60f), colour, button, enabled, click); // its right edge: clear of the text
-            }
-            Row(Left, -166f, "GearFishGloves", L10n.T("stallSellTitle", net.count),
-                net.count > 0 ? L10n.T("stallSellDetail", worth) : Hud.Keys(L10n.T("stallSellNone")),
-                L10n.T("stallSellBtn", worth), net.count > 0, new Color(0.22f, 0.58f, 0.38f),
-                () => { InstanceFinder.ClientManager.Broadcast(new NetRequest { Sell = true }); AutoTest.Count("stall_sell"); });
-            Row(Left, -288f, "GearBigNet", canGrow ? L10n.T("stallNetTitle", FortressNet.Capacity[lvl + 1]) : L10n.T("netMax"),
-                canGrow ? L10n.T(inRound ? "stallNetDetail" : "stallNetDetailNext", net.capacity) : L10n.T("stallNetMaxDetail"),
-                canGrow ? "$" + cost : "—", canGrow && Siege.Instance.ViewCoins >= cost, new Color(0.26f, 0.42f, 0.78f),
-                () => InstanceFinder.ClientManager.Broadcast(new NetRequest { Sell = false, Level = lvl }));
+            Set(_sellTitle, L10n.T("stallSellTitle", net.count));
+            Set(_sellDetail, net.count > 0 ? L10n.T("stallSellDetail", worth) : Hud.Keys(L10n.T("stallSellNone")));
+            Btn(_sellBtn, _sellBtnText, L10n.T("stallSellBtn", worth), net.count > 0, new Color(0.22f, 0.58f, 0.38f));
+
+            Set(_netTitle, canGrow ? L10n.T("stallNetTitle", FortressNet.Capacity[_netLevel + 1]) : L10n.T("netMax"));
+            Set(_netDetail, canGrow ? L10n.T(_inRound ? "stallNetDetail" : "stallNetDetailNext", net.capacity) : L10n.T("stallNetMaxDetail"));
+            Btn(_netBtn, _netBtnText, canGrow ? "$" + netPrice : "—", canGrow && _coins >= netPrice, new Color(0.26f, 0.42f, 0.78f));
+
             int food = Siege.Money(FortressNet.FoodCost);
-            Row(Left, -410f, "StallFood", L10n.T("stallFoodTitle"), L10n.T("stallFoodDetail"),
-                "$" + food, Siege.Instance.ViewCoins >= food, new Color(0.78f, 0.45f, 0.18f),
-                () => { InstanceFinder.ClientManager.Broadcast(new NetRequest { Food = true }); AutoTest.Count("stall_buy_food"); Close(); }); // closed, to see yourself eat it
+            Btn(_foodBtn, _foodBtnText, "$" + food, _coins >= food, new Color(0.78f, 0.45f, 0.18f));
+            int backup = FortressNet.Instance.ClientBackup, pack = Siege.Money(FortressNet.BackupCost);
+            Set(_backupTitle, L10n.T("stallBackupTitle", backup));
+            Set(_backupDetail, L10n.T("stallBackupDetail", FortressNet.BackupPack));
+            Btn(_backupBtn, _backupBtnText, "$" + pack, _coins >= pack, new Color(0.55f, 0.38f, 0.16f));
 
-            // The helpers: hire, faster, bigger baskets, the oven. Each says what it is now and what the next step gives.
-            void HelperRow(float y, byte what, string picture, string title, string detail)
-            {
-                int price = Helpers.PriceOf(what, vault);
-                int dollars = price >= 0 ? Siege.Money(price) : 0;
-                Row(Right, y, picture, title, detail, price < 0 ? L10n.T(what == 3 ? "helperOwned" : "helperMaxed") : "$" + dollars,
-                    price >= 0 && Siege.Instance.ViewCoins >= dollars, new Color(0.26f, 0.55f, 0.5f),
-                    () => { InstanceFinder.ClientManager.Broadcast(new HelperBuy { What = what }); AutoTest.Count("stall_helper_" + what); });
-            }
-            HelperRow(-166f, 0, "StallHelper", L10n.T("helperHireTitle", vault.Helpers, Helpers.MaxHelpers, Mathf.Max(0, vault.Helpers - Helpers.HumanHelpers)), L10n.T("helperHireDetail"));
+            HelperRow(0, L10n.T("helperHireTitleShort", vault.Helpers, Helpers.MaxHelpers), L10n.T("helperHireShort", Helpers.HumanHelpers));
             bool fastest = vault.HelperSpeed >= Helpers.MaxLevel, biggest = vault.HelperLoad >= Helpers.MaxLevel;
-            HelperRow(-288f, 1, "StallSpeed", L10n.T("helperSpeedTitle", vault.HelperSpeed, Helpers.MaxLevel),
-                fastest ? L10n.T("helperSpeedNow", Helpers.Speed(vault.HelperSpeed).ToString("0.#"))
-                        : L10n.T("helperSpeedDetail", Helpers.Speed(vault.HelperSpeed).ToString("0.#"), Helpers.Speed(vault.HelperSpeed + 1).ToString("0.#")));
-            HelperRow(-410f, 2, "StallBasket", L10n.T("helperLoadTitle", vault.HelperLoad, Helpers.MaxLevel),
-                biggest ? L10n.T("helperLoadNow", Helpers.Basket(vault.HelperLoad)) : L10n.T("helperLoadDetail", Helpers.Basket(vault.HelperLoad), Helpers.Basket(vault.HelperLoad + 1)));
-            HelperRow(-532f, 3, "StallOven", L10n.T(vault.Oven ? "helperOvenOwned" : "helperOvenTitle"), L10n.T("helperOvenDetail", Mathf.RoundToInt(Helpers.OvenBonus * 100f)));
-            // Dismiss the newest one (free, no refund): the seagulls hired last go first.
-            Row(Right, -654f, "StallHelper", L10n.T("stallDismissTitle"), L10n.T("stallDismissDetail"),
-                L10n.T("stallDismissBtn"), vault.Helpers > 0, new Color(0.55f, 0.32f, 0.30f),
-                () => { InstanceFinder.ClientManager.Broadcast(new HelperBuy { What = 4 }); AutoTest.Count("stall_helper_dismiss"); });
-            Hud.Label(p, Hud.Keys(L10n.T("stallHint")), 18f, new Vector2(0.5f, 0f), new Vector2(0f, 20f), new Vector2(1400f, 30f), TextAlignmentOptions.Center, Hud.Muted);
+            HelperRow(1, L10n.T("helperSpeedTitle", vault.HelperSpeed, Helpers.MaxLevel),
+                fastest ? L10n.T("helperSpeedShort", Helpers.Speed(vault.HelperSpeed).ToString("0.#"))
+                        : L10n.T("helperSpeedShort", Helpers.Speed(vault.HelperSpeed).ToString("0.#") + " → " + Helpers.Speed(vault.HelperSpeed + 1).ToString("0.#")));
+            HelperRow(2, L10n.T("helperLoadTitle", vault.HelperLoad, Helpers.MaxLevel),
+                biggest ? L10n.T("helperLoadShort", Helpers.Basket(vault.HelperLoad))
+                        : L10n.T("helperLoadShort", Helpers.Basket(vault.HelperLoad) + " → " + Helpers.Basket(vault.HelperLoad + 1)));
+            HelperRow(3, L10n.T(vault.Oven ? "helperOvenOwned" : "helperOvenTitle"), L10n.T("helperOvenShort", Mathf.RoundToInt(Helpers.OvenBonus * 100f)));
+            HelperRow(4, L10n.T("stallDismissTitle"), L10n.T("helperDismissShort"));
         }
 
-        private static void Btn(Transform parent, Vector2 anchor, Vector2 pos, Vector2 size, Color c, string text, bool enabled, Action onClick)
+        private void HelperRow(int i, string title, string detail)
         {
-            var img = Hud.Box(parent, anchor, pos, size, c, 14f);
-            img.raycastTarget = true;
-            var b = img.gameObject.AddComponent<Button>();
-            var colors = b.colors;
-            colors.highlightedColor = new Color(1.25f, 1.25f, 1.25f);
-            colors.disabledColor = new Color(0.45f, 0.45f, 0.45f, 0.55f);
-            b.colors = colors;
-            b.interactable = enabled;
-            b.onClick.AddListener(() =>
-            {
-                Fx.Sound("Click", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Vector3.zero, 0.6f, AudioDistance.Short);
-                onClick();
-                RefreshSoon(); // bought / sold / dismissed: show it on the next frame
-            });
-            var t = Hud.Label(img.transform, text, 22f, new Vector2(0.5f, 0.5f), Vector2.zero, size - new Vector2(12f, 6f), TextAlignmentOptions.Center, bold: true);
-            t.enableAutoSizing = true; t.fontSizeMin = 13f; t.fontSizeMax = 22f;
+            byte what = i == 4 ? (byte)4 : (byte)i;
+            int price = i == 4 ? -2 : Helpers.PriceOf(what, Loot.Instance.ClientVault);
+            int dollars = price >= 0 ? Siege.Money(price) : 0;
+            string label = i == 4 ? L10n.T("stallDismissBtn")
+                : price < 0 ? L10n.T(what == 3 ? "helperOwned" : "helperMaxed") : "$" + dollars;
+            bool enabled = i == 4 ? Loot.Instance.ClientVault.Helpers > 0 : price >= 0 && _coins >= dollars;
+            Set(_helpTitle[i], title); Set(_helpDetail[i], detail);
+            Btn(_helpBtn[i], _helpBtnText[i], label, enabled, i == 4 ? new Color(0.55f, 0.32f, 0.30f) : new Color(0.26f, 0.55f, 0.5f));
+        }
+
+        private static void Set(TextMeshProUGUI t, string s) { if (t && t.text != s) t.text = s; }
+        private static void Btn(Button b, TextMeshProUGUI label, string text, bool on, Color colour)
+        {
+            if (!b) return;
+            b.interactable = on;
+            if (label) { if (label.text != text) label.text = text; label.color = on ? Color.white : new Color(0.85f, 0.85f, 0.85f, 0.65f); }
+            var img = b.GetComponent<Image>(); if (img) img.color = on ? colour : new Color(colour.r * 0.55f, colour.g * 0.55f, colour.b * 0.55f, 0.8f);
         }
     }
 

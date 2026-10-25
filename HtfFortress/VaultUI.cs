@@ -31,23 +31,30 @@ namespace HtfFortress
         private const float UseRadius = 3.5f;
         private bool Smith => CurrentDesk == Desk.Smith;
 
-        // One slot's worth: up to Stack of one thing, gear (or a weapon) at a rarity, or one of the game's items.
+        // One vault slot: a (gear, rarity) group (its 0-3★ counts are substacks inside that one slot), or one of the game's
+        // items. Stars is the substack shown/selected for the group (default: the highest one there); StarCounts is that
+        // group's 0★/1★/2★/3★ breakdown (null when this Pile was made by hand, e.g. a shop tile).
         private struct Pile
         {
             public Gear? Gear; public Rarity Rarity; public byte Item; public int Count;
+            public int Stars; public int[] StarCounts;
             public bool IsItem => !Gear.HasValue;
+            public int StarCount(int s) => StarCounts != null && s >= 0 && s < StarCounts.Length ? StarCounts[s] : s == Stars ? Count : 0;
             public bool Same(Pile o) => IsItem ? o.IsItem && o.Item == Item : !o.IsItem && o.Gear == Gear && o.Rarity == Rarity;
         }
 
-        // What's on screen: a slot of the loadout (kind, place in its row, index in the vault's list).
-        private struct SlotRef { public int Kind, Visual, List; public (Gear, Rarity)? Item; }
+        // What's on screen: a slot of the loadout (kind, place in its row, index in the vault's list). Item is the equipped
+        // gear key: the stars too, so taking it off / dragging it puts the same substack back.
+        private struct SlotRef { public int Kind, Visual, List; public GearKey? Item; }
 
         private GameObject _root;
         private Transform _gridLayer, _tabsLayer, _rightLayer, _cardLayer, _dragLayer;
         private TextMeshProUGUI _title, _subtitle, _scales, _hint, _capacity, _expandText;
+        private UnityEngine.UI.Image _scaleIcon;
         private Button _expandBtn;
         private VaultData _drawn;
         private int _lastSig; private bool _sigKnown; private float _nextSig, _nextRedraw;
+        private bool _syncPending; private float _syncAt;
         private float _lastRedrawMs;
         private int _tab;                 // vault: 0 all, 1 gear, 2 weapons, 3 the game's items; smithy: 0 weapons, 1 gear, 2 the shop, 3 mods
         private int _gearSide;            // the gear tab's filter: 0 all, 1 for people (personal + active), 2 for towers (fortress)
@@ -55,6 +62,9 @@ namespace HtfFortress
         private bool Shop => Smith && _tab == ShopTab;
         private bool Modding => Smith && _tab == ModTab;
         private Pile? _sel, _hover;
+        // Which substack a gear group's tile shows/equips (0-3★): the bench's star buttons (or the highest star there when
+        // nothing was picked). Only remembered while it still has pieces in it; the highest star otherwise.
+        private readonly Dictionary<(Gear, Rarity), int> _pickedStar = new Dictionary<(Gear, Rarity), int>();
         private SlotRef? _hoverSlot;
         private Expansion? _hoverBuy;
         private string _benchHover;       // the bench button under the mouse: "merge", "ascend", "salvage", "enhance"
@@ -99,11 +109,16 @@ namespace HtfFortress
                         if (expired) _sellArmed = -1;
                         _sigKnown = true; _lastSig = _sigSeen;
                         float t0 = Time.realtimeSinceStartup;
-                        Redraw();
+                        if (Modding && _sigKnown && !_iconsPending) RedrawModsOnly(); else Redraw();
                         _lastRedrawMs = (Time.realtimeSinceStartup - t0) * 1000f;
                         if (_lastRedrawMs > 40f) BuildSystem.Log.LogWarning($"vault redraw {_lastRedrawMs:0} ms");
                         _nextRedraw = Time.unscaledTime + 0.5f;
                     }
+                }
+                if (_syncPending && Time.unscaledTime >= _syncAt)
+                {
+                    _syncPending = false;
+                    Loot.Instance.RequestVaultSync();
                 }
                 if (_ghost) _ghost.rectTransform.position = Mouse.current != null ? (Vector3)Mouse.current.position.ReadValue() : _ghost.rectTransform.position;
                 PlaceHotbarHandles();
@@ -198,7 +213,7 @@ namespace HtfFortress
         {
             if (_dragHotbar >= 0 || _dragSlot != null || !(_dragPile is Pile p)) return;
             if (p.IsItem) Send(VaultAction.TakeItem, slot: Smith ? 1 : 0, item: p.Item, count: 1, into: i + 1);
-            else if (GearCatalog.IsWeapon(p.Gear.Value) && Loot.Instance.ClientVault.Count(p.Gear.Value, p.Rarity) > 0) Send(VaultAction.Take, p.Gear.Value, p.Rarity, slot: Smith ? 1 : 0, count: 1, into: i + 1);
+            else if (GearCatalog.IsWeapon(p.Gear.Value) && GroupCount(Loot.Instance.ClientVault, p.Gear.Value, p.Rarity) > 0) Send(VaultAction.Take, p.Gear.Value, p.Rarity, slot: Smith ? 1 : 0, count: 1, into: i + 1, stars: p.Stars);
             else return;
             Click("UnequipItem");
             AutoTest.Count("hotbar_drop");
@@ -209,13 +224,13 @@ namespace HtfFortress
         {
             var me = Player.LocalPlayer;
             if (!me || !me.Inventory || !me.Inventory._items.TryGetValue((byte)i, out var item) || !item) return;
-            var pile = WeaponItems.AsFortress(item, out var g, out var r) ? new Pile { Gear = g, Rarity = r, Count = 1 } : new Pile { Item = item.ID, Count = 1 };
+            var pile = WeaponItems.AsFortress(item, out var g, out var r) ? new Pile { Gear = g, Rarity = r, Stars = WeaponItems.StarsOf(item), Count = 1 } : new Pile { Item = item.ID, Count = 1 };
             BeginDrag(pile, null, null, i);
         }
 
         // Auto-test: a weapon from the vault dragged onto hotbar slot i; what's in slot i dragged onto the vault; the slots lit
         // as during a drag (for a picture).
-        public void DebugHotbarTake(Gear g, Rarity r, int i) { _dragPile = new Pile { Gear = g, Rarity = r, Count = 1 }; DroppedOnHotbar(i); EndDrag(); }
+        public void DebugHotbarTake(Gear g, Rarity r, int i, int stars = 0) { _dragPile = new Pile { Gear = g, Rarity = r, Stars = stars, Count = 1 }; DroppedOnHotbar(i); EndDrag(); }
         public void DebugHotbarStore(int i) { BeginHotbarDrag(i); DroppedOnVault(); EndDrag(); }
         public void DebugHotbarLight(bool on) { if (on) BuildHotbarHandles(); LightHotbar(on); }
         public int DebugHotbarHandles => _hotbar.Count;
@@ -229,8 +244,24 @@ namespace HtfFortress
         // Auto-test: a tab.
         public void DebugTab(int tab) { _tab = tab; if (IsOpen) Redraw(); }
 
-        // Auto-test: show one thing's card (and put it on the bench at the smith's).
-        public void DebugSelect(Gear g, Rarity r) { _sel = new Pile { Gear = g, Rarity = r, Count = 1 }; if (IsOpen) Redraw(); }
+        // Auto-test: show one thing's card (and put it on the bench at the smith's). `stars` -1 = the highest one there.
+        public void DebugSelect(Gear g, Rarity r, int stars = -1) { _sel = Selection(Loot.Instance.ClientVault, g, r, stars); if (IsOpen) Redraw(); }
+        // Auto-test: which substack the bench works on (the four star buttons); -1 = the highest one there.
+        public void DebugBenchStar(int stars)
+        {
+            if (!(_sel is Pile p) || p.IsItem) return;
+            p.Stars = stars < 0 ? HighestStar(StarCountsOf(Loot.Instance.ClientVault, p.Gear.Value, p.Rarity)) : Mathf.Clamp(stars, 0, GearCatalog.MaxStars);
+            _sel = p;
+            _pickedStar[(p.Gear.Value, p.Rarity)] = p.Stars;
+            if (IsOpen) Redraw();
+        }
+        // Auto-test: the star glyphs the UI shows for a group's tile (and how many of each substack the card would list).
+        public string DebugStars(Gear g, Rarity r)
+        {
+            var v = Loot.Instance.ClientVault;
+            var counts = StarCountsOf(v, g, r);
+            return StarMark(GroupPile(v, g, r).Stars) + " " + string.Join(" ", counts.Select((n, s) => $"{s}*{n}"));
+        }
         public Button[] DebugButtons() => _rightLayer.GetComponentsInChildren<Button>();
 
         public void Close()
@@ -255,7 +286,7 @@ namespace HtfFortress
                 h = h * 31 + v.Scales; h = h * 31 + v.Best;
                 h = h * 31 + v.SlotsOf(0); h = h * 31 + v.SlotsOf(1); h = h * 31 + v.StorageSlots;
                 h = h * 31 + v.Fortress.Count + v.Items.Count;
-                foreach (var kv in v.Owned) { h = h * 31 + (int)kv.Key.Item1 + (int)kv.Key.Item2 * 7 + kv.Value * 7919; }
+                foreach (var kv in v.Owned) { h = h * 31 + (int)kv.Key.Item1 + (int)kv.Key.Item2 * 7 + kv.Key.Stars * 131 + kv.Value * 7919; }
                 foreach (var kv in v.Personal) h = h * 31 + kv.Value.Count;
                 foreach (var kv in v.ItemCount) { h = h * 31 + kv.Key; h = h * 31 + kv.Value; }
                 foreach (var kv in v.Bought) { h = h * 31 + (int)kv.Key; h = h * 31 + kv.Value; }
@@ -265,11 +296,33 @@ namespace HtfFortress
             }
         }
 
-        private static void Send(VaultAction a, Gear g = default, Rarity r = default, int slot = 0, byte item = 0, int count = 1, int into = 0)
+        // A double click (or a click repeated before the host's answer) used to send the same request twice: the host
+        // correctly applied one, but the panel redrew with stale levels in between, which looked broken.
+        private static VaultAction _lastAction; private static Gear _lastGear; private static Rarity _lastRarity; private static int _lastSlot, _lastItem, _lastAt, _lastStars;
+        private static float _modBusyUntil; private static int _modBusyKey;
+
+        private static void Send(VaultAction a, Gear g = default, Rarity r = default, int slot = 0, byte item = 0, int count = 1, int into = 0, int stars = 0)
         {
+            stars = Mathf.Clamp(stars, 0, GearCatalog.MaxStars);
+            int now = Time.frameCount;
+            if (a == _lastAction && g == _lastGear && r == _lastRarity && slot == _lastSlot && item == _lastItem && stars == _lastStars && now - _lastAt <= 1) return;
+            _lastAction = a; _lastGear = g; _lastRarity = r; _lastSlot = slot; _lastItem = item; _lastStars = stars; _lastAt = now;
+            if (a == VaultAction.Mod) { _modBusyKey = (slot << 16) | (int)g; _modBusyUntil = Time.unscaledTime + 0.12f; }
+            else if (a != VaultAction.Sync && a != VaultAction.SellAll && a != VaultAction.Buy && a != VaultAction.BuyItem && a != VaultAction.Take && a != VaultAction.TakeItem && a != VaultAction.Deposit && a != VaultAction.StoreSlot)
+            {
+                // Preview the same action locally: the labels/rows move on the click, then the host's vault corrects any
+                // difference (a race, a full vault, someone else taking the last one).
+                var cv = Loot.Instance ? Loot.Instance.ClientVault : null;
+                if (cv != null && cv.Apply(a, g, r, slot, Loot.MyKey, stars))
+                {
+                    // Ask the host for the real vault a moment later: if it rejected the action (a race, a full vault), the
+                    // optimistic preview must not stay on screen.
+                    if (Instance) { Instance._syncPending = true; Instance._syncAt = Time.unscaledTime + 0.8f; }
+                }
+            }
             if (InstanceFinder.IsClientStarted)
-                InstanceFinder.ClientManager.Broadcast(new VaultRequest { Action = a, Gear = g, Rarity = r, Slot = (byte)slot, Item = item, Count = (byte)Mathf.Clamp(count, 0, 255), Into = (byte)into });
-            RefreshSoon(); // an action should show at once, not up to half a second later
+                InstanceFinder.ClientManager.Broadcast(new VaultRequest { Action = a, Gear = g, Rarity = r, Slot = (byte)slot, Item = item, Count = (byte)Mathf.Clamp(count, 0, 255), Into = (byte)into, Stars = (byte)stars });
+            if (a != VaultAction.Mod) RefreshSoon(); // mods wait for the host's answer: instantly rebuilding with the old level looked wrong
         }
 
         // Something was clicked: let the next frame redraw (the rate limits still bound how often that can happen).
@@ -318,6 +371,7 @@ namespace HtfFortress
             _subtitle = Text(panel, "", 20f, new Vector2(1400f, 28f), new Vector2(0f, 376f), TextAlignmentOptions.Center);
             _subtitle.color = Hud.Muted;
             _scales = Text(panel, "", 24f, new Vector2(300f, 40f), new Vector2(640f, 425f), TextAlignmentOptions.Right);
+            _scaleIcon = Hud.Picture(panel, "ScaleCurrency", new Vector2(1f, 1f), new Vector2(-250f, 425f), new Vector2(28f, 28f), pivot: new Vector2(0f, 1f));
 
             // Left: the vault's slots (a drop target too: drop equipped gear here to take it off).
             var well = Box(panel, new Vector2(GridWidth + 30f, GridHeight + 130f), GridTopLeft + new Vector2(GridWidth / 2f, -GridHeight / 2f + 20f), Hud.Raised, 18f);
@@ -333,7 +387,7 @@ namespace HtfFortress
             // Right: the loadout (or the bench), then the card.
             _rightLayer = Node(panel, "Right");
             _cardLayer = Node(panel, "Card");
-            _hint = Text(panel, "", 18f, new Vector2(1560f, 28f), new Vector2(0f, -440f), TextAlignmentOptions.Center);
+            _hint = Text(panel, "", 18f, new Vector2(1560f, 28f), new Vector2(0f, -452f), TextAlignmentOptions.Center);
             _hint.color = Hud.Muted;
             _hotbarLayer = Node(canvasGo.transform, "Hotbar");
             _dragLayer = Node(canvasGo.transform, "Drag");
@@ -344,15 +398,91 @@ namespace HtfFortress
 
         private static int KindOf(Gear g) => GearCatalog.SlotKind(g);
 
-        // Weapons first, then gear (team, personal, active), then the game's items; best rarity first; 50 to a slot.
-        private static List<Pile> Piles(VaultData v)
+        // ---------- stars (0 = none, 1-3 = forged) ----------
+
+        // A tile's compact badge: the star it shows, or a dash for none.
+        private static string StarMark(int stars) => stars <= 0 ? "—" : new string('★', Mathf.Clamp(stars, 0, GearCatalog.MaxStars));
+        // Stars in a sentence (merge chains, the card's per-star counts): 0★ rather than the tile's dash.
+        private static string StarName(int stars) => stars <= 0 ? "0★" : new string('★', Mathf.Clamp(stars, 0, GearCatalog.MaxStars));
+
+        // The 0★/1★/2★/3★ counts inside one (gear, rarity) slot. The vault keeps one slot per group, the stars as substacks.
+        private static int[] StarCountsOf(VaultData v, Gear g, Rarity r)
+        {
+            var a = new int[GearCatalog.MaxStars + 1];
+            for (int s = 0; s < a.Length; s++) a[s] = v.Count(g, r, s);
+            return a;
+        }
+        private static int HighestStar(int[] counts)
+        {
+            for (int s = counts.Length - 1; s >= 0; s--) if (counts[s] > 0) return s;
+            return 0;
+        }
+        // Everything of that gear and rarity, every star together: what the slot holds and what a sale/take counts.
+        private static int GroupCount(VaultData v, Gear g, Rarity r) { int n = 0; for (int s = 0; s <= GearCatalog.MaxStars; s++) n += v.Count(g, r, s); return n; }
+        // The substack to use: `want` if it has pieces, else the highest one there. Never asks for an empty star.
+        private static int AvailableStar(VaultData v, Gear g, Rarity r, int want)
+        {
+            want = Mathf.Clamp(want, 0, GearCatalog.MaxStars);
+            if (v.Count(g, r, want) > 0) return want;
+            for (int s = GearCatalog.MaxStars; s >= 0; s--) if (v.Count(g, r, s) > 0) return s;
+            return want;
+        }
+        // A Pile for one group: the star shown is the one last picked for it at the bench, else the highest one there.
+        private Pile GroupPile(VaultData v, Gear g, Rarity r)
+        {
+            var counts = StarCountsOf(v, g, r);
+            int total = 0;
+            for (int s = 0; s < counts.Length; s++) total += counts[s];
+            int stars = _pickedStar.TryGetValue((g, r), out int picked) && picked >= 0 && picked <= GearCatalog.MaxStars && counts[picked] > 0 ? picked : HighestStar(counts);
+            return new Pile { Gear = g, Rarity = r, Count = total, Stars = stars, StarCounts = counts };
+        }
+        // A hand-made selection (a bench pick, a card): `stars` -1 means the highest substack the vault has.
+        private static Pile Selection(VaultData v, Gear g, Rarity r, int stars = -1)
+        {
+            var counts = StarCountsOf(v, g, r);
+            int total = 0;
+            for (int s = 0; s < counts.Length; s++) total += counts[s];
+            int star = stars < 0 ? HighestStar(counts) : Mathf.Clamp(stars, 0, GearCatalog.MaxStars);
+            if (stars >= 0 && counts[star] == 0 && total > 0) star = HighestStar(counts);
+            return new Pile { Gear = g, Rarity = r, Count = Mathf.Max(1, total), Stars = star, StarCounts = counts };
+        }
+        // "3 × Rare ★★ → Rare ★★★", or "... → Legendary 0★" from 3★, or "highest" at Legendary 3★.
+        private static string MergeChain(Rarity r, int stars)
+        {
+            if (stars < GearCatalog.MaxStars) return $"3 × {GearCatalog.RarityName(r)} {StarName(stars)} → {GearCatalog.RarityName(r)} {StarName(stars + 1)}";
+            if (r < Rarity.Legendary) return $"3 × {GearCatalog.RarityName(r)} {StarName(stars)} → {GearCatalog.RarityName(r + 1)} 0★";
+            return L10n.T("vaultMaxed");
+        }
+        // The star row put in a tile's bottom-left corner (gear and weapons; the game's items have none).
+        private static void StarBadge(Transform tile, float size, int stars)
+        {
+            var t = Text(tile, StarMark(stars), Mathf.Clamp(size * 0.17f, 9f, 15f), new Vector2(size * 0.75f, 18f),
+                         new Vector2(-size / 2f + 3f + size * 0.375f, -size / 2f + 10f), TextAlignmentOptions.BottomLeft);
+            t.color = stars > 0 ? Hud.Gold : new Color(1f, 1f, 1f, 0.32f);
+            t.fontStyle = FontStyles.Bold;
+            t.outlineWidth = 0.18f; t.outlineColor = new Color(0f, 0f, 0f, 0.85f);
+        }
+        // The star suffix in a name (" [Legendary] Laser ★★").
+        private static string StarSuffix(int stars) => stars > 0 ? $" <color=#{Hud.Hex(Hud.Gold)}>{new string('★', Mathf.Clamp(stars, 0, GearCatalog.MaxStars))}</color>" : "";
+
+        // What the piece does with the selected star (VaultData.EffectFor has no star yet: same maths, from its public parts).
+        private static string EffectOf(VaultData v, Gear g, Rarity r, int stars) =>
+            !GearCatalog.IsWeapon(g) ? GearCatalog.Effect(g, r, v.ValueOf(g, r, stars))
+            : GearCatalog.Effect(g, r, v.WeaponValue(Loot.MyKey, g, r, stars), WeaponMods.TimeMult(v.ModOf(Loot.MyKey, g, WeaponMods.Rate)));
+
+        // Weapons first, then gear (team, personal, active), then the game's items; best rarity first. ONE tile per
+        // (gear, rarity) slot (its 0-3★ substacks share the vault slot), the game's items still 50 to a slot.
+        private List<Pile> Piles(VaultData v)
         {
             var list = new List<Pile>();
-            void Add(Pile p, int n) { while (n > 0) { int k = Mathf.Min(n, GearCatalog.Stack); var q = p; q.Count = k; list.Add(q); n -= k; } }
-            foreach (var g in GearCatalog.All.OrderBy(g => GearCatalog.IsWeapon(g) ? 0 : 1).ThenBy(g => g))
+            foreach (var g in GearCatalog.All.Where(g => !GearCatalog.Retired(g)).OrderBy(g => GearCatalog.IsWeapon(g) ? 0 : 1).ThenBy(g => g))
                 foreach (var r in GearCatalog.Rarities.OrderByDescending(r => r))
-                    Add(new Pile { Gear = g, Rarity = r }, v.Count(g, r));
-            foreach (var kv in v.ItemCount.OrderBy(kv => kv.Key)) Add(new Pile { Item = kv.Key }, kv.Value);
+                {
+                    var pile = GroupPile(v, g, r);
+                    if (pile.Count > 0) list.Add(pile);
+                }
+            foreach (var kv in v.ItemCount.OrderBy(kv => kv.Key))
+                for (int n = kv.Value; n > 0; n -= GearCatalog.Stack) list.Add(new Pile { Item = kv.Key, Count = Mathf.Min(n, GearCatalog.Stack) });
             return list;
         }
 
@@ -371,7 +501,7 @@ namespace HtfFortress
             }
         }
 
-        private static int Total(VaultData v, Pile p) => p.IsItem ? v.CountItem(p.Item) : v.Count(p.Gear.Value, p.Rarity);
+        private static int Total(VaultData v, Pile p) => p.IsItem ? v.CountItem(p.Item) : GroupCount(v, p.Gear.Value, p.Rarity);
 
         private static string NameOf(Pile p)
         {
@@ -390,14 +520,40 @@ namespace HtfFortress
             _hover = null; _hoverSlot = null; _hoverBuy = null; _benchHover = null; _hoverSell = null;
             var v = Loot.Instance.ClientVault;
             _drawn = v;
-            if (_sel is Pile s && Total(v, s) == 0 && !Shop && !Modding && !(Smith && !s.IsItem && Carried().Contains((s.Gear.Value, s.Rarity)))) _sel = null;
-            _scales.text = $"<color=#7fd0ff>◆</color> {L10n.T("vaultScales", v.Scales)}";
+            if (_sel is Pile s && Total(v, s) == 0 && !Shop && !Modding && !(Smith && !s.IsItem && Carried().Any(x => x.Item1 == s.Gear.Value && x.Item2 == s.Rarity))) _sel = null;
+            _scales.text = L10n.T("vaultScales", v.Scales);
             DrawTabs(v);
             DrawGrid(v);
             Clear(_rightLayer);
             if (Shop) DrawShop(); else if (Modding) DrawMods(v); else if (Smith) DrawBench(v); else DrawLoadout(v);
             DrawCapacity(v);
             if (!Smith) DrawSale(v);
+            RedrawCard();
+        }
+
+        // The host answers a mod buy immediately, but the glass on the client is a round trip away. Show the next level at
+        // once (it is replaced by the host's vault a moment later).
+        private static void PreviewMod(Gear g, int track, int lvl)
+        {
+            var v = Loot.Instance ? Loot.Instance.ClientVault : null;
+            if (v == null) return;
+            int cost = WeaponMods.Cost(lvl);
+            v.Scales = Mathf.Max(0, v.Scales - cost);
+            var key = (Loot.MyKey, g, track);
+            v.Mods[key] = lvl + 1;
+            if (Instance) { Instance._syncPending = true; Instance._syncAt = Time.unscaledTime + 0.8f; }
+            if (Instance && Instance._scales) Instance._scales.text = L10n.T("vaultScales", v.Scales);
+        }
+
+        // Buying a mod only changes the right-hand rows: keep the grid/tabs and update just that column.
+        private void RedrawModsOnly()
+        {
+            var v = Loot.Instance.ClientVault;
+            _drawn = v;
+            _scales.text = L10n.T("vaultScales", v.Scales);
+            Clear(_rightLayer);
+            DrawMods(v);
+            DrawCapacity(v);
             RedrawCard();
         }
 
@@ -462,8 +618,8 @@ namespace HtfFortress
                                         : Piles(v).Where(p => InTab(p)).ToList();
             // At the smithy, the weapons you carry show too (marked), so three in hand can go on the bench.
             if (Smith && _tab == 0)
-                piles.AddRange(Carried().GroupBy(x => x).Where(gp => v.Count(gp.Key.Item1, gp.Key.Item2) == 0)
-                    .Select(gp => new Pile { Gear = gp.Key.Item1, Rarity = gp.Key.Item2, Count = gp.Count() }));
+                piles.AddRange(Carried().GroupBy(x => x).Where(gp => v.Count(gp.Key) == 0)
+                    .Select(gp => new Pile { Gear = gp.Key.Item1, Rarity = gp.Key.Item2, Stars = gp.Key.Stars, Count = gp.Count() }));
             // At the quartermaster's "all" shows every slot of the vault, the empty ones too; the other tabs (and the bench)
             // only what's there.
             int slots = !Smith && _tab == 0 ? Mathf.Max(v.StorageSlots, piles.Count) : Mathf.Max(piles.Count, Columns);
@@ -481,17 +637,17 @@ namespace HtfFortress
                     continue;
                 }
                 var p = piles[i];
-                var tile = PileTile(_gridLayer, pos, size, p, v, count: !Shop && !Modding);
+                var tile = PileTile(_gridLayer, pos, size, p, v, count: !Shop && !Modding, stars: !Shop && !Modding);
                 if (Modding) tile.color = ModTint; // a kind, not a common one (the playtest: 「改造是只能改造普通的品質嗎」)
                 if (Shop && !p.IsItem && !Loot.ForSale(p.Gear.Value, v)) PriceTag(tile.transform, new Vector2(0f, -size / 2f + 12f), 14f);
                 else if (Shop) Text(tile.transform, "$" + ShopPriceOf(p, v).ToString("N0"), 14f, new Vector2(size - 6f, 20f), new Vector2(0f, -size / 2f + 11f), TextAlignmentOptions.Center).color = Hud.Gold;
                 if (Shop && !p.IsItem && GearCatalog.IsActive(p.Gear.Value)) // a K skill, not a weapon
                     Text(tile.transform, "K", 14f, new Vector2(22f, 20f), new Vector2(-size / 2f + 13f, size / 2f - 11f), TextAlignmentOptions.Center).color = Hud.Accent;
                 else if (Modding) ModLevels(tile.transform, size, v, p.Gear.Value);
-                else if (Smith && !p.IsItem && v.Count(p.Gear.Value, p.Rarity) == 0) Text(tile.transform, L10n.T("smithOnYou"), 13f, new Vector2(size - 6f, 18f), new Vector2(0f, size / 2f - 10f), TextAlignmentOptions.Center).color = Hud.Accent;
+                else if (Smith && !p.IsItem && GroupCount(v, p.Gear.Value, p.Rarity) == 0) Text(tile.transform, L10n.T("smithOnYou"), 13f, new Vector2(size - 6f, 18f), new Vector2(0f, size / 2f - 10f), TextAlignmentOptions.Center).color = Hud.Accent;
                 else tile.gameObject.AddComponent<VaultDrop>().Dropped = DroppedOnVault;
                 bool picked = _sel is Pile s && s.Same(p);
-                Ring(tile.transform, new Vector2(size, size), picked ? Hud.Accent : Modding ? ModRing : p.IsItem ? new Color(1f, 1f, 1f, 0.18f) : GearCatalog.Color(p.Rarity) * new Color(1f, 1f, 1f, 0.7f));
+                Ring(tile.transform, new Vector2(size, size), picked ? Hud.Accent : Modding ? ModRing : p.IsItem ? (BossTrophies.IsItemId(p.Item) ? Hud.Gold : new Color(1f, 1f, 1f, 0.18f)) : GearCatalog.Color(p.Rarity) * new Color(1f, 1f, 1f, 0.7f));
                 var pile = p;
                 var h = Hover(tile.gameObject, () => { _hover = pile; _hoverSlot = null; RedrawCard(); }, () => { _hover = null; RedrawCard(); },
                     left: () => Pick(pile), right: () => Quick(pile, Keyboard.current != null && Keyboard.current.shiftKey.isPressed ? 10 : 1), dbl: () => Quick(pile, 1));
@@ -508,10 +664,12 @@ namespace HtfFortress
                      GridTopLeft + new Vector2(GridWidth / 2f, -GridHeight / 2f + (Smith || _tab != 0 ? 0f : -40f)), TextAlignmentOptions.Center).color = new Color(0.65f, 0.7f, 0.75f);
         }
 
-        // A slot: its picture (the gear's icon, or the game item's picture), the count in the corner, the colour round it.
-        private Image PileTile(Transform parent, Vector2 pos, float size, Pile p, VaultData v, bool count = true)
+        // A slot: its picture (the gear's icon, or the game item's picture), the count in the corner, the stars in the
+        // other corner, the colour round it.
+        private Image PileTile(Transform parent, Vector2 pos, float size, Pile p, VaultData v, bool count = true, bool stars = true)
         {
-            var box = Box(parent, new Vector2(size, size), pos, p.IsItem ? new Color(0.16f, 0.18f, 0.22f, 1f) : Darken(GearCatalog.Color(p.Rarity), 0.3f), 10f);
+            bool trophy = p.IsItem && BossTrophies.IsItemId(p.Item);
+            var box = Box(parent, new Vector2(size, size), pos, trophy ? new Color(0.32f, 0.22f, 0.06f, 1f) : p.IsItem ? new Color(0.16f, 0.18f, 0.22f, 1f) : Darken(GearCatalog.Color(p.Rarity), 0.3f), 10f);
             box.raycastTarget = true;
             bool shown = Picture(box.transform, p, size * 0.72f, new Vector2(0f, 4f));
             if (!shown)
@@ -527,6 +685,7 @@ namespace HtfFortress
                 c.fontStyle = FontStyles.Bold;
                 c.outlineWidth = 0.2f; c.outlineColor = new Color(0f, 0f, 0f, 0.9f);
             }
+            if (stars && !p.IsItem) StarBadge(box.transform, size, p.Stars);
             return box;
         }
 
@@ -582,6 +741,28 @@ namespace HtfFortress
                 b.interactable = n > 0;
                 Hover(b.gameObject, () => { _hoverSell = colour; RedrawCard(); }, () => { _hoverSell = null; RedrawCard(); });
             }
+            // One click, everything: its own row, because a sixth 148 px button at the old x ran under the right-hand
+            // loadout panel and was cut off (Owen: "一鍵全賣也是沒辦法完整顯示").
+            var allBtn = Btn(_gridLayer, new Vector2(330f, 34f), new Vector2(GridTopLeft.x + GridWidth / 2f, y - 44f),
+                new Color(0.62f, 0.18f, 0.13f), () =>
+                {
+                    PreviewSellAll(0, null);
+                    Send(VaultAction.SellAll, slot: 0, count: 1);
+                    Click("Buy_01");
+                    AutoTest.Count("vault_sell_everything");
+                }, out var allText);
+            allText.text = L10n.T("vaultSellEverything");
+            allText.fontSize = 17f;
+            Hover(allBtn.gameObject, () => { _hoverSell = 5; RedrawCard(); }, () => { _hoverSell = null; RedrawCard(); });
+        }
+
+        // One-click sales clear the local grid at once; the host re-sends the real vault after the sale.
+        private static void PreviewSellAll(int tab, Rarity? colour)
+        {
+            var v = Loot.Instance ? Loot.Instance.ClientVault : null;
+            if (v == null) return;
+            v.SellAll(tab, colour, _ => 0);
+            if (Instance) { Instance._syncPending = true; Instance._syncAt = Time.unscaledTime + 0.8f; }
         }
 
         private void Sell(int code, int colour)
@@ -591,6 +772,7 @@ namespace HtfFortress
             if (Time.unscaledTime - _sellArmedAt < 0.4f) return; // a double click must not count as the confirmation
             _sellArmed = -1;
             var c = ColourOf(colour);
+            PreviewSellAll(_tab, c);
             Send(VaultAction.SellAll, r: c ?? Rarity.Common, slot: _tab, count: c == null ? 1 : 0);
             Click("Buy_01");
             AutoTest.Count("vault_sell_all");
@@ -598,17 +780,17 @@ namespace HtfFortress
 
         // ---------- the quartermaster: your loadout ----------
 
-        private List<(Gear, Rarity)> Mine(VaultData v) => Player.LocalPlayer && v.Personal.TryGetValue(Loot.KeyOf(Player.LocalPlayer), out var l) ? l : new List<(Gear, Rarity)>();
+        private List<GearKey> Mine(VaultData v) => Player.LocalPlayer && v.Personal.TryGetValue(Loot.KeyOf(Player.LocalPlayer), out var l) ? l : new List<GearKey>();
 
         private List<SlotRef> SlotsOf(VaultData v)
         {
             var list = new List<SlotRef>();
             for (int i = 0; i < v.SlotsOf(0); i++)
-                list.Add(new SlotRef { Kind = 0, Visual = i, List = i, Item = i < v.Fortress.Count ? v.Fortress[i] : ((Gear, Rarity)?)null });
+                list.Add(new SlotRef { Kind = 0, Visual = i, List = i, Item = i < v.Fortress.Count ? v.Fortress[i] : (GearKey?)null });
             var mine = Mine(v);
             var have = mine.Select((x, i) => (x, i)).Where(t => KindOf(t.x.Item1) == 1).ToList(); // personal (active gear isn't worn: Actives)
             for (int s = 0; s < v.SlotsOf(1); s++)
-                list.Add(new SlotRef { Kind = 1, Visual = s, List = s < have.Count ? have[s].i : -1, Item = s < have.Count ? have[s].x : ((Gear, Rarity)?)null });
+                list.Add(new SlotRef { Kind = 1, Visual = s, List = s < have.Count ? have[s].i : -1, Item = s < have.Count ? have[s].x : (GearKey?)null });
             return list;
         }
 
@@ -617,15 +799,44 @@ namespace HtfFortress
             kind == 0 ? new Vector2(RightX - 205f + 102f * (visual % 5), 250f - 100f * (visual / 5))
           : kind == 1 ? new Vector2(RightX - 205f + 102f * visual, 25f) : new Vector2(RightX + 233f, 25f);
 
+        // Active items are a separate strip, but must stay inside the right panel: the old far-right column was
+        // half outside the panel/window on 16:10 screens. This row sits above the loadout title.
+        private void DrawActiveStrip(VaultData v)
+        {
+            var owned = Actives.Owned(v);
+            float y = 390f, x0 = RightX - 90f;
+            Box(_rightLayer, new Vector2(RightWidth - 40f, 64f), new Vector2(RightX, y), new Color(0.08f, 0.10f, 0.14f, 0.92f), 14f).raycastTarget = false;
+            Text(_rightLayer, L10n.T("vaultRowActiveCount", owned.Count), 15f, new Vector2(190f, 58f), new Vector2(RightX - 205f, y), TextAlignmentOptions.Left).color = Hud.Muted;
+            int shown = 0;
+            foreach (var (g, r, top) in owned)
+            {
+                if (shown >= 4) break;
+                int total = 0;
+                for (int ri = 0; ri < 4; ri++)
+                    for (int si = 0; si <= GearCatalog.MaxStars; si++) total += v.Count(g, (Rarity)ri, si);
+                var pile = new Pile { Gear = g, Rarity = r, Count = total, Stars = top };
+                var tile = PileTile(_rightLayer, new Vector2(x0 + shown * 64f, y), 54f, pile, v, count: true);
+                Ring(tile.transform, new Vector2(54f, 54f), GearCatalog.Color(r));
+                Hover(tile.gameObject, () => { _hover = pile; _hoverSlot = null; RedrawCard(); }, () => { _hover = null; RedrawCard(); },
+                    left: () => { _sel = pile; RedrawCard(); });
+                shown++;
+            }
+            if (shown == 0)
+                Text(_rightLayer, L10n.T("vaultActiveEmpty"), 13f, new Vector2(500f, 44f), new Vector2(RightX + 55f, y), TextAlignmentOptions.Center).color = Hud.Muted;
+        }
+
         private void DrawLoadout(VaultData v)
         {
             var box = Box(_rightLayer, new Vector2(RightWidth, 400f), new Vector2(RightX, 150f), Hud.Raised, 18f);
             box.raycastTarget = false;
+            // Two clear zones: tower gear on top, personal gear underneath (Owen: "分給人給塔上下分區").
+            Box(_rightLayer, new Vector2(RightWidth - 30f, 260f), new Vector2(RightX, 220f), new Color(0.12f, 0.15f, 0.20f, 0.75f), 14f).raycastTarget = false;
+            Box(_rightLayer, new Vector2(RightWidth - 30f, 100f), new Vector2(RightX, 35f), new Color(0.16f, 0.14f, 0.10f, 0.75f), 14f).raycastTarget = false;
+            Box(_rightLayer, new Vector2(RightWidth - 40f, 2f), new Vector2(RightX, 104f), new Color(1f, 1f, 1f, 0.10f), 0f).raycastTarget = false;
             Text(_rightLayer, L10n.T("vaultLoadoutTitle"), 24f, new Vector2(RightWidth - 40f, 32f), new Vector2(RightX, 330f), TextAlignmentOptions.Left).fontStyle = FontStyles.Bold;
-            Text(_rightLayer, L10n.T("vaultRowFortress"), 17f, new Vector2(RightWidth - 40f, 26f), new Vector2(RightX, 302f), TextAlignmentOptions.Left).color = Hud.Muted;
-            Text(_rightLayer, L10n.T("vaultRowPersonal"), 17f, new Vector2(420f, 26f), new Vector2(RightX - 100f, 82f), TextAlignmentOptions.Left).color = Hud.Muted;
-            Text(_rightLayer, L10n.T("vaultRowActive"), 17f, new Vector2(140f, 26f), new Vector2(RightX + 233f, 82f), TextAlignmentOptions.Center).color = Hud.Muted;
-            Text(_rightLayer, Hud.Keys(L10n.T("vaultActiveNote")), 14f, new Vector2(150f, 92f), new Vector2(RightX + 233f, 25f), TextAlignmentOptions.Center).color = Hud.Muted; // where its slot was
+            Text(_rightLayer, L10n.T("vaultRowFortressCount", v.Fortress.Count, v.SlotsOf(0)), 17f, new Vector2(RightWidth - 40f, 26f), new Vector2(RightX, 302f), TextAlignmentOptions.Left).color = Hud.Accent;
+            int personalUsed = Mine(v).Count(x => KindOf(x.Item1) == 1);
+            Text(_rightLayer, L10n.T("vaultRowPersonalCount", personalUsed, v.SlotsOf(1)), 17f, new Vector2(420f, 26f), new Vector2(RightX - 100f, 82f), TextAlignmentOptions.Left).color = Hud.Gold;
 
             bool dragging = _dragPile is Pile dp;
             int dragKind = dragging ? KindOf(_dragPile.Value.Gear.Value) : -1;
@@ -633,10 +844,11 @@ namespace HtfFortress
             {
                 var sref = s;
                 bool fits = dragKind == s.Kind;
+                GearKey? worn = s.Item;
                 Image tile;
-                if (s.Item is (Gear g, Rarity r))
+                if (worn is GearKey wk)
                 {
-                    tile = PileTile(_rightLayer, SlotPos(s.Kind, s.Visual), Slot, new Pile { Gear = g, Rarity = r, Count = 1 }, v, count: false);
+                    tile = PileTile(_rightLayer, SlotPos(s.Kind, s.Visual), Slot, new Pile { Gear = wk.Item1, Rarity = wk.Item2, Stars = wk.Stars, Count = 1 }, v, count: false);
                 }
                 else
                 {
@@ -644,19 +856,23 @@ namespace HtfFortress
                     tile.raycastTarget = true;
                     Text(tile.transform, "+", 38f, new Vector2(Slot, Slot), Vector2.zero, TextAlignmentOptions.Center).color = new Color(1f, 1f, 1f, fits ? 0.7f : 0.22f);
                 }
-                Ring(tile.transform, new Vector2(Slot, Slot), fits ? Hud.Good : s.Item is (Gear _, Rarity rr) ? GearCatalog.Color(rr) : new Color(1f, 1f, 1f, 0.15f));
+                Ring(tile.transform, new Vector2(Slot, Slot), fits ? Hud.Good : worn is GearKey wk2 ? GearCatalog.Color(wk2.Item2) : new Color(1f, 1f, 1f, 0.15f));
                 var h = Hover(tile.gameObject, () => { _hoverSlot = sref; _hover = null; RedrawCard(); }, () => { _hoverSlot = null; RedrawCard(); },
-                    left: () => { if (sref.Item is (Gear sg, Rarity sr)) { _sel = new Pile { Gear = sg, Rarity = sr, Count = 1 }; RedrawCard(); } },
+                    left: () => { if (sref.Item is GearKey k) { _sel = Selection(v, k.Item1, k.Item2, k.Stars); RedrawCard(); } },
                     right: () => { if (sref.Item.HasValue) Unequip(sref); });
-                tile.gameObject.AddComponent<VaultDrop>().Dropped = () => { if (_dragPile is Pile p && KindOf(p.Gear.Value) == sref.Kind) EquipInto(sref, p.Gear.Value, p.Rarity); };
+                tile.gameObject.AddComponent<VaultDrop>().Dropped = () => { if (_dragPile is Pile p && KindOf(p.Gear.Value) == sref.Kind) EquipInto(sref, p.Gear.Value, p.Rarity, p.Stars); };
                 if (sref.Item.HasValue) { h.BeginDrag = () => BeginDrag(null, sref, tile); h.EndDrag = EndDrag; }
             }
-            BuyTile(Expansion.TeamSlot, SlotPos(0, v.SlotsOf(0)));
+            if (v.SlotsOf(0) < 10) BuyTile(Expansion.TeamSlot, SlotPos(0, v.SlotsOf(0)));
             BuyTile(Expansion.PersonalSlot, SlotPos(1, v.SlotsOf(1)));
+
+            // Active gear is consumable, not worn: give it its own vertical strip instead of a one-line "nothing to wear" note.
+            // Each tile is the best colour of that kind and the total stock; K uses the picked one, Shift+K switches.
+            DrawActiveStrip(v);
 
             // Who wears what (the team), under the slots.
             var others = v.Personal.Where(kv => !Player.LocalPlayer || kv.Key != Loot.KeyOf(Player.LocalPlayer)).Where(kv => kv.Value.Count > 0)
-                .Select(kv => (v.Names.TryGetValue(kv.Key, out var n) ? n : "?") + "：" + string.Join("、", kv.Value.Select(x => GearCatalog.Label(x.Item1, x.Item2)))).ToList();
+                .Select(kv => (v.Names.TryGetValue(kv.Key, out var n) ? n : "?") + "：" + string.Join("、", kv.Value.Select(x => GearCatalog.Label(x.Item1, x.Item2) + (x.Stars > 0 ? " " + new string('★', x.Stars) : "")))).ToList();
             var team = Text(_rightLayer, others.Count > 0 ? L10n.T("vaultTeam") + "  " + string.Join("　", others) : "", 14f, new Vector2(RightWidth - 40f, 40f), new Vector2(RightX, -50f), TextAlignmentOptions.TopLeft);
             team.color = new Color(0.75f, 0.8f, 0.85f);
             team.enableAutoSizing = true; team.fontSizeMin = 10f; team.fontSizeMax = 14f;
@@ -692,7 +908,8 @@ namespace HtfFortress
         {
             var bench = Box(_rightLayer, new Vector2(RightWidth, 400f), new Vector2(RightX, 150f), Hud.Raised, 18f);
             bench.raycastTarget = true;
-            bench.gameObject.AddComponent<VaultDrop>().Dropped = () => { if (_dragPile is Pile dp && !dp.IsItem) _sel = dp; }; // dragged onto the bench
+            // Dragged onto the bench: look at that piece's group at the star it was dropped with.
+            bench.gameObject.AddComponent<VaultDrop>().Dropped = () => { if (_dragPile is Pile dp && !dp.IsItem) { _sel = Selection(Loot.Instance.ClientVault, dp.Gear.Value, dp.Rarity, dp.Stars); _pickedStar[(dp.Gear.Value, dp.Rarity)] = dp.Stars; } };
             Text(_rightLayer, L10n.T("smithBench"), 24f, new Vector2(RightWidth - 40f, 32f), new Vector2(RightX, 330f), TextAlignmentOptions.Left).fontStyle = FontStyles.Bold;
             if (!(_sel is Pile p) || p.IsItem)
             {
@@ -702,46 +919,83 @@ namespace HtfFortress
             }
             var g = p.Gear.Value;
             var r = p.Rarity;
-            int have = v.Count(g, r);
+            var counts = StarCountsOf(v, g, r);
+            int star = Mathf.Clamp(p.Stars, 0, GearCatalog.MaxStars);
+            int haveAt = counts[star];
+            int haveAll = 0;
+            for (int s = 0; s < counts.Length; s++) haveAll += counts[s];
             // The ones you carry count for the forge too (they go into the vault first): the playtest wanted hands + vault read.
-            int carried = GearCatalog.IsWeapon(g) ? Carried().Count(x => x.Item1 == g && x.Item2 == r) : 0, pool = have + carried;
+            // A carried weapon keeps its own star (WeaponItems.StarsOf), so it feeds the substack it belongs to.
+            int carried = GearCatalog.IsWeapon(g) ? Carried().Count(x => x.Item1 == g && x.Item2 == r && x.Stars == star) : 0, pool = haveAt + carried;
+            bool canMerge = star < GearCatalog.MaxStars || r < Rarity.Legendary;
+            string chain = MergeChain(r, star) + (canMerge ? $"  <color={Hud.Hex(pool >= 3 ? Hud.Good : Hud.Muted)}>{pool}/3</color>" : "");
+            // Which substack the bench is looking at: a row of four star buttons by the title (the highest by default).
+            for (int s = 0; s <= GearCatalog.MaxStars; s++)
+            {
+                int sd = s;
+                bool on = sd == star;
+                var sb = Btn(_rightLayer, new Vector2(70f, 30f), new Vector2(RightX + 130f + 76f * s, 296f),
+                    on ? new Color(0.36f, 0.27f, 0.1f) : new Color(0.13f, 0.15f, 0.19f, 1f),
+                    () => { if (_sel is Pile cur) { cur.Stars = sd; _sel = cur; _pickedStar[(cur.Gear.Value, cur.Rarity)] = sd; Redraw(); } }, out var st);
+                st.text = StarName(sd); // 0★ / ★ / ★★ / ★★★; the colours below say whether the substack has any
+                st.fontSize = 14f;
+                if (counts[sd] == 0) st.color = Hud.Muted;
+                else st.color = sd == 0 ? Hud.Ink : Hud.Gold;
+                if (on) Ring(sb.transform, new Vector2(70f, 30f), Hud.Accent);
+            }
+            // What three of the selected substack become, right by the title.
+            var chainText = Text(_rightLayer, chain, 16f, new Vector2(340f, 26f), new Vector2(RightX - 130f, 296f), TextAlignmentOptions.Left);
+            chainText.enableAutoSizing = true; chainText.fontSizeMin = 10f; chainText.fontSizeMax = 16f;
+            chainText.enableWordWrapping = false;
             // Three on the bench (as many as there are, the rest ghosted), an arrow, what comes out.
             for (int i = 0; i < 3; i++)
             {
-                var tile = PileTile(_rightLayer, new Vector2(RightX - 250f + 100f * i, 230f), 86f, new Pile { Gear = g, Rarity = r, Count = 1 }, v, count: false);
+                var tile = PileTile(_rightLayer, new Vector2(RightX - 250f + 100f * i, 230f), 86f, new Pile { Gear = g, Rarity = r, Stars = star, Count = 1 }, v, count: false);
                 Ring(tile.transform, new Vector2(86f, 86f), GearCatalog.Color(r));
                 if (i >= pool) foreach (var gr in tile.GetComponentsInChildren<Graphic>()) gr.color *= new Color(1f, 1f, 1f, 0.25f);
             }
             Text(_rightLayer, "→", 52f, new Vector2(60f, 60f), new Vector2(RightX + 75f, 230f), TextAlignmentOptions.Center).color = Hud.Accent;
             _benchOut = Node(_rightLayer, "BenchOut");
-            DrawBenchOutput(v, g, r);
-            Text(_rightLayer, $"{GearCatalog.RarityName(r)} {GearCatalog.Name(g)}  ×{have}" + (carried > 0 ? $"  <size=85%>{L10n.T("smithCarriedCount", carried)}</size>" : ""), 18f, new Vector2(RightWidth - 40f, 26f), new Vector2(RightX, 165f), TextAlignmentOptions.Center).color = GearCatalog.Color(r);
+            DrawBenchOutput(v, g, r, star);
+            Text(_rightLayer, $"{GearCatalog.RarityName(r)} {GearCatalog.Name(g)}  {StarMark(star)}  ×{haveAt}" + (carried > 0 ? $"  <size=85%>{L10n.T("smithCarriedCount", carried)}</size>" : ""), 18f, new Vector2(RightWidth - 40f, 26f), new Vector2(RightX, 165f), TextAlignmentOptions.Center).color = GearCatalog.Color(r);
 
             // The bench's work: forge three into one, rank one up with scales, enhance a legendary, melt one down; and take a
             // weapon out (it lands on the ground before the smithy).
             int lvl = v.EnhanceOf(g);
             int ascend = GearCatalog.AscendCost(r);
-            BenchBtn("merge", new Vector2(RightX - 160f, 110f), r < Rarity.Legendary && pool >= 3, r < Rarity.Legendary ? L10n.T("smithMerge", pool) : L10n.T("vaultMaxed"), new Color(0.26f, 0.42f, 0.78f),
+            int salvage = Mathf.RoundToInt(GearCatalog.SalvageScales[(int)r] * (1f + 0.5f * star));
+            BenchBtn("merge", new Vector2(RightX - 160f, 110f), canMerge && pool >= 3, canMerge ? L10n.T("smithMerge", pool) : L10n.T("vaultMaxed"), new Color(0.26f, 0.42f, 0.78f),
                 () =>
                 {
-                    for (int i = 0; i < Mathf.Min(carried, Mathf.Max(0, 3 - have)); i++) Send(VaultAction.Deposit, g, r); // the carried ones in first (the host takes them in order)
-                    Send(VaultAction.Merge, g, r);
-                    if (pool <= 3) _sel = new Pile { Gear = g, Rarity = r + 1, Count = 1 }; // the last three: what they made stays on the bench
+                    for (int i = 0; i < Mathf.Min(carried, Mathf.Max(0, 3 - haveAt)); i++) Send(VaultAction.Deposit, g, r, stars: star); // the carried ones in first (the host takes them in order)
+                    Send(VaultAction.Merge, g, r, stars: star);
+                    // The last three: what they made stays on the bench (only if the local preview actually consumed them: the
+                    // carried ones aren't previewed, so wait for the host's vault in that case).
+                    if (pool <= 3 && Loot.Instance.ClientVault.Count(g, r, star) == 0) WatchMade(g, r, star);
                 });
             if (r == Rarity.Legendary && GearCatalog.IsWeapon(g))
                 BenchBtn(null, new Vector2(RightX + 160f, 110f), true, L10n.T("smithToMods"), new Color(0.55f, 0.4f, 0.1f), () => { _tab = ModTab; _sel = new Pile { Gear = g, Rarity = Rarity.Common, Count = 1 }; Redraw(); });
             else if (r == Rarity.Legendary)
-                BenchBtn("enhance", new Vector2(RightX + 160f, 110f), have > 0 && lvl < GearCatalog.MaxEnhance && v.Scales >= GearCatalog.EnhanceCosts[Mathf.Min(lvl, GearCatalog.MaxEnhance - 1)],
+                BenchBtn("enhance", new Vector2(RightX + 160f, 110f), haveAll > 0 && lvl < GearCatalog.MaxEnhance && v.Scales >= GearCatalog.EnhanceCosts[Mathf.Min(lvl, GearCatalog.MaxEnhance - 1)],
                     lvl >= GearCatalog.MaxEnhance ? L10n.T("vaultEnhanceMax") : L10n.T("vaultEnhance", lvl + 1, GearCatalog.EnhanceCosts[lvl]), new Color(0.55f, 0.4f, 0.1f), () => Send(VaultAction.Enhance, g, r, count: lvl));
             else
-                BenchBtn("ascend", new Vector2(RightX + 160f, 110f), ascend >= 0 && have > 0 && v.Scales >= ascend,
-                    ascend >= 0 ? L10n.T("vaultAscend", ascend) : L10n.T("vaultNoAscend"), new Color(0.52f, 0.36f, 0.12f), () => { Send(VaultAction.Ascend, g, r); if (have <= 1) _sel = new Pile { Gear = g, Rarity = r + 1, Count = 1 }; });
-            BenchBtn("salvage", new Vector2(RightX - 160f, 55f), have > 0, L10n.T("vaultSalvage", GearCatalog.SalvageScales[(int)r]), new Color(0.36f, 0.3f, 0.3f),
-                () => Send(VaultAction.Salvage, g, r));
+                // The quartermaster's scale rank-up only knows the 0★ pieces (VaultData.Apply Ascend): offer it on the 0★ substack.
+                BenchBtn("ascend", new Vector2(RightX + 160f, 110f), ascend >= 0 && star == 0 && counts[0] > 0 && v.Scales >= ascend,
+                    ascend >= 0 ? L10n.T("vaultAscend", ascend) : L10n.T("vaultNoAscend"), new Color(0.52f, 0.36f, 0.12f), () => { Send(VaultAction.Ascend, g, r, stars: 0); if (Loot.Instance.ClientVault.Count(g, r, 0) == 0) WatchMade(g, r, GearCatalog.MaxStars); });
+            BenchBtn("salvage", new Vector2(RightX - 160f, 55f), haveAt > 0, L10n.T("vaultSalvage", salvage), new Color(0.36f, 0.3f, 0.3f),
+                () => Send(VaultAction.Salvage, g, r, stars: star));
             if (r == Rarity.Legendary) Text(_rightLayer, L10n.T(GearCatalog.IsWeapon(g) ? "smithModsNote" : "smithEnhanceNote"), 15f, new Vector2(RightWidth - 40f, 22f), new Vector2(RightX, 6f), TextAlignmentOptions.Center).color = Hud.Muted; // under the buttons
             if (GearCatalog.IsWeapon(g))
-                BenchBtn(null, new Vector2(RightX + 160f, 55f), have > 0, L10n.T("smithTakeOne"), new Color(0.22f, 0.5f, 0.35f), () => { Send(VaultAction.Take, g, r, slot: 1); Click("UnequipItem"); });
+                BenchBtn(null, new Vector2(RightX + 160f, 55f), haveAll > 0, L10n.T("smithTakeOne"), new Color(0.22f, 0.5f, 0.35f), () => { Send(VaultAction.Take, g, r, slot: 1, stars: star); Click("UnequipItem"); });
             DepositCarried(v);
+        }
+
+        // After a merge that used up the selected substack: put the bench on what came out (the next star, or the next
+        // rarity at 0★), like the vault showing the new piece.
+        private void WatchMade(Gear g, Rarity r, int star)
+        {
+            if (star < GearCatalog.MaxStars) { _pickedStar[(g, r)] = star + 1; _sel = Selection(Loot.Instance.ClientVault, g, r, star + 1); }
+            else if (r < Rarity.Legendary) { _sel = Selection(Loot.Instance.ClientVault, g, r + 1, 0); }
         }
 
         // ---------- the smith: your own mods on a kind of weapon ----------
@@ -790,9 +1044,20 @@ namespace HtfFortress
                                 16f, new Vector2(270f, 58f), new Vector2(RightX - 15f, y), TextAlignmentOptions.Left);
                 what.enableAutoSizing = true; what.fontSizeMin = 10f; what.fontSizeMax = 16f;
                 int track = t, cost = WeaponMods.Cost(lvl);
-                var b = Btn(_rightLayer, new Vector2(150f, 46f), new Vector2(RightX + 220f, y), new Color(0.55f, 0.4f, 0.1f), () => { Send(VaultAction.Mod, g, slot: track, count: lvl & 255); Click("Buy_01"); }, out var bt);
+                TextMeshProUGUI bt = null; Button b = null;
+                b = Btn(_rightLayer, new Vector2(150f, 46f), new Vector2(RightX + 220f, y), new Color(0.55f, 0.4f, 0.1f),
+                    () =>
+                    {
+                        // Do not freeze the row behind a captured `busy` flag: after one host round-trip it used to stay black
+                        // and "can't upgrade" until some other vault change happened to redraw it.
+                        int cur = Loot.Instance ? Loot.Instance.ClientVault.ModOf(Loot.MyKey, g, track) : lvl;
+                        PreviewMod(g, track, cur);
+                        if (bt) bt.text = L10n.T("modBuy", cur + 2, WeaponMods.Cost(cur + 1).ToString("N0"));
+                        if (what) what.text = $"<color={Hud.Hex(Hud.Muted)}>{WeaponMods.TrackWhat(g, track)}</color>\n{WeaponMods.TrackValue(g, track, cur + 1)}  <color={Hud.Hex(Hud.Good)}>→ {WeaponMods.TrackValue(g, track, cur + 2)}</color>";
+                        Send(VaultAction.Mod, g, slot: track, count: cur & 255); Click("Buy_01");
+                    }, out bt);
                 b.interactable = v.Scales >= cost;
-                bt.text = L10n.T("modBuy", lvl + 1, cost.ToString("N0"));
+                bt.text = L10n.T("modBuy", lvl + 1, cost.ToString("N0")); // no "SYNCING": the local click already shows the next level
                 bt.enableAutoSizing = true; bt.fontSizeMin = 11f; bt.fontSizeMax = 18f;
             }
             var note = Text(_rightLayer, L10n.T("modNote", GearCatalog.Name(g)), 15f, new Vector2(RightWidth - 40f, 40f), new Vector2(RightX, -25f), TextAlignmentOptions.Center);
@@ -802,7 +1067,7 @@ namespace HtfFortress
 
         // The shop past the weapons: active gear (K: one common into the vault) and the game's explosives (Loot.ShopItems).
         private static IEnumerable<Pile> ShopExtras() =>
-            GearCatalog.All.Where(GearCatalog.IsActive).Select(g => new Pile { Gear = g, Rarity = Rarity.Common, Count = 1 })
+            GearCatalog.All.Where(g => GearCatalog.IsActive(g) && !GearCatalog.Retired(g)).Select(g => new Pile { Gear = g, Rarity = Rarity.Common, Count = 1 })
                 .Concat(Loot.ShopItems.Select(id => new Pile { Item = id, Count = 1 }));
         private static int ShopPriceOf(Pile p, VaultData v) => p.IsItem ? Loot.ItemPrice(p.Item) : Loot.ShopPrice(p.Gear.Value, v);
 
@@ -823,7 +1088,7 @@ namespace HtfFortress
                 int price = ShopPriceOf(p, v);
                 bool sale = item || Loot.ForSale(p.Gear.Value, v), room = item || Loot.Buyable(p.Gear.Value, v) || !sale, rich = Siege.Instance.ViewCoins >= price;
                 var shown = item ? p : new Pile { Gear = p.Gear, Rarity = Rarity.Common, Count = 1 };
-                var tile = PileTile(_rightLayer, new Vector2(RightX - 150f, 220f), 110f, shown, v, count: false);
+                var tile = PileTile(_rightLayer, new Vector2(RightX - 150f, 220f), 110f, shown, v, count: false, stars: false);
                 Ring(tile.transform, new Vector2(110f, 110f), item ? new Color(1f, 1f, 1f, 0.25f) : GearCatalog.Color(Rarity.Common));
                 var name = Text(_rightLayer, item ? NameOf(p) : GearCatalog.Label(p.Gear.Value, Rarity.Common), 24f, new Vector2(280f, 40f), new Vector2(RightX + 80f, 250f), TextAlignmentOptions.Left);
                 name.fontStyle = FontStyles.Bold;
@@ -852,20 +1117,27 @@ namespace HtfFortress
 
         // What the bench would make: what the button under the mouse does, else the likeliest job.
         private Transform _benchOut;
-        private void DrawBenchOutput(VaultData v, Gear g, Rarity r)
+        private void DrawBenchOutput(VaultData v, Gear g, Rarity r, int star)
         {
             if (!_benchOut) return;
             Clear(_benchOut);
-            int have = v.Count(g, r);
-            string what = _benchHover ?? (r < Rarity.Legendary && have >= 3 ? "merge" : r < Rarity.Epic ? "ascend" : r == Rarity.Legendary && !GearCatalog.IsWeapon(g) ? "enhance" : "salvage");
+            star = Mathf.Clamp(star, 0, GearCatalog.MaxStars);
+            int haveAt = v.Count(g, r, star);
+            int carried = GearCatalog.IsWeapon(g) ? Carried().Count(x => x.Item1 == g && x.Item2 == r && x.Stars == star) : 0;
+            bool canMerge = star < GearCatalog.MaxStars || r < Rarity.Legendary;
+            string what = _benchHover ?? (canMerge && haveAt + carried >= 3 ? "merge" : star == 0 && r < Rarity.Epic ? "ascend" : r == Rarity.Legendary && !GearCatalog.IsWeapon(g) ? "enhance" : "salvage");
             if (what == "salvage")
             {
                 var s = Box(_benchOut, new Vector2(96f, 96f), new Vector2(RightX + 175f, 230f), new Color(0.12f, 0.2f, 0.28f, 1f), 12f);
-                Text(s.transform, $"<color=#7fd0ff>◆</color>\n+{GearCatalog.SalvageScales[(int)r]}", 26f, new Vector2(90f, 90f), Vector2.zero, TextAlignmentOptions.Center);
+                Text(s.transform, $"+{Mathf.RoundToInt(GearCatalog.SalvageScales[(int)r] * (1f + 0.5f * star))}\n{L10n.T("scalesName")}", 22f, new Vector2(90f, 90f), Vector2.zero, TextAlignmentOptions.Center);
                 return;
             }
-            var outR = what == "enhance" ? r : (Rarity)Mathf.Min((int)Rarity.Legendary, (int)r + 1);
-            var o = PileTile(_benchOut, new Vector2(RightX + 175f, 230f), 96f, new Pile { Gear = g, Rarity = outR, Count = 1 }, v, count: false);
+            // Forge: the next star of the same colour, or the next colour at 0★ from 3★. Rank up: the next colour at 0★.
+            Rarity outR = r;
+            int outStar = star;
+            if (what == "merge" && star < GearCatalog.MaxStars) outStar = star + 1;
+            else if (what == "merge" || what == "ascend") { outR = (Rarity)Mathf.Min((int)Rarity.Legendary, (int)r + 1); outStar = 0; }
+            var o = PileTile(_benchOut, new Vector2(RightX + 175f, 230f), 96f, new Pile { Gear = g, Rarity = outR, Stars = outStar, Count = 1 }, v, count: false);
             if (what == "enhance") Text(o.transform, $"+{Mathf.Min(GearCatalog.MaxEnhance, v.EnhanceOf(g) + 1)}", 20f, new Vector2(80f, 24f), new Vector2(0f, -32f), TextAlignmentOptions.Right).color = Hud.Gold;
             Ring(o.transform, new Vector2(96f, 96f), GearCatalog.Color(outR));
         }
@@ -877,8 +1149,8 @@ namespace HtfFortress
             t.text = label;
             t.fontSize = 18f;
             if (key == null) return;
-            Hover(b.gameObject, () => { _benchHover = key; if (_sel is Pile p && !p.IsItem) DrawBenchOutput(Loot.Instance.ClientVault, p.Gear.Value, p.Rarity); },
-                () => { _benchHover = null; if (_sel is Pile p && !p.IsItem) DrawBenchOutput(Loot.Instance.ClientVault, p.Gear.Value, p.Rarity); });
+            Hover(b.gameObject, () => { _benchHover = key; if (_sel is Pile p && !p.IsItem) DrawBenchOutput(Loot.Instance.ClientVault, p.Gear.Value, p.Rarity, p.Stars); },
+                () => { _benchHover = null; if (_sel is Pile p && !p.IsItem) DrawBenchOutput(Loot.Instance.ClientVault, p.Gear.Value, p.Rarity, p.Stars); });
         }
 
         // The fortress weapons you carry, into the vault in one go (throwing them on the anvil does the same).
@@ -887,7 +1159,7 @@ namespace HtfFortress
             var carried = Carried();
             var b = Btn(_rightLayer, new Vector2(RightWidth - 60f, 40f), new Vector2(RightX, -40f), new Color(0.26f, 0.42f, 0.78f), () =>
             {
-                foreach (var w in Carried()) Send(VaultAction.Deposit, w.Item1, w.Item2);
+                foreach (var w in Carried()) Send(VaultAction.Deposit, w.Item1, w.Item2, stars: w.Stars);
                 Click();
             }, out var t);
             b.interactable = carried.Count > 0;
@@ -895,16 +1167,16 @@ namespace HtfFortress
             t.fontSize = 17f;
         }
 
-        // The fortress weapons the local player carries (hotbar and hand), one entry per item.
-        private static List<(Gear, Rarity)> Carried()
+        // The fortress weapons the local player carries (hotbar and hand), one entry per item, with its stars.
+        private static List<GearKey> Carried()
         {
             var me = Player.LocalPlayer;
-            var list = new List<(Gear, Rarity)>();
+            var list = new List<GearKey>();
             if (!me || !me.Inventory) return list;
             var items = me.Inventory._items.Values.Where(i => i).ToList();
             var held = me.Holding ? me.Holding.HeldItem : null;
             if (held && !items.Contains(held)) items.Add(held);
-            foreach (var i in items) if (!i.IsDestroying && WeaponItems.Is(i, out var g, out var r)) list.Add((g, r));
+            foreach (var i in items) if (!i.IsDestroying && WeaponItems.Is(i, out var g, out var r)) list.Add(new GearKey(g, r, WeaponItems.StarsOf(i)));
             return list;
         }
 
@@ -920,8 +1192,8 @@ namespace HtfFortress
             if (p.IsItem) { Send(VaultAction.TakeItem, slot: Smith ? 1 : 0, item: p.Item, count: n); Click("UnequipItem"); return; }
             var g = p.Gear.Value;
             if (Smith) { Pick(p); return; }
-            if (GearCatalog.IsWeapon(g)) { Send(VaultAction.Take, g, p.Rarity, slot: 0, count: n); Click("UnequipItem"); return; }
-            if (TargetFor(Loot.Instance.ClientVault, g, p.Rarity) is SlotRef t) EquipInto(t, g, p.Rarity); else Pick(p);
+            if (GearCatalog.IsWeapon(g)) { Send(VaultAction.Take, g, p.Rarity, slot: 0, count: n, stars: p.Stars); Click("UnequipItem"); return; }
+            if (TargetFor(Loot.Instance.ClientVault, g, p.Rarity) is SlotRef t) EquipInto(t, g, p.Rarity, p.Stars); else Pick(p);
         }
 
         // Where a piece goes on: an empty slot (the same kind again adds up: GearCatalog.Stacked), else the slot with its own
@@ -930,23 +1202,26 @@ namespace HtfFortress
         private SlotRef? TargetFor(VaultData v, Gear g, Rarity r)
         {
             var row = SlotsOf(v).Where(s => s.Kind == KindOf(g)).Cast<SlotRef?>().ToList();
-            bool Same(SlotRef? s) => s.Value.Item is (Gear eg, Rarity er) && eg == g && er == r;
-            return row.FirstOrDefault(s => !s.Value.Item.HasValue) ?? row.FirstOrDefault(s => s.Value.Item is (Gear eg, Rarity _) && eg == g && !Same(s))
+            bool Same(SlotRef? s) => s.Value.Item is GearKey k && k.Item1 == g && k.Item2 == r;
+            return row.FirstOrDefault(s => !s.Value.Item.HasValue) ?? row.FirstOrDefault(s => s.Value.Item is GearKey k && k.Item1 == g && !Same(s))
                    ?? row.FirstOrDefault(s => !Same(s));
         }
 
-        private void EquipInto(SlotRef s, Gear g, Rarity r)
+        // `stars`: which substack goes on (the tile's shown star, default the highest in the vault).
+        private void EquipInto(SlotRef s, Gear g, Rarity r, int stars)
         {
-            if (Loot.Instance.ClientVault.Count(g, r) <= 0) return;
+            var v = Loot.Instance.ClientVault;
+            if (GroupCount(v, g, r) <= 0) return;
+            stars = AvailableStar(v, g, r, stars);
             if (s.Item.HasValue) Unequip(s, quiet: true); // swapping: the old one goes back first
-            Send(s.Kind == 0 ? VaultAction.EquipFortress : VaultAction.EquipPersonal, g, r);
+            Send(s.Kind == 0 ? VaultAction.EquipFortress : VaultAction.EquipPersonal, g, r, stars: stars);
             Click();
         }
 
         private void Unequip(SlotRef s, bool quiet = false)
         {
-            if (!(s.Item is (Gear g, Rarity r))) return;
-            Send(s.Kind == 0 ? VaultAction.UnequipFortress : VaultAction.UnequipPersonal, g, r);
+            if (!(s.Item is GearKey k)) return;
+            Send(s.Kind == 0 ? VaultAction.UnequipFortress : VaultAction.UnequipPersonal, k.Item1, k.Item2, stars: k.Stars);
             if (!quiet) Click("UnequipItem");
         }
 
@@ -963,7 +1238,7 @@ namespace HtfFortress
         private void BeginDrag(Pile? pile, SlotRef? slot, Image from, int hotbar = -1)
         {
             EndDrag();
-            _dragPile = pile ?? (slot is SlotRef s && s.Item is (Gear g, Rarity r) ? new Pile { Gear = g, Rarity = r, Count = 1 } : (Pile?)null);
+            _dragPile = pile ?? (slot is SlotRef s && s.Item is GearKey k ? (Pile?)new Pile { Gear = k.Item1, Rarity = k.Item2, Stars = k.Stars, Count = 1 } : null);
             _dragSlot = slot;
             _dragHotbar = hotbar;
             if (_dragPile == null) return;
@@ -1025,7 +1300,7 @@ namespace HtfFortress
                 var colour = ColourOf(hc);
                 var (money, scales, count) = v.SaleOf(_tab, colour);
                 int items = colour == null && (_tab == 0 || _tab == 3) ? v.ItemCount.Values.Sum() : 0;
-                Text(c, L10n.T("vaultSellCardTitle", colour is Rarity cr ? GearCatalog.RarityName(cr) : L10n.T("vaultSellEvery"), count), 26f, new Vector2(RightWidth - 40f, 36f), new Vector2(0f, 160f), TextAlignmentOptions.Left).fontStyle = FontStyles.Bold;
+                Text(c, hc >= 4 ? L10n.T("vaultSellEverything") : L10n.T("vaultSellCardTitle", colour is Rarity cr ? GearCatalog.RarityName(cr) : L10n.T("vaultSellEvery"), count), 26f, new Vector2(RightWidth - 40f, 36f), new Vector2(0f, 160f), TextAlignmentOptions.Left).fontStyle = FontStyles.Bold;
                 var got = new List<string>();
                 if (money > 0) got.Add(L10n.T("vaultSellMoney", money.ToString("N0")));
                 if (scales > 0) got.Add(L10n.T("vaultSellScales", scales));
@@ -1036,23 +1311,27 @@ namespace HtfFortress
             }
             Pile? show = _hover;
             bool equipped = false;
-            if (show == null && _hoverSlot is SlotRef hs && hs.Item is (Gear hg, Rarity hr)) { show = new Pile { Gear = hg, Rarity = hr, Count = 1 }; equipped = true; }
+            if (show == null && _hoverSlot is SlotRef hs && hs.Item is GearKey hk) { show = new Pile { Gear = hk.Item1, Rarity = hk.Item2, Stars = hk.Stars, Count = 1 }; equipped = true; }
             if (show == null) show = _sel;
             if (!(show is Pile p))
             {
                 Text(c, L10n.T(Smith ? "smithCardEmpty" : "vaultCardEmpty"), 21f, new Vector2(RightWidth - 60f, 300f), Vector2.zero, TextAlignmentOptions.Center).color = new Color(0.65f, 0.7f, 0.75f);
                 return;
             }
+            // The shop sells commons and a mod is on the kind, not a colour: neither has a star to show.
+            bool showStars = !p.IsItem && !Shop && !Modding;
+            int selectedStar = showStars ? Mathf.Clamp(p.Stars, 0, GearCatalog.MaxStars) : 0;
             // The picture, the name and kind, then what it does (and the next rarity, the legendary special).
-            var icon = PileTile(c, new Vector2(-RightWidth / 2f + 70f, 112f), 100f, new Pile { Gear = p.Gear, Rarity = p.Rarity, Item = p.Item, Count = Total(v, p) }, v);
+            var icon = PileTile(c, new Vector2(-RightWidth / 2f + 70f, 112f), 100f, new Pile { Gear = p.Gear, Rarity = p.Rarity, Stars = selectedStar, Item = p.Item, Count = Total(v, p) }, v, stars: showStars);
             if (Modding) icon.color = ModTint;
-            Ring(icon.transform, new Vector2(100f, 100f), Modding ? ModRing : p.IsItem ? new Color(1f, 1f, 1f, 0.25f) : GearCatalog.Color(p.Rarity));
-            string name = p.IsItem ? NameOf(p) : Modding ? GearCatalog.Name(p.Gear.Value) + (v.ModTotal(Loot.MyKey, p.Gear.Value) is int mt && mt > 0 ? $"<color={Hud.Hex(Hud.Gold)}> +{mt}</color>" : "")
-                        : v.LabelOf(p.Gear.Value, p.Rarity, Loot.MyKey);
+            bool trophy = p.IsItem && BossTrophies.IsItemId(p.Item);
+            Ring(icon.transform, new Vector2(100f, 100f), Modding ? ModRing : p.IsItem ? (trophy ? Hud.Gold : new Color(1f, 1f, 1f, 0.25f)) : GearCatalog.Color(p.Rarity));
+            string name = p.IsItem ? (trophy ? $"<color={Hud.Hex(Hud.Gold)}>[{GearCatalog.RarityName(Rarity.Legendary)}]</color> " : "") + NameOf(p) : Modding ? GearCatalog.Name(p.Gear.Value) + (v.ModTotal(Loot.MyKey, p.Gear.Value) is int mt && mt > 0 ? $"<color={Hud.Hex(Hud.Gold)}> +{mt}</color>" : "")
+                        : v.LabelOf(p.Gear.Value, p.Rarity, Loot.MyKey) + (showStars ? StarSuffix(selectedStar) : "");
             var n = Text(c, name, 26f, new Vector2(RightWidth - 180f, 36f), new Vector2(70f, 142f), TextAlignmentOptions.Left);
             n.fontStyle = FontStyles.Bold;
             n.enableAutoSizing = true; n.fontSizeMin = 16f; n.fontSizeMax = 26f;
-            string kind = p.IsItem ? L10n.T(Shop ? "smithShopItemKind" : "vaultItemKind")
+            string kind = p.IsItem ? (trophy ? L10n.T("vaultTrophyKind") : L10n.T(Shop ? "smithShopItemKind" : "vaultItemKind"))
                 : L10n.T(new[] { "vaultKindFortress", "vaultKindPersonal", "vaultKindActive", "vaultKindWeapon" }[KindOf(p.Gear.Value)]);
             var k = Text(c, kind + (equipped ? $"  <color={Hud.Hex(Hud.Good)}>{L10n.T("vaultInUse")}</color>" : $"  <color={Hud.Hex(Hud.Muted)}>{L10n.T("vaultOwned", Total(v, p))}</color>"),
                          16f, new Vector2(RightWidth - 180f, 50f), new Vector2(70f, 98f), TextAlignmentOptions.TopLeft);
@@ -1064,9 +1343,19 @@ namespace HtfFortress
                 var g = p.Gear.Value;
                 var r = p.Rarity;
                 if (Modding) lines.Add($"<color={Hud.Hex(Hud.Gold)}>{L10n.T("modAllRarities")}</color>"); // not common's numbers: the mods are on every rarity
-                else lines.Add($"<size=110%>{v.EffectFor(Loot.MyKey, g, r)}</size>");
+                else lines.Add($"<size=110%>{EffectOf(v, g, r, selectedStar)}</size>");
                 if (GearCatalog.IsWeapon(g) && WeaponMods.Summary(v, Loot.MyKey, g) is string mods && mods.Length > 0) lines.Add($"<color={Hud.Hex(Hud.Gold)}>{L10n.T("modCard", mods)}</color>");
                 if (r < Rarity.Legendary && !Modding) lines.Add($"<color=#{GearCatalog.Hex(r + 1)}>{L10n.T("vaultNextRarity", v.EffectFor(Loot.MyKey, g, r + 1))}</color>");
+                // The stars: which substack the card is showing, all four counts, and what three of them forge into.
+                if (showStars)
+                {
+                    var sc = StarCountsOf(v, g, r);
+                    lines.Add($"<color={Hud.Hex(Hud.Gold)}>{StarMark(selectedStar)}</color>  <color={Hud.Hex(Hud.Muted)}>{sc[0]}×0★  {sc[1]}×1★  {sc[2]}×2★  {sc[3]}×3★</color>");
+                    bool maxed = selectedStar >= GearCatalog.MaxStars && r >= Rarity.Legendary;
+                    string chain = MergeChain(r, selectedStar);
+                    if (!maxed) chain += $"  <color={Hud.Hex(Hud.Muted)}>{sc[selectedStar]}/3</color>";
+                    lines.Add($"<color={Hud.Hex(!maxed && sc[selectedStar] >= 3 ? Hud.Good : Hud.Muted)}>{chain}</color>");
+                }
                 if (!GearCatalog.IsActive(g))
                 {
                     bool legend = r == Rarity.Legendary;
@@ -1095,9 +1384,9 @@ namespace HtfFortress
                 var r = p.Rarity;
                 var target = TargetFor(v, g, r);
                 string why = target == null ? L10n.T("vaultFullHint") : Total(v, p) <= 0 ? L10n.T("vaultNoneLeft") : null;
-                var b = Btn(c, new Vector2(RightWidth - 60f, 48f), new Vector2(0f, -138f), new Color(0.22f, 0.58f, 0.38f), () => { if (target is SlotRef t) EquipInto(t, g, r); }, out var bt);
+                var b = Btn(c, new Vector2(RightWidth - 60f, 48f), new Vector2(0f, -138f), new Color(0.22f, 0.58f, 0.38f), () => { if (target is SlotRef t) EquipInto(t, g, r, selectedStar); }, out var bt);
                 b.interactable = why == null;
-                bt.text = why ?? (target is SlotRef ft && ft.Item is (Gear og, Rarity orr) ? L10n.T("vaultSwapBtn", GearCatalog.Label(og, orr)) : L10n.T("vaultEquipBtn"));
+                bt.text = why ?? (target is SlotRef ft && ft.Item is GearKey ok ? L10n.T("vaultSwapBtn", GearCatalog.Label(ok.Item1, ok.Item2) + StarSuffix(ok.Stars)) : L10n.T("vaultEquipBtn"));
             }
         }
 

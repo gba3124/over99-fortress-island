@@ -18,6 +18,7 @@ namespace HtfFortress
         public static float OverclockUntil;
 
         private readonly Dictionary<int, float> _nextFire = new Dictionary<int, float>();
+        private readonly Dictionary<int, float> _nova = new Dictionary<int, float>(); // Lv20 overdrive: a ring of detonations
         // A storm gun fires ~13 times a second (27 overclocked): one tracer, carrying the damage since the last, every 0.15 s is
         // all anyone can see, and keeps every client from building a cube, a sound and a damage number per bullet.
         private readonly Dictionary<int, (float next, int dmg)> _tracer = new Dictionary<int, (float, int)>();
@@ -48,11 +49,12 @@ namespace HtfFortress
 
         private int _owner = -1;
 
+        private static float SoulTurretMult => Loot.Instance && Loot.Instance.Vault != null ? Loot.Instance.Vault.TurretDamageMult : 1f;
         private int Dmg(int baseDmg, Creature c, Catalog.TurretStats s)
         {
             Stats.TurretHit(c, _owner);
             var sv = Loot.Instance ? Loot.Instance.Vault : null;
-            float d = baseDmg * DamageMultiplier.Value * (sv != null ? sv.DamageMult : 1f) * (1f + Perks.Team(Gear.Gunpowder));
+            float d = baseDmg * DamageMultiplier.Value * (sv != null ? sv.TurretDamageMult : 1f) * (1f + Perks.Team(Gear.Gunpowder));
             if (sv != null && sv.CritChance > 0f && Random.value < sv.CritChance) d *= 2f;
             if (Perks.TeamLegend(Gear.Scope) && Random.value < 0.1f) { d *= 3f; AutoTest.Count("legend_crits"); Perks.Proc(Gear.Scope, c.transform.position); } // legendary: 10% crits
             if (Perks.TeamLegend(Gear.FrostCore) && Random.value < 0.06f && Siege.Instance.TryFreeze(c)) { AutoTest.Count("legend_freezes"); Perks.Proc(Gear.FrostCore, c.transform.position); } // legendary: freeze (capped per target, bosses only slowed: Siege.TryFreeze)
@@ -90,12 +92,15 @@ namespace HtfFortress
             // Range is measured flat (a cylinder): a turret up on a rise reaches the beach below it, and one on the ground the
             // flyers over it (the playtest's high turret couldn't hit what was under it).
             Creature target = null;
-            float best = s.Range * s.Range, min = s.MinRange * s.MinRange;
+            float best = float.MaxValue, min = s.MinRange * s.MinRange, range2 = s.Range * s.Range;
+            bool IsBoss(Creature c) => Enemies.Instance.TryGet(c, out var bt) && EnemyCatalog.IsBoss(bt.Kind);
+            // A boss is a big target: ordinary towers get a longer reach against it, so it isn't sniper-only.
+            float Limit(Creature c) => IsBoss(c) ? range2 * 2.56f : range2;
             foreach (var c in alive)
             {
                 if (!Alive(c)) continue;
                 float d = Flat2(c.transform.position - muzzle);
-                if (d < best && d >= min) { best = d; target = c; }
+                if (d < Limit(c) && d >= min && d < best) { best = d; target = c; }
             }
             // The sniper picks the toughest fish in range instead of the nearest.
             if (p.Type == PieceType.Sniper)
@@ -105,7 +110,7 @@ namespace HtfFortress
                 {
                     var c = alive[i];
                     if (!Alive(c)) continue;
-                    if (Flat2(c.transform.position - muzzle) >= s.Range * s.Range) continue;
+                    if (Flat2(c.transform.position - muzzle) >= Limit(c)) continue;
                     if (c._hp.Value > hp) { hp = c._hp.Value; target = c; }
                 }
             }
@@ -124,12 +129,13 @@ namespace HtfFortress
                     if (Time.time - tr.next > 0.5f) tr.dmg = 0; // left over from when it last stopped firing
                     tr.dmg += dmg;
                     bool show = Time.time >= tr.next;
-                    if (show) { Fx.Send(FxKind.Tracer, muzzle, hit, p.Id, tr.dmg); tr = (Time.time + 0.15f, 0); }
+                    if (show) { Fx.Send(FxKind.Tracer, muzzle, hit, p.Id, tr.dmg, 0, p.Type.ToString()); tr = (Time.time + 0.15f, 0); }
                     _tracer[p.Id] = tr;
-                    foreach (var extra in Others(alive, target, muzzle, s, false)) // Lv5+: the extra barrels pick their own fish
+                    var extraGun = Others(alive, target, muzzle, s, false).ToList();
+                    if (extraGun.Count > 0)
                     {
-                        Hit(extra, Dmg(s.Damage, extra, s));
-                        if (show) Fx.Send(FxKind.Tracer, muzzle, extra.transform.position, 0, 0);
+                        var shots = extraGun.Select(c => (c, Dmg(s.Damage, c, s))).ToList();
+                        StartCoroutine(GunBurst(muzzle, shots, show, p.Type.ToString()));
                     }
                     break;
                 }
@@ -141,11 +147,12 @@ namespace HtfFortress
                     foreach (var c in alive.Where(Alive).ToList())
                     {
                         Vector3 to = (c.transform.position - muzzle).Flat();
-                        if (to.sqrMagnitude > s.Range * s.Range || Vector3.Angle(aim, to) > s.Cone) continue;
+                        float reach = Enemies.Instance.TryGet(c, out var ft) && EnemyCatalog.IsBoss(ft.Kind) ? s.Range * 1.6f : s.Range;
+                        if (to.sqrMagnitude > reach * reach || Vector3.Angle(aim, to) > s.Cone) continue;
                         Hit(c, Dmg(s.Damage, c, s));
                         SetBurn(c, s.Burn);
                     }
-                    Fx.Send(FxKind.Flame, muzzle, muzzle + aim * s.Range * 0.9f, p.Id);
+                    Fx.Send(FxKind.Flame, muzzle, muzzle + aim * s.Range, p.Id, 0, 0, p.Type.ToString()); // the visual ends at the real range
                     break;
                 }
 
@@ -153,12 +160,14 @@ namespace HtfFortress
                 {
                     int dmg = Dmg(s.Damage, target, s);
                     Hit(target, dmg);
-                    Fx.Send(FxKind.Snipe, muzzle, hit, p.Id, dmg);
-                    foreach (var extra in Others(alive, target, muzzle, s, true))
+                    Fx.Send(FxKind.Snipe, muzzle, hit, p.Id, dmg, 0, p.Type.ToString());
+                    // Three targets (Lv5+ barrels) are a burst, not a shotgun: `啪、啪、啪`, each round separately aimed.
+                    var extras = Others(alive, target, muzzle, s, true).ToList();
+                    if (extras.Count > 0)
                     {
-                        int ed = Dmg(s.Damage, extra, s);
-                        Hit(extra, ed);
-                        Fx.Send(FxKind.Snipe, muzzle, extra.transform.position, 0, ed);
+                        var shots = new List<(Creature c, int dmg)>(extras.Count);
+                        foreach (var extra in extras) shots.Add((extra, Dmg(s.Damage, extra, s)));
+                        StartCoroutine(SniperBurst(muzzle, shots, p.Id, p.Type.ToString()));
                     }
                     break;
                 }
@@ -168,7 +177,7 @@ namespace HtfFortress
                     {
                         Vector3 at = i == 0 ? hit : hit + Random.insideUnitSphere.Flat() * 3f;
                         Splash(alive, at, s.Splash, s.Damage, s);
-                        Fx.Send(FxKind.Cannonball, muzzle, at, i == 0 ? p.Id : 0, Mathf.RoundToInt(s.Damage * DamageMultiplier.Value));
+                        Fx.Send(FxKind.Cannonball, muzzle, at, i == 0 ? p.Id : 0, Mathf.RoundToInt(s.Damage * DamageMultiplier.Value * SoulTurretMult), 0, p.Type.ToString());
                     }
                     break;
 
@@ -185,7 +194,7 @@ namespace HtfFortress
                                 Hit(c, Dmg(s.Damage, c, s));
                                 Siege.Instance.Slow(c, s.Slow, s.SlowTime);
                             }
-                        Fx.Send(FxKind.Harpoon, muzzle, end, i == 0 ? p.Id : 0);
+                        Fx.Send(FxKind.Harpoon, muzzle, end, i == 0 ? p.Id : 0, 0, 0, p.Type.ToString());
                     }
                     break;
                 }
@@ -194,7 +203,7 @@ namespace HtfFortress
                     for (int i = 0; i < s.Shots; i++)
                     {
                         Vector3 at = i == 0 ? hit : hit + Random.insideUnitSphere.Flat() * 2.5f;
-                        Fx.Send(FxKind.Mortar, muzzle, at, i == 0 ? p.Id : 0);
+                        Fx.Send(FxKind.Mortar, muzzle, at, i == 0 ? p.Id : 0, 0, 0, p.Type.ToString());
                         StartCoroutine(MortarLands(at, s, _owner, _from));
                     }
                     break;
@@ -211,7 +220,7 @@ namespace HtfFortress
                         Hit(cur, zd);
                         if (Perks.TeamLegend(Gear.TeslaCoil)) { Siege.Instance.Slow(cur, 1f, 0.35f); Perks.Proc(Gear.TeslaCoil, cur.transform.position); } // legendary: every zap stuns
                         Vector3 to = cur.transform.position + Vector3.up * 0.4f;
-                        Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0, zd);
+                        Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0, zd, 0, p.Type.ToString());
                         from = to;
                         Creature nextC = null; float nb = 6f * 6f;
                         foreach (var c in alive)
@@ -224,6 +233,47 @@ namespace HtfFortress
                     }
                     break;
                 }
+            }
+            // Lv20 overdrive: every few seconds the tower does not just shoot, it detonates the ground around it. This is the
+            // incremental-game "it went crazy" moment, and it is deliberately very visible.
+            if (p.Level >= 20 && (!_nova.TryGetValue(p.Id, out float nt) || Time.time >= nt))
+            {
+                _nova[p.Id] = Time.time + 4.5f;
+                Nova(p, s, muzzle, alive);
+            }        }
+
+        private void Nova(PieceState p, Catalog.TurretStats s, Vector3 muzzle, List<Creature> alive)
+        {
+            Vector3 at = p.Pos + Vector3.up * 0.6f;
+            float r = 9f + s.Range * 0.25f;
+            foreach (var c in alive.Where(c => Alive(c) && (c.transform.position - at).Flat().sqrMagnitude <= r * r).ToList())
+            {
+                Hit(c, Dmg(Mathf.RoundToInt(s.Damage * 1.6f), c, s));
+                Fx.Send(FxKind.Blast, c.transform.position + Vector3.up * 0.3f, c.transform.position, p.Id);
+            }
+            Fx.Send(FxKind.Blast, at, at, p.Id);
+            AutoTest.Count("turret_nova");
+        }
+
+        private IEnumerator GunBurst(Vector3 muzzle, List<(Creature c, int dmg)> shots, bool show, string key)
+        {
+            foreach (var (c, dmg) in shots)
+            {
+                yield return new WaitForSeconds(0.035f); // extra barrels answer one after another, not in one frame
+                if (!Alive(c) || c._hp.Value <= 0) continue;
+                Hit(c, dmg);
+                if (show) Fx.Send(FxKind.Tracer, muzzle, c.transform.position, 0, 0, 0, key);
+            }
+        }
+
+        private IEnumerator SniperBurst(Vector3 muzzle, List<(Creature c, int dmg)> shots, int pieceId, string key)
+        {
+            foreach (var (c, dmg) in shots)
+            {
+                yield return new WaitForSeconds(0.13f);
+                if (!Alive(c) || c._hp.Value <= 0) continue;
+                Hit(c, dmg);
+                Fx.Send(FxKind.Snipe, muzzle, c.transform.position, 0, dmg, 0, key);
             }
         }
 
@@ -331,7 +381,7 @@ namespace HtfFortress
                 var c = kv.Key;
                 if (!Alive(c) || Time.time > kv.Value.until) { _burning.Remove(c); continue; }
                 Stats.TurretHit(c, kv.Value.owner);
-                Hit(c, Mathf.Max(1, Mathf.RoundToInt(kv.Value.dps * 0.5f * DamageMultiplier.Value)));
+                Hit(c, Mathf.Max(1, Mathf.RoundToInt(kv.Value.dps * 0.5f * DamageMultiplier.Value * SoulTurretMult)));
                 if (fx) Fx.Send(FxKind.Burn, c.transform.position, c.transform.position);
                 AutoTest.Count("burn_ticks");
             }
@@ -374,7 +424,7 @@ namespace HtfFortress
                     if (Mathf.Abs(d.x) <= reach && Mathf.Abs(d.z) <= reach && d.y > -0.6f && d.y < 2.5f)
                     {
                         Stats.TurretHit(c, BuildSystem.Instance.OwnerOf(p.Id));
-                        int dmg = Mathf.RoundToInt(Catalog.SpikeDamage(p.Level) * DamageMultiplier.Value);
+                        int dmg = Mathf.RoundToInt(Catalog.SpikeDamage(p.Level) * DamageMultiplier.Value * SoulTurretMult);
                         c.ServerChangeHp(dmg);
                         Siege.Instance.Slow(c, 0.45f, 0.9f);
                         Fx.Send(FxKind.WeaponHit, c.transform.position, c.transform.position, 0, dmg); // number, sparks, the game's hit sound

@@ -14,6 +14,7 @@ namespace HtfFortress
     {
         public static ConfigEntry<bool> ReducedEffects;
         public static bool Reduced => ReducedEffects != null && ReducedEffects.Value;
+        public static ConfigEntry<bool> AutoEatHungry, AutoEatLowHealth;
 
         // One line on the settings page: its name (L10n key, with "<key>D" under it), whether it's on, what turning it does.
         public struct Row { public string Key; public Func<bool> On; public Action<bool> Set; }
@@ -25,9 +26,14 @@ namespace HtfFortress
         {
             ReducedEffects = config.Bind("Display", "ReducedEffects", false,
                 "This screen only: fewer particles, shorter gas clouds and fewer leftover effects (for lag in the late waves).");
+            // Per player: the host needs to know when to hand you a fish, but nobody else does.
+            AutoEatHungry = config.Bind("Food", "AutoEatWhenHungry", true, "Eat a belt grilled fish when hunger is below 10%.");
+            AutoEatLowHealth = config.Bind("Food", "AutoEatBelow50Health", false, "Eat a belt grilled fish when health is below 50%.");
             // The game's own option (its Options menu has it too): the same setting, so the two always agree.
             Add("setDamageNumbers", () => DecalManager.UseDamageNumbers, DamageNumbers);
             Add("setReducedFx", ReducedEffects);
+            Add("setAutoEatHungry", AutoEatHungry);
+            Add("setAutoEatLowHealth", AutoEatLowHealth);
         }
 
         private static void DamageNumbers(bool on)

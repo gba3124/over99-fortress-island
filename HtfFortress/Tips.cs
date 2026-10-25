@@ -38,11 +38,11 @@ namespace HtfFortress
                 ("island", () => OnIsland() && !Round()),
                 ("start", () => Round() && OnIsland()),
                 ("build", () => BuildSystem.Building),
-                ("net", () => Round() && Enemies.Instance.ClientCorpseNear(Me(), 25f)),
-                ("netFull", () => Round() && FortressNet.Instance.ClientNetFull),
+
                 ("loot", () => Loot.Instance.ClientHasDrops),
                 ("chest", () => Loot.Instance.ClientChestPos != null),
                 ("scales", () => Loot.Instance.ClientHasScales),
+                ("souls", () => Loot.Instance && Loot.Instance.ClientVault != null && Loot.Instance.ClientVault.Souls > 0),
                 ("vault", () => FortressIsland.Instance && FortressIsland.Instance.ResultsShowing),
                 ("active", () => Round() && Actives.Instance.ClientHasActive),
                 ("weapon", () => Round() && Weapons.Instance.ClientHasWeapon),
@@ -144,7 +144,7 @@ namespace HtfFortress
             bool ok = island && island.Exists && cam && Hud.Font && Player.LocalPlayer && Player.LocalPlayer.Transform
                       && island.OnIsland(Player.LocalPlayer.Transform.position, FortressIsland.IslandRadius + 40f);
             bool round = Siege.Instance && Siege.Instance.ViewActive;
-            bool netFull = FortressNet.Instance && FortressNet.Instance.ClientNetFull;
+            bool netFull = false;
             // The stations are always marked (people couldn't find the vault); the vault pulses between rounds, when it can be
             // used, the fish stall when your net is full.
             Marker("crate", ok, island ? island.MarketPos + Vector3.up * 3.3f : Vector3.zero, L10n.T("markCrate"), netFull, cam);
@@ -198,7 +198,8 @@ namespace HtfFortress
         private static readonly (string pic, string title, string line)[] PlayCards =
         {
             ("HelpPearl", "helpPearlT", "helpPearl"), ("HelpLighthouse", "helpStartT", "helpStart"), ("HelpRevive", "helpReviveT", "helpRevive"),
-            ("PieceGun", "helpBuildT", "helpBuild"), ("GearBigNet", "helpNetT", "helpNet"), ("HelpLoot", "helpLootT", "helpLoot"),
+            ("PieceGun", "helpBuildT", "helpBuild"), ("HelpLoot", "helpLootT", "helpLoot"),
+            ("SoulCurrency", "helpSoulT", "helpSoul"),
         };
         private static readonly (string pic, string title, string line)[] VillageCards =
         {
@@ -256,9 +257,11 @@ namespace HtfFortress
             WeaponPage(weapons);
             var settings = Page(p);
             SettingsPage(settings);
+            var support = Page(p);
+            SupportPage(support);
             _tabs.Clear();
-            var pages = new[] { play, village, foes, weapons, settings };
-            var names = new[] { L10n.T("helpTabPlay"), L10n.T("helpTabVillage"), L10n.T("helpTabFoes"), L10n.T("helpTabWeapons"), L10n.T("helpTabSettings") };
+            var pages = new[] { play, village, foes, weapons, settings, support };
+            var names = new[] { L10n.T("helpTabPlay"), L10n.T("helpTabVillage"), L10n.T("helpTabFoes"), L10n.T("helpTabWeapons"), L10n.T("helpTabSettings"), L10n.T("helpTabSupport") };
             for (int i = 0; i < pages.Length; i++) Tab(p, i, pages.Length, names[i], pages[i].gameObject);
             ShowPage(0);
             Hud.Label(p, Hud.Keys(L10n.T("helpClose")) + "　·　" + VersionCheck.Build, 18f, new Vector2(0.5f, 0f), new Vector2(0f, 16f), new Vector2(1200f, 28f), TextAlignmentOptions.Center, Hud.Muted);
@@ -301,6 +304,24 @@ namespace HtfFortress
 
         // Each player's own display settings (ClientSettings.Rows): a line each, a pill that turns it on or off.
         private readonly List<Action> _settingsShown = new List<Action>();
+        private void SupportPage(RectTransform page)
+        {
+            var panel = Hud.Box(page, new Vector2(0.5f, 0.5f), new Vector2(0f, -6f), new Vector2(900f, 620f), Hud.Raised, 22f).transform;
+            var T = new Vector2(0.5f, 1f);
+            Hud.Label(panel, L10n.T("supportTitle"), 34f, T, new Vector2(0f, -20f), new Vector2(840f, 44f), TextAlignmentOptions.Center, Hud.Accent, bold: true);
+            // Keep the copy above the QR: it used to overlap the top of the code at this UI scale.
+            var copy = Hud.Label(panel, Hud.Keys(L10n.T("supportText")), 19f, T, new Vector2(0f, -70f), new Vector2(800f, 46f), TextAlignmentOptions.Center, Hud.Ink);
+            copy.enableAutoSizing = true; copy.fontSizeMin = 15f; copy.fontSizeMax = 19f;
+            Hud.Picture(panel, "DonateQR", T, new Vector2(0f, -126f), new Vector2(240f, 240f), new Vector2(0.5f, 1f));
+            Hud.Label(panel, L10n.T("supportScan"), 18f, T, new Vector2(0f, -374f), new Vector2(820f, 24f), TextAlignmentOptions.Center, Hud.Muted);
+            Hud.Label(panel, "buymeacoffee.com/gba3124", 19f, T, new Vector2(0f, -402f), new Vector2(820f, 26f), TextAlignmentOptions.Center, Hud.Gold, bold: true);
+            var btn = Hud.Box(panel, T, new Vector2(0f, -442f), new Vector2(330f, 46f), new Color(0.24f, 0.48f, 0.32f), 14f);
+            btn.raycastTarget = true;
+            btn.gameObject.AddComponent<Button>().onClick.AddListener(() => Application.OpenURL("https://buymeacoffee.com/gba3124"));
+            Hud.Label(btn.transform, L10n.T("supportOpen"), 20f, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(320f, 42f), TextAlignmentOptions.Center, Color.white, bold: true);
+            Hud.Label(panel, L10n.T("supportContact"), 14f, new Vector2(0.5f, 0f), new Vector2(0f, 10f), new Vector2(860f, 20f), TextAlignmentOptions.Center, Hud.Muted);
+        }
+
         private void SettingsPage(RectTransform page)
         {
             const float w = 980f, h = 104f, gap = 16f;
@@ -369,18 +390,19 @@ namespace HtfFortress
         private static void WeaponPage(RectTransform page)
         {
             var list = GearCatalog.All.Where(GearCatalog.IsWeapon).ToList();
-            const int cols = 3;
+            // 4 x 5 fits all 20 with room for the 3-line effect; 3 x 7 ran into the footer at this UI scale.
+            const int cols = 4;
             int rows = (list.Count + cols - 1) / cols;
-            float cw = (HelpW - 80f - (cols - 1) * 15f) / cols, ch = Mathf.Min(96f, (HelpH - Top - Bottom - (rows - 1) * 6f) / rows);
+            float cw = (HelpW - 80f - (cols - 1) * 15f) / cols, ch = Mathf.Min(130f, (HelpH - Top - Bottom - (rows - 1) * 6f) / rows);
             for (int i = 0; i < list.Count; i++)
             {
                 var g = list[i];
                 var cell = Hud.Box(page, new Vector2(0f, 1f), new Vector2(40f + (i % cols) * (cw + 15f), -Top - (i / cols) * (ch + 6f)), new Vector2(cw, ch), Hud.Raised, 12f, pivot: new Vector2(0f, 1f)).transform;
-                Hud.Picture(cell, "Gear" + g, new Vector2(0f, 0.5f), new Vector2(8f, 0f), new Vector2(ch - 14f, ch - 14f), new Vector2(0f, 0.5f));
+                Hud.Picture(cell, "Gear" + g, new Vector2(0f, 0.5f), new Vector2(7f, 0f), new Vector2(ch - 14f, ch - 14f), new Vector2(0f, 0.5f));
                 string text = $"<b>{GearCatalog.Name(g)}</b>\n<size=82%>{GearCatalog.Effect(g, Rarity.Common)}"
                               + $"\n<color=#{GearCatalog.Hex(Rarity.Legendary)}>{L10n.T("helpLegendValue", GearCatalog.FormatValue(g, Rarity.Legendary))}　★ {L10n.T("gearLegend" + g)}</color></size>";
-                var t = Hud.Label(cell, text, 16f, new Vector2(0f, 0.5f), new Vector2(ch, 0f), new Vector2(cw - ch - 8f, ch - 6f), TextAlignmentOptions.Left, pivot: new Vector2(0f, 0.5f));
-                t.enableAutoSizing = true; t.fontSizeMin = 11f; t.fontSizeMax = 16f;
+                var t = Hud.Label(cell, text, 15f, new Vector2(0f, 0.5f), new Vector2(ch + 2f, 0f), new Vector2(cw - ch - 10f, ch - 6f), TextAlignmentOptions.Left, pivot: new Vector2(0f, 0.5f));
+                t.enableAutoSizing = true; t.fontSizeMin = 9f; t.fontSizeMax = 15f;
             }
         }
     }

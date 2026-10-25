@@ -464,6 +464,21 @@ namespace HtfFortress
             Spin = new Vector2(-0.6f, 0.6f), Noise = 0.25f, Max = 500,
         });
 
+        public static ParticleSystem Flame => FlameFor(new Color(1f, 0.52f, 0.12f));
+        // One fire system per branch palette (orange, red, white-hot, blue flame): the colour is the material, not a tint
+        // that would turn an orange texture green.
+        public static ParticleSystem FlameFor(Color c)
+        {
+            string key = "Flame" + ColorUtility.ToHtmlStringRGB(c);
+            return System(key, () => new Spec
+            {
+                Mat = Splat(key, c), Life = new Vector2(0.22f, 0.48f), Speed = new Vector2(3f, 7f), Size = new Vector2(0.5f, 1.1f),
+                Gravity = -0.04f, Color = Fade(Color.Lerp(Color.white, c, 0.25f), new Color(c.r * 0.15f, c.g * 0.15f, c.b * 0.15f, 0f), 0.65f),
+                SizeOverLife = Curve(0f, 0.55f, 0.35f, 0.9f, 1f, 1.35f), Drag = 1.4f, Noise = 0.22f, Max = 600,
+                Shape = ParticleSystemShapeType.Cone, Angle = 32f, Radius = 0.12f,
+            });
+        }
+
         public static ParticleSystem Dust => System("Dust", () => new Spec
         {
             Mat = Splat("Dust", new Color(0.62f, 0.58f, 0.5f, 1f)), Life = new Vector2(0.5f, 0.9f), Speed = new Vector2(0.5f, 2f), Size = new Vector2(0.4f, 0.8f),

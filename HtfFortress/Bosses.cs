@@ -25,6 +25,7 @@ namespace HtfFortress
         private readonly List<KeyValuePair<Creature, BossBrain>> _brainsScratch = new List<KeyValuePair<Creature, BossBrain>>(); // reused in Update: no per-frame garbage
         private readonly Dictionary<int, float> _silenced = new Dictionary<int, float>(); // turret piece id -> until
         private float _nextAura;
+        private bool _musicOn;
 
         private void Awake() => Instance = this;
 
@@ -41,6 +42,7 @@ namespace HtfFortress
             b.Init(c, kind, wave, home);
             _brains[c] = b;
             Puppets.Add(c);
+            if (!_musicOn) { _musicOn = true; Fx.Send(FxKind.BossMusic, c.transform.position, c.transform.position, 0, 1); }
             b.Hold(hold);
         }
 
@@ -56,6 +58,7 @@ namespace HtfFortress
 
         public void ServerClear()
         {
+            if (_musicOn) { _musicOn = false; Fx.Send(FxKind.BossMusic, Vector3.zero, Vector3.zero, 0, 0); }
             foreach (var b in _brains.Values) b.Stop();
             _brains.Clear();
             _silenced.Clear();
@@ -113,7 +116,8 @@ namespace HtfFortress
                     _brains.Remove(kv.Key);
                     if (kv.Key && kv.Key._hp.Value <= 0)
                     {
-                        if (b.IsBoss) { b.Report(true); b.Died(); BossTrophies.ServerDrop(b.Kind, kv.Key.transform.position, b.Wave); }
+                        if (b.IsBoss) { b.Report(true); b.Died(); BossTrophies.ServerDrop(b.Kind, kv.Key.transform.position, b.Wave);
+                            if (b.Kind == EnemyKind.Eye && b.Wave >= EnemyCatalog.FinalWave) { Vector3 pos = kv.Key.transform.position; Fx.Send(FxKind.Crash, pos, pos); Fx.Send(FxKind.FinalBoss, pos, pos); } }
                         StartCoroutine(Gone(kv.Key, b.IsBoss ? 1.8f : 0.5f));
                     }
                     continue;
@@ -122,7 +126,11 @@ namespace HtfFortress
                 if (aura && b.IsBoss) b.Aura();
                 if (AutoTest.Running && Time.time >= b.NextTrace) { b.NextTrace = Time.time + 3f; BuildSystem.Log.LogInfo("boss trace " + b.Trace()); }
             }
-            if (!_brains.Values.Any(b => b.IsBoss) && Dark) { Dark = false; BossFx.Send("dark", null, Vector3.zero, Vector3.zero, 0); }
+            if (!_brains.Values.Any(b => b.IsBoss))
+            {
+                if (Dark) { Dark = false; BossFx.Send("dark", null, Vector3.zero, Vector3.zero, 0); }
+                if (_musicOn) { _musicOn = false; Fx.Send(FxKind.BossMusic, Vector3.zero, Vector3.zero, 0, 0); }
+            }
         }
 
         // A dead one goes down (into the ground, the sea, out of the sky) and is gone: its body's worth was paid already.
@@ -369,7 +377,15 @@ namespace HtfFortress
             return y;
         }
         protected static float LandY(Vector3 p) => Physics.Raycast(new Vector3(p.x, p.y + 30f, p.z), Vector3.down, out var h, 80f, GameInfo.LevelLayer) ? h.point.y : WaterManager.GetWaterHeight(p);
-        protected Vector3 Stand(Vector3 p) => new Vector3(p.x, GroundY(p) + Foot, p.z);
+        protected Vector3 Stand(Vector3 p)
+        {
+            // Measure the current mesh's bottom, not the one cached at spawn: a boss whose legs/claws animate (the Warden)
+            // would otherwise stand on the cached box and float. Translation does not change the origin-to-bottom offset.
+            var ground = new Vector3(p.x, GroundY(p), p.z);
+            var b = BossLooks.WorldBounds(T);
+            float bottom = b.min.y - T.position.y;
+            return ground + Vector3.up * (0f - bottom);
+        }
 
         // Walk (on the ground, turning as it goes) toward `goal` until within `stopAt`, `seconds` at most. Walls in its way
         // are trampled: it stops at one and breaks it.
@@ -532,7 +548,7 @@ namespace HtfFortress
                 if (inside(p.Transform.position))
                 {
                     Vector3 away = (p.Transform.position - from).Flat();
-                    Siege.HurtPlayer(p, Mathf.Min(70, dmg), (away.sqrMagnitude > 0.01f ? away.normalized : Vector3.forward) * knock + Vector3.up * knock * 0.5f);
+                    Siege.HurtPlayer(p, Mathf.Min(80, dmg), (away.sqrMagnitude > 0.01f ? away.normalized : Vector3.forward) * knock + Vector3.up * knock * 0.5f);
                 }
         }
 
@@ -562,7 +578,7 @@ namespace HtfFortress
                 {
                     hurt.Add(p);
                     Vector3 away = (p.Transform.position - from).Flat();
-                    Siege.HurtPlayer(p, Mathf.Min(70, Scaled(playerDmg)), (away.sqrMagnitude > 0.01f ? away.normalized : Vector3.forward) * knock + Vector3.up * knock * 0.5f);
+                    Siege.HurtPlayer(p, Mathf.Min(80, Scaled(playerDmg)), (away.sqrMagnitude > 0.01f ? away.normalized : Vector3.forward) * knock + Vector3.up * knock * 0.5f);
                 }
         }
 
@@ -627,6 +643,21 @@ namespace HtfFortress
         }
         protected PieceState? NearestPiece(float range, Func<PieceState, bool> where = null) => Best(p => (where == null || where(p)) && (p.Pos - Pos).Flat().magnitude <= range, p => -(p.Pos - Pos).Flat().sqrMagnitude);
         protected IEnumerable<PieceState> TurretsNear(float range) => Pieces.Where(p => Catalog.IsTurret(p.Type) && (p.Pos - Pos).Flat().magnitude <= range);
+
+        // Owen: a boss's first target is the damage turrets, not the lighthouse or the walls.
+        protected Vector3 TowerPoint(float range = 32f)
+        {
+            PieceState best = default;
+            float bd = float.MaxValue;
+            foreach (var p in Pieces)
+            {
+                if (!Catalog.IsTurret(p.Type) || p.Hp <= 0) continue;
+                float d = (p.Pos - Pos).Flat().sqrMagnitude;
+                if (d > range * range || d >= bd) continue;
+                bd = d; best = p;
+            }
+            return best.Id != 0 ? best.Pos : Heart();
+        }
         protected static Player SomePlayer(Vector3 near, float range) => Targets.Where(p => (p.Transform.position - near).Flat().magnitude <= range).OrderBy(_ => UnityEngine.Random.value).FirstOrDefault();
 
         // Where the fight is: the lighthouse, or the thickest of the buildings round it.
@@ -688,9 +719,21 @@ namespace HtfFortress
         private void Crash()
         {
             float hp = MaxHp > 0 ? Mathf.Clamp01(Body._hp.Value / (float)MaxHp) : 1f;
-            Siege.Instance.DamageCore(Mathf.RoundToInt(Siege.Instance.CoreMax * Mathf.Lerp(0.15f, 0.6f, hp)));
-            Fx.Send(FxKind.Crash, Core + Vector3.up * 2f, Core + Vector3.up * 2f);
-            Fx.Announce("bossCrashed");
+            bool finalBoss = Kind == EnemyKind.Eye && Wave >= EnemyCatalog.FinalWave;
+            if (finalBoss)
+            {
+                // The last boss must be killed to win (Owen): running out the clock is not a kill, it is the lighthouse
+                // being smashed. No partial damage: the tower goes down and the run is lost.
+                Siege.Instance.DamageCore(Siege.Instance.CoreMax);
+                Fx.Send(FxKind.Crash, Core + Vector3.up * 2f, Core + Vector3.up * 2f);
+                Fx.Announce("finalBossCrash");
+            }
+            else
+            {
+                Siege.Instance.DamageCore(Mathf.RoundToInt(Siege.Instance.CoreMax * Mathf.Lerp(0.15f, 0.6f, hp)));
+                Fx.Send(FxKind.Crash, Core + Vector3.up * 2f, Core + Vector3.up * 2f);
+                Fx.Announce("bossCrashed");
+            }
             Report(false);
             AutoTest.Count("boss_crashed");
             Stop();

@@ -4,16 +4,21 @@ using UnityEngine.Localization.Settings;
 
 namespace HtfFortress
 {
-    public enum LanguageSetting { Auto, English, TraditionalChinese, SimplifiedChinese }
+    public enum LanguageSetting
+{
+    Auto, English, TraditionalChinese, SimplifiedChinese,
+    French, German, Italian, SpanishSpain, SpanishMexico, PortugueseBrazil,
+    Russian, Polish, Turkish, Ukrainian, Japanese, Korean, Swedish,
+}
 
-    // Tiny string table. Auto follows the game's own language setting.
+    // String table. Auto follows the game's own locale; all 16 locales How to Fish ships are supported (newer ones live in L10nExtra.cs).
     public static class L10n
     {
         public static ConfigEntry<LanguageSetting> Setting;
 
-        private enum Lang { En, ZhTW, ZhCN }
+        private enum Lang { En, ZhTW, ZhCN, Fr, De, It, Es, EsMx, PtBr, Ru, Pl, Tr, Uk, Ja, Ko, Sv }
 
-        // key -> { English, 繁體中文, 简体中文 }
+        // key -> { English, 繁體中文, 简体中文 }; other locales are in L10nExtra.cs
         private static readonly Dictionary<string, string[]> Table = new Dictionary<string, string[]>
         {
             ["prefix"] = new[] { "[Fortress]", "[要塞]", "[要塞]" },
@@ -22,6 +27,8 @@ namespace HtfFortress
             ["cleared"] = new[] { "Wave {0} cleared! +${1}. Build time {2}s (host: {3} to start now).",
                                   "第 {0} 波清除！+${1}。建造時間 {2} 秒（房主按 {3} 立即開始）。",
                                   "第 {0} 波清除！+${1}。建造时间 {2} 秒（房主按 {3} 立即开始）。" },
+            ["runResumed"] = new[] { "Saved run resumed: wave {0} — the fort is back.", "已接上存檔：第 {0} 波，要塞幫你留著了。", "已接上存档：第 {0} 波，要塞帮你留着了。" },
+            ["runResumedShort"] = new[] { "Run resumed · wave {0}", "接續存檔 · 第 {0} 波", "接续存档 · 第 {0} 波" },
             ["startHint"] = new[] { "Press {0} to build walls and turrets. Host: {1} starts the next wave early.",
                                     "按 {0} 建造牆和砲塔。房主按 {1} 可以提早開始下一波。",
                                     "按 {0} 建造墙和炮塔。房主按 {1} 可以提早开始下一波。" },
@@ -170,14 +177,16 @@ namespace HtfFortress
             ["revealSub"] = new[] { "Fortress Island has risen from the sea", "要塞島從海中升起", "要塞岛从海中升起" },
             ["revealLine"] = new[] { "Hold the lighthouse through 100 waves. It's on your radar.", "撐過 100 波，守住燈塔。雷達上找得到它。", "撑过 100 波，守住灯塔。雷达上找得到它。" },
             ["revealSkip"] = new[] { "Hold [Space] 3 s to skip", "按住 [空白鍵] 3 秒跳過", "按住 [空格键] 3 秒跳过" },
+            ["finalBossDown"] = new[] { "The last boss falls", "最後的王倒下了", "最后的王倒下了" },
+            ["finalBossSub"] = new[] { "The lighthouse still stands", "燈塔還站著", "灯塔还站着" },
             ["victorySub"] = new[] { "All 100 waves held: the lighthouse stands", "100 波全部撐過・燈塔屹立不搖", "100 波全部撑过・灯塔屹立不摇" },
             ["islandTitle"] = new[] { "<size=120%>Fortress Island</size>", "<size=120%>要塞島</size>", "<size=120%>要塞岛</size>" },
             ["readyPrompt"] = new[] { "At the lighthouse door, [E] opens the gate: the pearl's light brings the fish", "到燈塔門口按 [E] 打開閘門，珍珠的光會引來魚群", "到灯塔门口按 [E] 打开闸门，珍珠的光会引来鱼群" },
-            ["readyCountdown"] = new[] { "The gate is opening: the fish come in {0}...", "閘門打開中，魚群 {0} 秒後到……", "闸门打开中，鱼群 {0} 秒后到……" },
+            ["readyCountdown"] = new[] { "The gate is opening... the fish are swimming in... ({0}s)", "閘門打開中，魚群正在游來……（{0} 秒）", "闸门打开中，鱼群正在游来……（{0} 秒）" },
             ["gateCancelHint"] = new[] { "[E] at the door: stop", "在門口按 [E] 取消", "在门口按 [E] 取消" },
             ["gatePull"] = new[] { "Open the gate: start the round", "打開閘門・開始守塔", "打开闸门・开始守塔" },
             ["gateCancel"] = new[] { "Hold off: stop the countdown", "先等等：取消開戰", "先等等：取消开战" },
-            ["gatePulled"] = new[] { "The gate opens and the pearl shines out! The fish come in {0} s", "閘門打開，珍珠的光透出來了！魚群 {0} 秒後殺到", "闸门打开，珍珠的光透出来了！鱼群 {0} 秒后杀到" },
+            ["gatePulled"] = new[] { "The gate opens and the pearl shines out! The fish are swimming this way... (about {0}s)", "閘門打開，珍珠的光透出來了！魚群正在游來……（約 {0} 秒）", "闸门打开，珍珠的光透出来了！鱼群正在游来……（约 {0} 秒）" },
             ["gateCancelled"] = new[] { "The gate closed again: not yet", "閘門又關上了，先不開戰", "闸门又关上了，先不开战" },
             ["ladderHint"] = new[] { "Ladder: [W] up  [S] down  [Space] let go", "梯子：[W] 往上　[S] 往下　[空白鍵] 放手", "梯子：[W] 往上　[S] 往下　[空格键] 放手" },
             ["vaultFullNotice"] = new[] { "The vault is full ({0} slots): expand it at the quartermaster", "儲藏庫滿了（{0} 格）：到軍需官那裡擴充", "储藏库满了（{0} 格）：到军需官那里扩充" },
@@ -207,6 +216,7 @@ namespace HtfFortress
             ["branchHint"] = new[] { "[U] {0} / [Shift+U] {1}: ${2}", "[U] {0} / [Shift+U] {1}：${2}", "[U] {0} / [Shift+U] {1}：${2}" },
             ["repairHint"] = new[] { "[J] repair: ${0}", "[J] 修理：${0}", "[J] 修理：${0}" },
             ["barHint"] = new[] { "[T] next  [Shift+T] back", "[T] 下一個  [Shift+T] 上一個", "[T] 下一个  [Shift+T] 上一个" },
+            ["islandNotReady"] = new[] { "The island is still loading; try F4 again in a moment.", "要塞島還在載入，等一下再按 F4。", "要塞岛还在载入，等一下再按 F4。" },
             ["islandWelcome"] = new[] { "<size=130%>OVER 99</size>\nFortress Island · hold the lighthouse", "<size=130%>OVER 99</size>\n要塞島・守住燈塔", "<size=130%>OVER 99</size>\n要塞岛・守住灯塔" },
             ["netHud"] = new[] { "Net {0}/{1}  (worth {2})", "漁網 {0}/{1}（價值 {2}）", "渔网 {0}/{1}（价值 {2}）" },
             ["netFull"] = new[] { "FULL - sell at the fish stall by the dock", "滿了，到碼頭旁的魚攤賣掉", "满了，到码头旁的鱼摊卖掉" },
@@ -214,11 +224,12 @@ namespace HtfFortress
             ["netMax"] = new[] { "Net at max size", "漁網已是最大", "渔网已是最大" },
             ["netUpgraded"] = new[] { "Bigger nets! Everyone now carries {0} fish", "漁網升級！每人可裝 {0} 隻", "渔网升级！每人可装 {0} 只" },
             ["tableHeader"] = new[] { "Player   Kills   Turret kills   Fished   Built   Downs", "玩家   擊殺   砲塔擊殺   捕魚收入   建造   倒下", "玩家   击杀   炮塔击杀   捕鱼收入   建造   倒下" },
-            ["testKeys"] = new[] { "<b>Test keys</b>  <size=80%>(Mac: hold Fn)</size>\n[F1] a boss now (the next one; Shift: the same again)\n[F2] boss -25% health (Shift: break its move)\n[F3] mend the lighthouse and buildings\n[Shift+F3] the ten boss trophies\n[F4] back by the lighthouse (anyone, any time)\n[F5] +$15000\n[F6] god mode on/off\n[F7] kill all enemies\n[Shift+F7] clear what lies on the island\n[F8] skip build time\n[Shift+F8] jump 5 waves\n[Ctrl+F8] jump to the next boss wave\n[F9] start / end a round\n[F10] the island's entrance again\n[F11] freeze / unfreeze the battle\n<size=90%>Ctrl (or Option) modifiers are also buttons in the F12 menu.</size>",
-                                   "<b>測試鍵</b>  <size=80%>（Mac 要按住 Fn）</size>\n[F1] 叫出下一隻大王（Shift：同一隻再來）\n[F2] 大王血量 -25%（Shift：強制破招）\n[F3] 修好燈塔和所有建築\n[Shift+F3] 十隻大王的戰利品\n[F4] 回到燈塔旁（任何人隨時都能用）\n[F5] +$15000\n[F6] 無敵 開／關\n[F7] 清除所有敵人\n[Shift+F7] 清除島上地上的東西\n[F8] 跳過建造時間\n[Shift+F8] 跳 5 波\n[Ctrl+F8] 跳到下一個大王波\n[F9] 開始／結束一局\n[F10] 重看島嶼登場動畫\n[F11] 凍結／解凍戰場\n<size=90%>Ctrl（或 Option）的組合鍵在 F12 選單裡也有按鈕。</size>",
-                                   "<b>测试键</b>  <size=80%>（Mac 要按住 Fn）</size>\n[F1] 叫出下一只大王（Shift：同一只再来）\n[F2] 大王血量 -25%（Shift：强制破招）\n[F3] 修好灯塔和所有建筑\n[Shift+F3] 十只大王的战利品\n[F4] 回到灯塔旁（任何人随时都能用）\n[F5] +$15000\n[F6] 无敌 开／关\n[F7] 清除所有敌人\n[Shift+F7] 清除岛上地上的东西\n[F8] 跳过建造时间\n[Shift+F8] 跳 5 波\n[Ctrl+F8] 跳到下一个大王波\n[F9] 开始／结束一局\n[F10] 重看岛屿登场动画\n[F11] 冻结／解冻战场\n<size=90%>Ctrl（或 Option）的组合键在 F12 选单里也有按钮。</size>" },
+            ["testKeys"] = new[] { "<b>Test keys</b>  <size=80%>(Mac: hold Fn)</size>\n[F1] a boss now (the next one; Shift: the same again)\n[F2] boss -25% health (Shift: break its move)\n[F3] mend the lighthouse and buildings\n[Shift+F3] the ten boss trophies\n[F4] back by the lighthouse (anyone, any time)\n[F5] +$15000\n[F6] god mode on/off\n[F7] kill all enemies\n[Shift+F7] clear what lies on the island\n[F8] skip build time\n[Shift+F8] jump 5 waves\n[Ctrl+F8] jump to the next boss wave\n[F9] start / end a round\n[F10] the island's entrance again\n[Shift+F11] freeze / unfreeze the battle\n<size=90%>Ctrl (or Option) modifiers are also buttons in the F12 menu.</size>",
+                                   "<b>測試鍵</b>  <size=80%>（Mac 要按住 Fn）</size>\n[F1] 叫出下一隻大王（Shift：同一隻再來）\n[F2] 大王血量 -25%（Shift：強制破招）\n[F3] 修好燈塔和所有建築\n[Shift+F3] 十隻大王的戰利品\n[F4] 回到燈塔旁（任何人隨時都能用）\n[F5] +$15000\n[F6] 無敵 開／關\n[F7] 清除所有敵人\n[Shift+F7] 清除島上地上的東西\n[F8] 跳過建造時間\n[Shift+F8] 跳 5 波\n[Ctrl+F8] 跳到下一個大王波\n[F9] 開始／結束一局\n[F10] 重看島嶼登場動畫\n[Shift+F11] 凍結／解凍戰場\n<size=90%>Ctrl（或 Option）的組合鍵在 F12 選單裡也有按鈕。</size>",
+                                   "<b>测试键</b>  <size=80%>（Mac 要按住 Fn）</size>\n[F1] 叫出下一只大王（Shift：同一只再来）\n[F2] 大王血量 -25%（Shift：强制破招）\n[F3] 修好灯塔和所有建筑\n[Shift+F3] 十只大王的战利品\n[F4] 回到灯塔旁（任何人随时都能用）\n[F5] +$15000\n[F6] 无敌 开／关\n[F7] 清除所有敌人\n[Shift+F7] 清除岛上地上的东西\n[F8] 跳过建造时间\n[Shift+F8] 跳 5 波\n[Ctrl+F8] 跳到下一个大王波\n[F9] 开始／结束一局\n[F10] 重看岛屿登场动画\n[Shift+F11] 冻结／解冻战场\n<size=90%>Ctrl（或 Option）的组合键在 F12 选单里也有按钮。</size>" },
             ["testBoss"] = new[] { "Here comes {0} (the boss of wave {1}).", "叫出：{0}（第 {1} 波的大王）。", "叫出：{0}（第 {1} 波的大王）。" },
             ["testMended"] = new[] { "The lighthouse and every building mended.", "燈塔和所有建築都修好了。", "灯塔和所有建筑都修好了。" },
+            ["testFreezeShift"] = new[] { "Hold Shift and press F11 to freeze the battle", "要按住 Shift 再按 F11 才會凍結戰場", "要按住 Shift 再按 F11 才会冻结战场" },
             ["testFrozen"] = new[] { "Battle frozen (F11 again to go on).", "戰場凍結（再按 F11 繼續）。", "战场冻结（再按 F11 继续）。" },
             ["testUnfrozen"] = new[] { "Battle goes on.", "戰場繼續。", "战场继续。" },
             ["testHostOnly"] = new[] { "Test keys are host only.", "測試鍵只有房主能用。", "测试键只有房主能用。" },
@@ -279,28 +290,127 @@ namespace HtfFortress
             ["vaultGearAll"] = new[] { "All", "全部", "全部" },
             ["vaultGearPeople"] = new[] { "For people", "給人", "给人" },
             ["vaultGearTowers"] = new[] { "For towers", "給塔", "给塔" },
+            ["vaultSellEverything"] = new[] { "SELL EVERYTHING", "一鍵全賣（全部）", "一键全卖（全部）" },
             ["vaultSellAllOnly"] = new[] { "Selling all works on the whole gear tab: pick All above.", "一鍵賣以整個裝備頁為準：上面選「全部」。", "一键卖以整个装备页为准：上面选「全部」。" },
+            ["settleTitle"] = new[] { "Settlement breakdown", "結算明細", "结算明细" },
+            ["settleBaseLine"] = new[] { "{0} waves held → base ${1}", "撐過 {0} 波 → 基礎 ${1}", "撑过 {0} 波 → 基础 ${1}" },
+            ["settleBonusLine"] = new[] { "Soul settlement bonus: +${0}", "魂結算加成：+${0}", "魂结算加成：+${0}" },
+            ["settleScalesLine"] = new[] { "Fish scales: +{0} earned, -{1} spent", "本局魚鱗：+{0} 取得，-{1} 花費", "本局鱼鳞：+{0} 取得，-{1} 花费" },
+            ["settleTotalLine"] = new[] { "${0}", "${0}", "${0}" },
+            ["settleTotalLabel"] = new[] { "settled money", "結算金錢", "结算金钱" },
             ["soulSettleTitle"] = new[] { "Souls", "魂結算", "魂结算" },
             ["soulSettleFrom"] = new[] { "Wave record {0} → {1}", "波數紀錄 {0} → {1}", "波数纪录 {0} → {1}" },
             ["soulSettleBlock"] = new[] { "wave {0}: +{1}", "第 {0} 波：+{1}", "第 {0} 波：+{1}" },
             ["soulSettleHave"] = new[] { "You have {0} souls", "目前共 {0} 魂", "目前共 {0} 魂" },
             ["soulSettleNone"] = new[] { "No new record: no souls this time.", "沒有破紀錄：這次沒有魂。", "没有破纪录：这次没有魂。" },
             ["soulSettleHint"] = new[] { "Spend them at the lighthouse keeper.", "到燈塔阿伯那裡花掉。", "到灯塔阿伯那里花掉。" },
-            ["soulUpDmg"] = new[] { "Damage", "傷害", "伤害" },
-            ["soulUpCrit"] = new[] { "Critical hit", "暴擊", "暴击" },
-            ["soulUpCoins"] = new[] { "Starting money", "起始金錢", "起始金钱" },
-            ["soulUpScales"] = new[] { "Fish scales", "魚鱗", "鱼鳞" },
-            ["soulUpCore"] = new[] { "Lighthouse health", "燈塔血量", "灯塔血量" },
+            ["soulUpDmg"] = new[] { "Weapon damage (+15%/level)", "武器傷害（每級+15%）", "武器伤害（每级+15%）" },
+            ["soulUpCrit"] = new[] { "Critical hit (+2%/level)", "暴擊（每級+2%）", "暴击（每级+2%）" },
+            ["soulUpCoins"] = new[] { "Settlement money (+10%/level)", "結算金錢（每級+10%）", "结算金钱（每级+10%）" },
+            ["soulUpScales"] = new[] { "Fish scales (+15%/level)", "魚鱗（每級+15%）", "鱼鳞（每级+15%）" },
+            ["soulUpCore"] = new[] { "Lighthouse health (+15%/level)", "燈塔血量（每級+15%）", "灯塔血量（每级+15%）" },
+            ["soulUpDiscount"] = new[] { "Tower upgrade discount (-10%/level, max 90%)", "塔升級折扣（每級-10%，最高90%）", "塔升级折扣（每级-10%，最高90%）" },
+            ["soulUpTurretDmg"] = new[] { "Tower damage (+10%/level)", "塔傷害（每級+10%）", "塔伤害（每级+10%）" },
+            ["soulUpKnock"] = new[] { "Knockback (+25%/level)", "擊退距離（每級+25%）", "击退距离（每级+25%）" },
+            ["soulUpHealth"] = new[] { "Character health (+10% effective HP/level)", "人物生命（每級+10%有效血量）", "人物生命（每级+10%有效血量）" },
+            ["soulTabCharacter"] = new[] { "Character", "人物", "人物" },
+            ["soulTabTowers"] = new[] { "Towers", "塔", "塔" },
+            ["soulTabResources"] = new[] { "Resources", "資源", "资源" },
+            ["soulNow"] = new[] { "Now: {0}", "目前：{0}", "目前：{0}" },
             ["soulUpLevel"] = new[] { "Lv{0} · {1} souls", "Lv{0} · {1} 魂", "Lv{0} · {1} 魂" },
             ["soulUpBuy"] = new[] { "Buy", "購買", "购买" },
             ["keeperTitle"] = new[] { "The lighthouse keeper", "燈塔阿伯", "灯塔阿伯" },
+            ["GunA1"] = new[] { "Typhoon", "颱風", "台风" },
+            ["GunA1_d"] = new[] { "Storm: faster still, and one more target", "風暴再加速，並多打一個目標", "风暴再加速，并多打一个目标" },
+            ["GunA2"] = new[] { "Hailstorm", "冰雹", "冰雹" },
+            ["GunA2_d"] = new[] { "Storm shots slow what they hit", "風暴彈會減速命中的魚", "风暴弹会减速命中的鱼" },
+            ["GunB1"] = new[] { "Railgun", "磁軌炮", "磁轨炮" },
+            ["GunB1_d"] = new[] { "Piercing rounds, double armour damage", "貫穿子彈，對甲殼傷害加倍", "贯穿子弹，对甲壳伤害加倍" },
+            ["GunB2"] = new[] { "Executioner", "處刑者", "处刑者" },
+            ["GunB2_d"] = new[] { "Heavy round: +60% damage, slower", "重彈：傷害 +60%，射速較慢", "重弹：伤害 +60%，射速较慢" },
+            ["CannonA1"] = new[] { "Carpet", "地毯轟炸", "地毯轰炸" },
+            ["CannonA1_d"] = new[] { "Two more shells, wider blast, less each", "多兩發、爆炸更寬，單發較低", "多两发、爆炸更宽，单发较低" },
+            ["CannonA2"] = new[] { "Napalm cluster", "燃燒集束", "燃烧集束" },
+            ["CannonA2_d"] = new[] { "Cluster shells set the ground burning", "集束彈會讓地面燃燒", "集束弹会让地面燃烧" },
+            ["CannonB1"] = new[] { "Siege", "攻城", "攻城" },
+            ["CannonB1_d"] = new[] { "Even heavier shell and blast", "更重的炮彈與爆炸", "更重的炮弹与爆炸" },
+            ["CannonB2"] = new[] { "Shockwave", "震波", "震波" },
+            ["CannonB2_d"] = new[] { "Huge blast that slows what it hits", "超大爆炸並減速命中的魚", "超大爆炸并减速命中的鱼" },
+            ["HarpoonA1"] = new[] { "Volley", "齊射", "齐射" },
+            ["HarpoonA1_d"] = new[] { "Three more harpoons at once", "一次多射三支魚叉", "一次多射三支鱼叉" },
+            ["HarpoonA2"] = new[] { "Chain harpoon", "連鎖魚叉", "连锁鱼叉" },
+            ["HarpoonA2_d"] = new[] { "Harpoon pierces and chains", "魚叉貫穿並連鎖", "鱼叉贯穿并连锁" },
+            ["HarpoonB1"] = new[] { "Glacier", "冰川", "冰川" },
+            ["HarpoonB1_d"] = new[] { "Much deeper, longer freeze", "凍得更深、更久", "冻得更深、更久" },
+            ["HarpoonB2"] = new[] { "Shatter", "碎冰", "碎冰" },
+            ["HarpoonB2_d"] = new[] { "Freeze shatters: much more damage", "碎冰：對凍結目標傷害大增", "碎冰：对冻结目标伤害大增" },
+            ["MortarA1"] = new[] { "Napalm", "凝固汽油", "凝固汽油" },
+            ["MortarA1_d"] = new[] { "Fire burns twice as hard", "火焰燃燒加倍", "火焰燃烧加倍" },
+            ["MortarA2"] = new[] { "Firestorm", "火風暴", "火风暴" },
+            ["MortarA2_d"] = new[] { "Bigger fire, bigger blast, slower", "火更大、爆炸更大，但更慢", "火更大、爆炸更大，但更慢" },
+            ["MortarB1"] = new[] { "Grand barrage", "大彈幕", "大弹幕" },
+            ["MortarB1_d"] = new[] { "Two more shells, faster", "多兩發，而且更快", "多两发，而且更快" },
+            ["MortarB2"] = new[] { "Cluster shells", "集束彈", "集束弹" },
+            ["MortarB2_d"] = new[] { "One more shell, much bigger blast", "多一發，爆炸範圍大增", "多一发，爆炸范围大增" },
+            ["TeslaA1"] = new[] { "Storm chain", "風暴鏈", "风暴链" },
+            ["TeslaA1_d"] = new[] { "Chains to four more fish", "多連鎖四隻魚", "多连锁四只鱼" },
+            ["TeslaA2"] = new[] { "Conduction", "導電", "导电" },
+            ["TeslaA2_d"] = new[] { "Wet fish take far more; small slow", "潮濕目標傷害大增並減速", "潮湿目标伤害大增并减速" },
+            ["TeslaB1"] = new[] { "Overcharge", "超載", "超载" },
+            ["TeslaB1_d"] = new[] { "Much stronger arc, slightly slower", "電弧更強，稍慢", "电弧更强，稍慢" },
+            ["TeslaB2"] = new[] { "Arc blast", "電弧爆", "电弧爆" },
+            ["TeslaB2_d"] = new[] { "Arc explodes: small blast, more chain", "電弧爆炸：小範圍爆炸與更多連鎖", "电弧爆炸：小范围爆炸与更多连锁" },
+            ["FlameA1"] = new[] { "Hellfire", "地獄火", "地狱火" },
+            ["FlameA1_d"] = new[] { "Burns twice as hot, more damage", "燃燒加倍、傷害更高", "燃烧加倍、伤害更高" },
+            ["FlameA2"] = new[] { "Melt", "熔穿", "熔穿" },
+            ["FlameA2_d"] = new[] { "Melts armour: x2.5 vs tanks/boss", "熔穿甲殼：對坦克/王 x2.5", "熔穿甲壳：对坦克/王 x2.5" },
+            ["FlameB1"] = new[] { "Wall of fire", "火牆", "火墙" },
+            ["FlameB1_d"] = new[] { "Wider, longer, burns more", "更寬、更遠、燃燒更強", "更宽、更远、燃烧更强" },
+            ["FlameB2"] = new[] { "Blue flame", "藍焰", "蓝焰" },
+            ["FlameB2_d"] = new[] { "Colder flame: slows what it burns", "冷焰：燒到的魚會減速", "冷焰：烧到的鱼会减速" },
+            ["SniperA1"] = new[] { "Boss slayer", "屠王", "屠王" },
+            ["SniperA1_d"] = new[] { "x3 more vs tanks/boss, +20% damage", "對坦克/王再多 x3，傷害 +20%", "对坦克/王再多 x3，伤害 +20%" },
+            ["SniperA2"] = new[] { "Piercing shot", "貫穿射擊", "贯穿射击" },
+            ["SniperA2_d"] = new[] { "Pierces the line, +8 range", "貫穿整條線，射程 +8", "贯穿整条线，射程 +8" },
+            ["SniperB1"] = new[] { "Machine sniper", "連狙", "连狙" },
+            ["SniperB1_d"] = new[] { "Fires much faster", "射速大幅提升", "射速大幅提升" },
+            ["SniperB2"] = new[] { "Mark", "標記", "标记" },
+            ["SniperB2_d"] = new[] { "+50% damage, slower", "傷害 +50%，但更慢", "伤害 +50%，但更慢" },
+            ["BubbleA1"] = new[] { "Dome", "巨罩", "巨罩" },
+            ["BubbleA1_d"] = new[] { "Much bigger shield area", "護盾範圍大幅增加", "护盾范围大幅增加" },
+            ["BubbleA2"] = new[] { "Ward", "守護", "守护" },
+            ["BubbleA2_d"] = new[] { "Stronger shield, a little wider", "護盾更強、範圍略增", "护盾更强、范围略增" },
+            ["BubbleB1"] = new[] { "Fortress", "堡壘", "堡垒" },
+            ["BubbleB1_d"] = new[] { "Much stronger shield", "護盾強度大幅提升", "护盾强度大幅提升" },
+            ["BubbleB2"] = new[] { "Aegis", "神盾", "神盾" },
+            ["BubbleB2_d"] = new[] { "Wider and stronger", "範圍與強度都提升", "范围与强度都提升" },
+            ["MenderA1"] = new[] { "Grand mender", "大修復", "大修复" },
+            ["MenderA1_d"] = new[] { "Much wider, heals more", "範圍大增、修復量提高", "范围大增、修复量提高" },
+            ["MenderA2"] = new[] { "Core mender", "核心修復", "核心修复" },
+            ["MenderA2_d"] = new[] { "Wider, heals more per second", "範圍增加、每秒修復更多", "范围增加、每秒修复更多" },
+            ["MenderB1"] = new[] { "Overheal", "過量治療", "过量治疗" },
+            ["MenderB1_d"] = new[] { "Heals much more", "修復量大幅提高", "修复量大幅提高" },
+            ["MenderB2"] = new[] { "Cleanse", "淨化", "净化" },
+            ["MenderB2_d"] = new[] { "Faster healing, wider", "修復更快、範圍更大", "修复更快、范围更大" },
+            ["menuChooseFirst"] = new[] { "Choose A or B", "選擇 A 或 B", "选择 A 或 B" },
+            ["menuChooseSecond"] = new[] { "Choose the second split", "選擇二轉", "选择二转" },
+            ["menuPickFree"] = new[] { "Specialise", "專精", "专精" },
+            ["secondHeavy"] = new[] { "Heavy", "重擊", "重击" },
+            ["secondHeavy_d"] = new[] { "Damage ×1.5, bigger blasts and wider cones", "傷害 ×1.5、爆炸更大、扇形更寬", "伤害 ×1.5、爆炸更大、扇形更宽" },
+            ["secondSwift"] = new[] { "Swift", "迅捷", "迅捷" },
+            ["secondSwift_d"] = new[] { "Fire interval ×0.65, range +12%", "射擊間隔 ×0.65、射程 +12%", "射击间隔 ×0.65、射程 +12%" },
             ["testKeysClick"] = new[] { "<size=85%>[click here] opens the clickable cheat menu</size>", "<size=85%>[點這裡] 開啟可點擊的作弊選單</size>", "<size=85%>[点这里] 打开可点击的作弊选单</size>" },
             ["cheatTitle"] = new[] { "Cheat menu", "測試作弊選單", "测试作弊选单" },
             ["cheatStart"] = new[] { "Start round", "開始回合", "开始回合" },
             ["cheatStop"] = new[] { "End round", "結束回合", "结束回合" },
-            ["cheatCoins"] = new[] { "+500 coins", "+500 金幣", "+500 金币" },
+            ["cheatCoins"] = new[] { "+$1.5M", "+$150 萬", "+$150 万" },
+            ["cheatCoinsBig"] = new[] { "+$150M (Shift+F5)", "+$1.5 億（Shift+F5）", "+$1.5 亿（Shift+F5）" },
+            ["cheatCoinsHuge"] = new[] { "+$1.5B (Ctrl+F5)", "+$15 億（Ctrl+F5）", "+$15 亿（Ctrl+F5）" },
             ["cheatGodOn"] = new[] { "God mode: off", "無敵：關", "无敌：关" },
             ["cheatGodOff"] = new[] { "God mode: on", "無敵：開", "无敌：开" },
+            ["cheatHorde50"] = new[] { "Stress: +50 fish", "壓力測試：+50 隻怪", "压力测试：+50 只怪" },
+            ["cheatHorde200"] = new[] { "Stress: +200 fish (Ctrl+F7)", "壓力測試：+200 隻怪（Ctrl+F7）", "压力测试：+200 只怪（Ctrl+F7）" },
+            ["testHorde"] = new[] { "Spawned {0} fish for the stress test", "已叫出 {0} 隻怪做壓力測試", "已叫出 {0} 只怪做压力测试" },
             ["cheatKill"] = new[] { "Kill all fish", "清空魚群", "清空鱼群" },
             ["cheatRepair"] = new[] { "Repair everything", "全部修復", "全部修复" },
             ["cheatBoss"] = new[] { "Summon boss", "召喚王", "召唤王" },
@@ -332,7 +442,7 @@ namespace HtfFortress
             ["keeperSkipCost"] = new[] { "Costs 1 soul (you have {0})", "花 1 魂（你有 {0} 魂）", "花 1 魂（你有 {0} 魂）" },
             ["keeperClose"] = new[] { "Esc closes this", "Esc 關閉", "Esc 关闭" },
             ["keeperHostOnly"] = new[] { "Only the host can skip waves", "只有房主能跳波", "只有房主能跳波" },
-            ["keeperNeed100"] = new[] { "Clear wave 100 once to earn souls; skipping unlocks then", "先通過第 100 波拿到魂，之後才能跳波", "先通过第 100 波拿到魂，之后才能跳波" },
+            ["keeperNeed100"] = new[] { "Clear wave 100 once to unlock wave skipping; it also pays the big OVER 99 soul bonus", "先通過第 100 波解鎖跳波；那次也會給 OVER 99 的大筆魂", "先通过第 100 波解锁跳波；那次也会给 OVER 99 的大笔魂" },
             ["keeperAtRecord"] = new[] { "Can't skip past your record: wave {0}", "不能跳超過自己的最高紀錄：第 {0} 波", "不能跳超过自己的最高纪录：第 {0} 波" },
             ["keeperNoSouls"] = new[] { "Not enough souls", "魂不夠", "魂不够" },
             ["keeperInFight"] = new[] { "Skipping works only during build time", "只能在建置時間跳波", "只能在建置时间跳波" },
@@ -341,6 +451,7 @@ namespace HtfFortress
             ["vaultTabItems"] = new[] { "Game items ({0})", "遊戲物品（{0}）", "游戏物品（{0}）" },
             ["vaultSlots"] = new[] { "{0} slots", "{0} 格", "{0} 格" },
             ["vaultEmptyAll"] = new[] { "Empty: throw anything at the vault's door and it goes in; enemies drop gear.", "還是空的：任何東西丟到儲藏庫門口就會收進來；打怪會掉裝備。", "还是空的：任何东西丢到储藏库门口就会收进来；打怪会掉装备。" },
+            ["vaultTrophyKind"] = new[] { "Legendary boss trophy", "傳說級王的戰利品", "传说级王的战利品" },
             ["vaultItemKind"] = new[] { "The game's own item (not gear): it comes back out just as it went in", "遊戲本身的物品（不是裝備）：拿出來跟放進去時一模一樣", "游戏本身的物品（不是装备）：拿出来跟放进去时一模一样" },
             ["vaultItemTake"] = new[] { "Fish keep their weight and cookness, guns their attachments, everything its skin. Taken out, it goes into your hands (at your feet if they're full).", "魚的重量和熟度、槍的配件、外觀都會保留。拿出來會直接到你手上（滿了就放在腳邊）。", "鱼的重量和熟度、枪的配件、外观都会保留。拿出来会直接到你手上（满了就放在脚边）。" },
             ["vaultDropTake"] = new[] { "Let go here: one comes out at the door\n(hold Shift: ten)", "放開＝拿出 1 個，放在門口\n（按住 Shift：10 個）", "放开＝拿出 1 个，放在门口\n（按住 Shift：10 个）" },
@@ -384,14 +495,17 @@ namespace HtfFortress
             ["hudWave"] = new[] { "Wave {0}/100", "第 {0}/100 波", "第 {0}/100 波" },
             ["bossCrashIn"] = new[] { "crashes in {0}:{1}", "撞燈塔倒數 {0}:{1}", "撞灯塔倒数 {0}:{1}" },
             ["bossCrashSoon"] = new[] { "{0} s until the boss crashes into the lighthouse!", "再 {0} 秒王就要撞上燈塔！", "再 {0} 秒王就要撞上灯塔！" },
+            ["finalBossCrash"] = new[] { "The last boss smashed the lighthouse!", "最後的王撞毀了燈塔！", "最后的王撞毁了灯塔！" },
             ["bossCrashed"] = new[] { "The boss crashed into the lighthouse!", "王撞上燈塔了！", "王撞上灯塔了！" },
             ["bossFightDown"] = new[] { "{0} down in {1} s (players {2}%, turrets {3}%)", "{0} 討伐完成：{1} 秒（玩家 {2}%、砲塔 {3}%）", "{0} 讨伐完成：{1} 秒（玩家 {2}%、炮塔 {3}%）" },
             ["bossFightCrashed"] = new[] { "{0} held out {1} s and rammed the lighthouse ({4}% of its health taken; players {2}%, turrets {3}%)", "{0} 撐了 {1} 秒，撞上燈塔（打掉 {4}% 血；玩家 {2}%、砲塔 {3}%）", "{0} 撑了 {1} 秒，撞上灯塔（打掉 {4}% 血；玩家 {2}%、炮塔 {3}%）" },
             ["victoryBanner"] = new[] { "OVER 99! All 100 waves held!", "OVER 99！100 波全部撐過！", "OVER 99！100 波全部撑过！" },
             ["victory"] = new[] { "Victory!", "勝利！", "胜利！" },
+            ["resultVictoryFirst"] = new[] { "FIRST CLEAR · 100/100 waves", "首次通關 · 100/100 波", "首次通关 · 100/100 波" },
+            ["resultVictoryRepeat"] = new[] { "Clear #{0} · 100/100 waves", "第 {0} 次通關 · 100/100 波", "第 {0} 次通关 · 100/100 波" },
             ["resultVictoryTitle"] = new[] { "OVER 99: the lighthouse stands", "OVER 99・燈塔屹立不搖", "OVER 99・灯塔屹立不摇" },
             ["hudLighthouse"] = new[] { "Lighthouse", "燈塔", "灯塔" },
-            ["phaseSkip"] = new[] { "[{0}] start now", "[{0}] 立即開始", "[{0}] 立即开始" },
+            ["phaseSkip"] = new[] { "[{0}] acceleration: start now", "[{0}] 加速：立即開始", "[{0}] 加速：立即开始" },
             ["hookHolding"] = new[] { "On the hook: {0} (${1}) · [LMB] fling it: x{2} damage", "勾著：{0}（${1}）・左鍵甩出去：傷害 ×{2}", "勾着：{0}（${1}）・左键甩出去：伤害 ×{2}" },
             ["phaseCallNext"] = new[] { "[hold {0}] next wave now", "[按住 {0}] 提早叫下一波", "[按住 {0}] 提早叫下一波" },
             ["callingNext"] = new[] { "Wave {0}…", "叫來第 {0} 波…", "叫来第 {0} 波…" },
@@ -414,14 +528,26 @@ namespace HtfFortress
             ["helpTabFoes"] = new[] { "The fish", "敵人", "敌人" },
             ["helpTabWeapons"] = new[] { "Weapons", "武器圖鑑", "武器图鉴" },
             ["helpTabSettings"] = new[] { "Settings", "設定", "设置" },
+            ["helpTabSupport"] = new[] { "Support", "支持作者", "支持作者" },
             ["setOn"] = new[] { "On", "開", "开" },
             ["setOff"] = new[] { "Off", "關", "关" },
             ["setDamageNumbers"] = new[] { "Damage numbers", "傷害數字", "伤害数字" },
             ["setDamageNumbersD"] = new[] { "The numbers over what you hit. The same switch as in the game's own Options.", "打到東西時跳出來的數字。跟遊戲自己「選項」裡的是同一個開關。", "打到东西时跳出来的数字。跟游戏自己「选项」里的是同一个开关。" },
             ["setReducedFx"] = new[] { "Fewer effects", "精簡特效", "精简特效" },
             ["setReducedFxD"] = new[] { "Fewer particles, shorter gas clouds, lighter bubble shields. For lag in the late waves.", "粒子變少、毒氣雲變短、泡泡護盾更省。後面幾波會卡的話打開。", "粒子变少、毒气云变短、泡泡护盾更省。后面几波会卡的话打开。" },
+            ["setAutoEatHungry"] = new[] { "Auto-eat when hungry", "餓了自動吃魚", "饿了自动吃鱼" },
+            ["setAutoEatHungryD"] = new[] { "Eat a belt grilled fish when hunger is below 10% (only you).", "飢餓低於 10% 時自動吃一條腰間烤魚（只影響你自己）。", "饥饿低于 10% 时自动吃一条腰间烤鱼（只影响你自己）。" },
+            ["setAutoEatLowHealth"] = new[] { "Auto-eat below 50% health", "血量低於 50% 自動吃魚", "血量低于 50% 自动吃鱼" },
+            ["setAutoEatLowHealthD"] = new[] { "Eat a belt grilled fish when health is below 50% (only you).", "血量低於 50% 時自動吃一條腰間烤魚（只影響你自己）。", "血量低于 50% 时自动吃一条腰间烤鱼（只影响你自己）。" },
             ["setTeamMarkers"] = new[] { "Teammate marks", "隊友標示", "队友标示" },
             ["setTeamMarkersD"] = new[] { "A mark over each teammate with their name and distance, red while they're down; an arrow at the edge when they're off screen.", "每個隊友頭上的名字和距離，倒下時變紅；不在畫面裡時邊緣有箭頭。", "每个队友头上的名字和距离，倒下时变红；不在画面里时边缘有箭头。" },
+            ["supportTitle"] = new[] { "Buy me a coffee", "請我喝杯咖啡", "请我喝杯咖啡" },
+            ["supportText"] = new[] { "If you enjoy OVER 99, you can leave a tip here. Thank you for playing!", "如果喜歡 OVER 99，可以在這裡樂捐支持。謝謝你玩這個模式！", "如果喜欢 OVER 99，可以在这里乐捐支持。谢谢你玩这个模式！" },
+            ["supportScan"] = new[] { "Scan the QR code with your phone", "用手機掃描 QR code", "用手机扫描 QR code" },
+            ["supportOpen"] = new[] { "Open Buy Me a Coffee", "開啟 Buy Me a Coffee", "打开 Buy Me a Coffee" },
+            ["supportResult"] = new[] { "Enjoying OVER 99? You can leave a tip here. Thank you!", "喜歡 OVER 99 的話，可以在這裡樂捐支持。謝謝你！", "喜欢 OVER 99 的话，可以在这里乐捐支持。谢谢你！" },
+            ["supportResultBtn"] = new[] { "Buy me a coffee", "請我喝杯咖啡", "请我喝杯咖啡" },
+            ["supportContact"] = new[] { "Suggestions? Contact wei-chien.hsiao.tw@member.mensa.org", "有建議？聯絡 wei-chien.hsiao.tw@member.mensa.org", "有建议？联系 wei-chien.hsiao.tw@member.mensa.org" },
             ["setNote"] = new[] { "Only your own screen changes: each player sets their own.", "只改你自己的畫面，每個人各自設定。", "只改你自己的画面，每个人各自设置。" },
             ["helpLegendValue"] = new[] { "Legendary: {0}", "傳說：{0}", "传说：{0}" },
             ["stuckHint"] = new[] { "Stuck? Hold [O] to get out, or [F4] takes you back by the lighthouse", "卡住了嗎？按住 [O] 脫困，或按 [F4] 回到燈塔旁", "卡住了吗？按住 [O] 脱困，或按 [F4] 回到灯塔旁" },
@@ -444,11 +570,12 @@ namespace HtfFortress
             ["netFullShort"] = new[] { "Full! Sell at the stall", "滿了！拿去魚攤賣", "满了！拿去鱼摊卖" },
             ["resultCoreTitle"] = new[] { "The lighthouse has fallen", "燈塔陷落了", "灯塔陷落了" },
             ["resultWipeTitle"] = new[] { "Everyone is down", "全員倒下", "全员倒下" },
+            ["resultPractice"] = new[] { "PRACTICE / TEST MODE · this run is not recorded", "練習／測試模式・這局不計紀錄", "练习／测试模式・这局不计纪录" },
             ["resultRecordShort"] = new[] { "NEW RECORD", "新紀錄", "新纪录" },
             ["tileWaves"] = new[] { "waves cleared", "撐過的波數", "撑过的波数" },
             ["tileKills"] = new[] { "kills", "擊殺", "击杀" },
             ["tileBuilt"] = new[] { "built", "建造", "建造" },
-            ["buildKeys"] = new[] { "[hold LMB] build　[RMB] menu　[M] move　[T] next　[Shift+T] back　[Y] flip　[G] exit", "[按住左鍵] 建造　[右鍵] 選單　[M] 搬移　[T] 下一個　[Shift+T] 上一個　[Y] 反轉　[G] 離開", "[按住左键] 建造　[右键] 菜单　[M] 搬移　[T] 下一个　[Shift+T] 上一个　[Y] 反转　[G] 离开" },
+            ["buildKeys"] = new[] { "[hold LMB] build　[hold Alt] free place　[R] turn　[E] details　[RMB] menu　[M] move　[T] next　[Shift+T] back　[Y] flip　[G] exit", "[按住左鍵] 建造　[按住 Alt] 自由位置　[R] 旋轉　[E] 詳情　[右鍵] 選單　[M] 搬移　[T] 下一個　[Shift+T] 上一個　[Y] 反轉　[G] 離開", "[按住左键] 建造　[按住 Alt] 自由位置　[R] 旋转　[E] 详情　[右键] 菜单　[M] 搬移　[T] 下一个　[Shift+T] 上一个　[Y] 反转　[G] 离开" },
             ["removeHint"] = new[] { "[hold H] take down", "[按住 H] 拆除", "[按住 H] 拆除" },
             ["siteLabel"] = new[] { "Building {0}%", "施工中 {0}%", "施工中 {0}%" },
             ["removing"] = new[] { "Taking down… ${0} back", "拆除中…退 ${0}", "拆除中…退 ${0}" },
@@ -473,7 +600,14 @@ namespace HtfFortress
             ["stallHelpersHead"] = new[] { "Helpers: the bodies sold for the team, everything else into the vault", "小幫手：魚屍撿去賣（錢歸全隊），其他東西收進倉庫", "小帮手：鱼尸捡去卖（钱归全队），其他东西收进仓库" },
             ["helperWho"] = new[] { "A helper", "小幫手", "小帮手" },
             ["helperHireTitle"] = new[] { "Hire a helper ({0}/{1}; {2} are seagulls)", "雇一個小幫手（{0}/{1}；海鷗 {2}）", "雇一个小帮手（{0}/{1}；海鸥 {2}）" },
-            ["helperHireDetail"] = new[] { "Picks up everything on the island, round or not; fish that catch one knock it out. Past 15 they are seagulls: they fly (fish cannot catch them), are quicker and pick things up from farther", "島上的東西都會撿（局外也會）；被魚抓到會被打昏。第 16 隻起是海鷗：會飛（魚抓不到）、更快、撿東西的範圍更大", "岛上的东西都会捡（局外也会）；被鱼抓到会被打昏。第 16 只起是海鸥：会飞（鱼抓不到）、更快、捡东西的范围更大" },
+            ["helperHireDetail"] = new[] { "Picks up everything on the island, round or not; fish that catch one knock it out. The first 5 are villagers, the last 5 are seagulls: they fly (fish cannot catch them), are quicker and pick things up from farther. Max 10.", "島上的東西都會撿（局外也會）；被魚抓到會被打昏。前 5 隻是村民，後 5 隻是海鷗：會飛（魚抓不到）、更快、撿東西的範圍更大。最多 10 隻。", "岛上的东西都会捡（局外也会）；被鱼抓到会被打昏。前 5 只是村民，后 5 只是海鸥：会飞（鱼抓不到）、更快、捡东西的范围更大。最多 10 只。" },
+            ["stallHelpersHeadShort"] = new[] { "Helpers", "小幫手", "小帮手" },
+            ["helperHireTitleShort"] = new[] { "Hire a helper  {0}/{1}", "雇一個小幫手  {0}/{1}", "雇一个小帮手  {0}/{1}" },
+            ["helperHireShort"] = new[] { "Gulls from #{0} (they fly)", "第 {0} 隻起是海鷗（會飛）", "第 {0} 只起是海鸥（会飞）" },
+            ["helperSpeedShort"] = new[] { "Speed {0}", "速度 {0}", "速度 {0}" },
+            ["helperLoadShort"] = new[] { "Basket {0}", "籃子 {0}", "篮子 {0}" },
+            ["helperOvenShort"] = new[] { "+{0}% when sold", "賣出 +{0}%", "卖出 +{0}%" },
+            ["helperDismissShort"] = new[] { "Newest first (gulls first)", "先解僱最新的（先海鷗）", "先解雇最新的（先海鸥）" },
             ["helperGullPlate"] = new[] { "Seagull helper {0}/{1}", "海鷗小幫手 {0}/{1}", "海鸥小帮手 {0}/{1}" },
             ["helperSpeedTitle"] = new[] { "Faster legs (Lv{0}/{1})", "跑更快（Lv{0}/{1}）", "跑更快（Lv{0}/{1}）" },
             ["helperSpeedDetail"] = new[] { "{0} m/s → {1} m/s", "每秒 {0} 公尺 → {1} 公尺", "每秒 {0} 米 → {1} 米" },
@@ -597,8 +731,12 @@ namespace HtfFortress
             ["glyphConch"] = new[] { "Co", "螺", "螺" },
             ["vaultLoadoutTitle"] = new[] { "Your loadout", "你的配裝", "你的配装" },
             ["vaultCollectionTitle"] = new[] { "Collection", "收藏", "收藏" },
-            ["vaultRowFortress"] = new[] { "For towers (fortress) · whole team", "給塔（要塞）・全隊生效", "给塔（要塞）・全队生效" },
-            ["vaultRowPersonal"] = new[] { "For you (personal) · only you", "給人（個人）・只有你", "给人（个人）・只有你" },
+            ["vaultRowFortress"] = new[] { "FOR TOWERS · whole team", "給塔的裝備・全隊生效", "给塔的装备・全队生效" },
+            ["vaultRowFortressCount"] = new[] { "For towers · {0}/{1}", "給塔的裝備・{0}/{1}", "给塔的装备・{0}/{1}" },
+            ["vaultRowPersonal"] = new[] { "FOR YOU · only you", "給人的裝備・只有你", "给人们的装备・只有你" },
+            ["vaultRowPersonalCount"] = new[] { "FOR YOU · only you ({0}/{1})", "給人的裝備・只有你（{0}/{1}）", "给人们的装备・只有你（{0}/{1}）" },
+            ["vaultRowActiveCount"] = new[] { "ACTIVE [K] · {0} kinds", "主動道具 [K]・{0} 種", "主动道具 [K]・{0} 种" },
+            ["vaultActiveEmpty"] = new[] { "No active items\n(K uses one up)", "沒有主動道具\n（K 會用掉一個）", "没有主动道具\n（K 会用掉一个）" },
             ["vaultRowActive"] = new[] { "Active [K]", "主動 [K]", "主动 [K]" },
             ["vaultWorkshop"] = new[] { "Workshop", "工坊", "工坊" },
             ["vaultHint"] = new[] { "Drag gear onto your slots to wear it, back to take it off · drag a weapon or an item out to take it · right-click: equip / take one out (Shift: ten) · [Esc] to close", "裝備拖到右邊的格子＝裝上，拖回來＝卸下　武器或道具拖到右下＝拿出來　右鍵：裝上／拿出一個（Shift 拿 10 個）　[Esc] 關閉", "装备拖到右边的格子＝装上，拖回来＝卸下　武器或道具拖到右下＝拿出来　右键：装上／拿出一个（Shift 拿 10 个）　[Esc] 关闭" },
@@ -811,7 +949,7 @@ namespace HtfFortress
             ["blueprintFoundTeam"] = new[] { "A blueprint went into the vault: {1}! New turret unlocked", "藍圖收進了儲藏庫：{1}！新砲塔解鎖", "蓝图收进了储藏库：{1}！新炮塔解锁" },
             ["blueprintBanner"] = new[] { "New turret unlocked!", "解鎖了新砲塔！", "解锁了新炮塔！" },
             ["tip_island_t"] = new[] { "Fortress Island", "要塞島", "要塞岛" },
-            ["tip_island"] = new[] { "The fish are after the pearl in the lighthouse's porch. At its door, [E] opens the gate: 5 seconds later they come. Down the dock road: the fishmonger buys fish, the smith forges weapons at his bench, the quartermaster keeps the vault (throw anything at its door) and the loadout. Talk to them with [E]. [I] shows the full guide.", "魚群是來搶燈塔門口那顆珍珠的。到門口按 [E] 打開閘門，5 秒後牠們就來了。往碼頭的路上：魚販收魚、鐵匠在工作台鍛造武器、軍需官管儲藏庫（什麼都能丟進門口）和配裝，按 [E] 跟他們說話。按 [I] 看完整說明。", "鱼群是来抢灯塔门口那颗珍珠的。到门口按 [E] 打开闸门，5 秒后它们就来了。往码头的路上：鱼贩收鱼、铁匠在工作台锻造武器、军需官管储藏库（什么都能丢进门口）和配装，按 [E] 跟他们说话。按 [I] 看完整说明。" },
+            ["tip_island"] = new[] { "The fish are after the pearl in the lighthouse's porch. At its door, [E] opens the gate and the fish start swimming in. Down the dock road: the fishmonger buys fish, the smith forges weapons at his bench, the quartermaster keeps the vault (throw anything at its door) and the loadout. Talk to them with [E]. [I] shows the full guide.", "魚群是來搶燈塔門口那顆珍珠的。到門口按 [E] 打開閘門，魚群就會開始游來。往碼頭的路上：魚販收魚、鐵匠在工作台鍛造武器、軍需官管儲藏庫（什麼都能丟進門口）和配裝，按 [E] 跟他們說話。按 [I] 看完整說明。", "鱼群是来抢灯塔门口那颗珍珠的。到门口按 [E] 打开闸门，鱼群就会开始游来。往码头的路上：鱼贩收鱼、铁匠在工作台锻造武器、军需官管储藏库（什么都能丢进门口）和配装，按 [E] 跟他们说话。按 [I] 看完整说明。" },
             ["tip_start_t"] = new[] { "Build time", "建造時間", "建造时间" },
             ["tip_start"] = new[] { "Press [G] to build: walls across the three beach gaps, turrets behind them. The host can press [N] to start early.", "按 [G] 進入建造模式：在三個沙灘缺口擋牆，牆後放砲塔。房主按 [N] 可以提早開始。", "按 [G] 进入建造模式：在三个沙滩缺口挡墙，墙后放炮塔。房主按 [N] 可以提早开始。" },
             ["tip_build_t"] = new[] { "How to build", "怎麼蓋", "怎么盖" },
@@ -826,12 +964,14 @@ namespace HtfFortress
             ["tip_chest"] = new[] { "A chest appeared by the lighthouse. Walk up and press [E] to open it: several pieces of gear (into the vault), fish scales, sometimes a weapon (on the ground by it).", "燈塔旁出現了寶箱，走過去按 [E] 打開：好幾件裝備（直接進儲藏庫）、幾片魚鱗，有時還有武器（掉在寶箱旁邊）。", "灯塔旁出现了宝箱，走过去按 [E] 打开：好几件装备（直接进储藏库）、几片鱼鳞，有时还有武器（掉在宝箱旁边）。" },
             ["tip_scales_t"] = new[] { "Fish scales", "魚鱗", "鱼鳞" },
             ["tip_scales"] = new[] { "The glowing blue flakes are fish scales: walk over them to pick them up (your count is bottom left). Bosses burst into a ring of them, chests have a few, elites drop one now and then, and dismantling gear at the smithy gives some too. Scales rank gear up, enhance legendaries, mod your weapons and expand the vault.", "發光的藍色小片是魚鱗：走過去就撿起來（數量在左下角）。打王會噴一圈、寶箱有幾片、精英怪偶爾掉一片，到鐵匠拆裝備也會給。魚鱗用來升階、強化傳說、改造武器、擴充儲藏庫和裝備格。", "发光的蓝色小片是鱼鳞：走过去就捡起来（数量在左下角）。打王会喷一圈、宝箱有几片、精英怪偶尔掉一片，到铁匠拆装备也会给。鱼鳞用来升阶、强化传说、改造武器、扩充储藏库和装备格。" },
+            ["tip_souls_t"] = new[] { "Souls: permanent upgrades", "魂：永久強化", "魂：永久强化" },
+            ["tip_souls"] = new[] { "Each new 10-wave record (from wave 10) earns souls; wave 100 pays the big OVER 99 bonus. Spend them at the lighthouse keeper (the old captain by the lighthouse) for permanent upgrades that stay between runs: weapon damage, tower damage, tower upgrade discount, crit, starting money, fish scales and lighthouse health. [I] shows the full guide.", "每次刷新 10 波區間紀錄（從第 10 波開始）都會拿到魂；第 100 波有 OVER 99 大加成。到燈塔旁找船長伯伯（燈塔阿伯）花魂，買跨局保留的永久強化：武器傷害、塔傷害、塔升級折扣、暴擊、起始金錢、魚鱗、燈塔血量。按 [I] 看完整說明。", "每次刷新 10 波区间纪录（从第 10 波开始）都会拿到魂；第 100 波有 OVER 99 大加成。到灯塔旁找船长伯伯（灯塔阿伯）花魂，买跨局保留的永久强化：武器伤害、塔伤害、塔升级折扣、暴击、起始金钱、鱼鳞、灯塔血量。按 [I] 看完整说明。" },
             ["tip_vault_t"] = new[] { "Time to gear up", "去配裝吧", "去配装吧" },
             ["tip_vault"] = new[] { "Everything you picked up is in the vault: the red-roofed shed left of the dock. Talk to the quartermaster [E] and equip it, any time, mid-round too: gear only works once worn. Anything thrown at its door goes in too.", "撿到的裝備都在儲藏庫：碼頭左邊的紅屋頂小屋，跟軍需官說話 [E] 把裝備裝上，隨時都能換（局中也可以），裝上才有效；任何東西丟到門口也會收進去。", "捡到的装备都在储藏库：码头左边的红屋顶小屋，跟军需官说话 [E] 把装备装上，随时都能换（局中也可以），装上才有效；任何东西丢到门口也会收进去。" },
             ["tip_active_t"] = new[] { "Active gear", "主動裝備", "主动装备" },
             ["tip_active"] = new[] { "Press [K] in a round to use active gear (each use spends one), [Shift+K] to switch to another the team has; how many are left shows bottom right.", "開局中按 [K] 用主動道具（用一次少一個），[Shift+K] 換成全隊有的另一個；右下角會顯示還剩幾個。", "开局中按 [K] 用主动道具（用一次少一个），[Shift+K] 换成全队有的另一个；右下角会显示还剩几个。" },
             ["tip_upkeep_t"] = new[] { "Looking after the fort", "照顧你的要塞", "照顾你的要塞" },
-            ["tip_upkeep"] = new[] { "No need for build mode: walk up to a turret or wall and look at it. [U] upgrade · [J] repair · [hold H] take down (half the money back).", "不用進建造模式：走到砲塔或牆前看著它。[U] 升級　[J] 修理　[按住 H] 拆除（退一半的錢）。", "不用进建造模式：走到炮塔或墙前看着它。[U] 升级　[J] 修理　[按住 H] 拆除（退一半的钱）。" },
+            ["tip_upkeep"] = new[] { "No need for build mode: walk up to a turret or wall and look at it. [E] details · [U] upgrade · [J] repair · [hold H] take down (half the money back).", "不用進建造模式：走到砲塔或牆前看著它。[E] 詳情　[U] 升級　[J] 修理　[按住 H] 拆除（退一半的錢）。", "不用进建造模式：走到炮塔或墙前看着它。[U] 升级　[J] 修理　[按住 H] 拆除（退一半的钱）。" },
             ["tip_team_t"] = new[] { "Build together", "一起蓋", "一起盖" },
             ["tip_team"] = new[] { "See a site that says Building? Look at it and hold the mouse to help: every extra builder adds 60% speed.", "看到寫著「施工中」的工地，看著它按住左鍵就能幫忙，每多一人快 60%。", "看到写着「施工中」的工地，看着它按住左键就能帮忙，每多一人快 60%。" },
             ["tip_foeSpitter_t"] = new[] { "Spitter", "砲擊魚", "炮击鱼" },
@@ -907,7 +1047,8 @@ namespace HtfFortress
             ["modNote"] = new[] { "Yours alone, for good: every {0} you hold, any rarity · paid with the team's fish scales", "只屬於你、永久：你拿的每一把{0}（任何稀有度）都算・用全隊的魚鱗付", "只属于你、永久：你拿的每一把{0}（任何稀有度）都算・用全队的鱼鳞付" },
             ["modAllRarities"] = new[] { "Mods are on the weapon kind, not one gun: common to legendary, every one of it you hold gets them", "改造是整種武器的，不分稀有度：普通到傳說，你拿的每一把都吃得到", "改造是整种武器的，不分稀有度：普通到传说，你拿的每一把都吃得到" },
             ["modNoMagazine"] = new[] { "The bow holds one arrow: no magazine to upgrade", "弓一次只搭一支箭，沒有彈匣可以改", "弓一次只搭一支箭，没有弹匣可以改" },
-            ["modBuy"] = new[] { "Lv{0}  <color=#7fd0ff>◆</color>{1}", "升到 Lv{0}　<color=#7fd0ff>◆</color>{1}", "升到 Lv{0}　<color=#7fd0ff>◆</color>{1}" },
+            ["modBuying"] = new[] { "SYNCING…", "同步中…", "同步中…" },
+            ["modBuy"] = new[] { "Lv{0}  Scales {1}", "升到 Lv{0}　魚鱗 {1}", "升到 Lv{0}　鱼鳞 {1}" },
             ["modCard"] = new[] { "Your mods: {0}", "你的改造：{0}", "你的改造：{0}" },
             ["modPower"] = new[] { "Power", "威力", "威力" },
             ["modTrait"] = new[] { "Trait", "特性", "特性" },
@@ -978,7 +1119,7 @@ namespace HtfFortress
             ["vaultBuyNeeds"] = new[] { "Hold {0} waves", "需撐過 {0} 波", "需撑过 {0} 波" },
             ["vaultYouHave"] = new[] { "(you have {0} scales; best {1} waves)", "（你有 {0} 魚鱗；最高 {1} 波）", "（你有 {0} 鱼鳞；最高 {1} 波）" },
             ["expandTeamSlot"] = new[] { "Another team slot", "多一格要塞裝備（全隊）", "多一格要塞装备（全队）" },
-            ["expandTeamSlot_d"] = new[] { "One more piece of fortress gear working for the whole team (up to 8 slots).", "全隊多裝一件要塞裝備，所有人都受惠（最多 8 格）。", "全队多装一件要塞装备，所有人都受惠（最多 8 格）。" },
+            ["expandTeamSlot_d"] = new[] { "One more piece of fortress gear working for the whole team (up to 10 slots).", "全隊多裝一件要塞裝備，所有人都受惠（最多 10 格）。", "全队多装一件要塞装备，所有人都受惠（最多 10 格）。" },
             ["expandPersonalSlot"] = new[] { "Another personal slot", "多一格個人裝備", "多一格个人装备" },
             ["expandPersonalSlot_d"] = new[] { "Every player gets one more personal slot (up to 4).", "每個人都多一格個人裝備（最多 4 格）。", "每个人都多一格个人装备（最多 4 格）。" },
             ["expandStorage"] = new[] { "A bigger vault", "擴充儲藏庫", "扩充储藏库" },
@@ -996,6 +1137,8 @@ namespace HtfFortress
             ["stallNetDetail"] = new[] { "Yours holds {0} · for the whole crew, this round", "現在裝 {0} 隻・全隊適用，到這局結束", "现在装 {0} 只・全队适用，到这局结束" },
             ["stallNetDetailNext"] = new[] { "Yours holds {0} · for the whole crew, through the next round", "現在裝 {0} 隻・全隊適用，用到下一局結束", "现在装 {0} 只・全队适用，用到下一局结束" },
             ["stallNetMaxDetail"] = new[] { "The biggest net there is", "已經是最大的網", "已经是最大的网" },
+            ["stallBackupTitle"] = new[] { "Backup fish (belt: {0})", "備用魚（腰間：{0}）", "备用鱼（腰间：{0}）" },
+            ["stallBackupDetail"] = new[] { "Buys {0} grilled fish that hang on your belt; one is eaten automatically when hunger drops below 10%.", "買 {0} 條烤魚掛在腰間，飢餓低於 10% 會自動吃一條。", "买 {0} 条烤鱼挂在腰间，饥饿低于 10% 会自动吃一条。" },
             ["stallFoodTitle"] = new[] { "Grilled fish", "烤魚", "烤鱼" },
             ["stallFoodDetail"] = new[] { "Eaten on the spot: fills you up and heals a little", "買了當場吃掉：回飽食度和一點血", "买了当场吃掉：回饱食度和一点血" },
             ["stallHint"] = new[] { "Fish thrown onto the counter sell too · [Esc] or right-click to close", "魚丟到櫃台上也能賣　[Esc] 或右鍵關閉", "鱼丢到柜台上也能卖　[Esc] 或右键关闭" },
@@ -1008,7 +1151,7 @@ namespace HtfFortress
             ["helpPearlT"] = new[] { "Guard the pearl", "保護珍珠", "保护珍珠" },
             ["helpPearl"] = new[] { "The fish are after the pearl in the lighthouse. If the lighthouse falls, you lose.", "魚群是來搶燈塔裡那顆珍珠的。燈塔被打爆就輸了。", "鱼群是来抢灯塔里那颗珍珠的。灯塔被打爆就输了。" },
             ["helpStartT"] = new[] { "Open the gate", "開門開戰", "开门开战" },
-            ["helpStart"] = new[] { "[E] at the lighthouse door opens the gate: the fish come 5 s later.", "到燈塔門口按 [E] 打開閘門，5 秒後魚群就來。", "到灯塔门口按 [E] 打开闸门，5 秒后鱼群就来。" },
+            ["helpStart"] = new[] { "[E] at the lighthouse door opens the gate, and the fish start swimming in.", "到燈塔門口按 [E] 打開閘門，魚群就會開始游來。", "到灯塔门口按 [E] 打开闸门，鱼群就会开始游来。" },
             ["helpReviveT"] = new[] { "Pick each other up", "倒下靠隊友", "倒下靠队友" },
             ["helpRevive"] = new[] { "You can't get up on your own: a teammate has to help. All down, you lose.", "倒下不能自己起來，要隊友扶；全員倒下也算輸。", "倒下不能自己起来，要队友扶；全员倒下也算输。" },
             ["helpBuildT"] = new[] { "Walls and turrets", "蓋牆和砲台", "盖墙和炮台" },
@@ -1016,6 +1159,8 @@ namespace HtfFortress
             ["helpNetT"] = new[] { "Scoop fish, earn money", "撈魚屍賺錢", "捞鱼尸赚钱" },
             ["helpNet"] = new[] { "[F] takes out the net: scoop up dead fish and sell them at the stall.", "按 [F] 拿網撈魚屍，拿去魚攤賣錢。", "按 [F] 拿网捞鱼尸，拿去鱼摊卖钱。" },
             ["helpLootT"] = new[] { "Grab the gear", "撿裝備變強", "捡装备变强" },
+            ["helpSoulT"] = new[] { "Souls: permanent upgrades", "魂：永久強化", "魂：永久强化" },
+            ["helpSoul"] = new[] { "Every new 10-wave record from wave 10 gives souls; wave 100 is the big OVER 99 payout. Spend souls at the lighthouse keeper (the old captain by the lighthouse) on permanent upgrades kept between runs: weapon damage, tower damage, tower upgrade discount, crit, starting money, fish scales and lighthouse health. A run only pays the milestones above your all-time record, so push your record.", "從第 10 波開始，每次刷新 10 波區間紀錄都會給魂；第 100 波是 OVER 99 的大筆獎勵。到燈塔旁找船長伯伯（燈塔阿伯）花魂，買跨局保留的永久強化：武器傷害、塔傷害、塔升級折扣、暴擊、起始金錢、魚鱗、燈塔血量。一局只會給你歷史最高紀錄之上的新里程碑，所以要不斷突破紀錄。", "从第 10 波开始，每次刷新 10 波区间纪录都会给魂；第 100 波是 OVER 99 的大笔奖励。到灯塔旁找船长伯伯（灯塔阿伯）花魂，买跨局保留的永久强化：武器伤害、塔伤害、塔升级折扣、暴击、起始金钱、鱼鳞、灯塔血量。一局只会给你历史最高纪录之上的新里程碑，所以要不断突破纪录。" },
             ["helpLoot"] = new[] { "Fish drop weapons and gear: walk over them or [E] to pick them up.", "魚會掉武器和裝備，走過去或按 [E] 就撿起來。", "鱼会掉武器和装备，走过去或按 [E] 就捡起来。" },
             ["helpStallT"] = new[] { "Fish stall", "魚攤", "鱼摊" },
             ["helpStall"] = new[] { "Buys your fish; sells bigger nets and grilled fish.", "收魚屍換錢，也賣大網和烤魚。", "收鱼尸换钱，也卖大网和烤鱼。" },
@@ -1041,6 +1186,8 @@ namespace HtfFortress
             ["helpBossT"] = new[] { "Bosses", "大王", "大王" },
             ["helpBoss"] = new[] { "One every 10 waves, 10 in all; wave 100 is the last", "每 10 波一隻，共 10 隻；第 100 波是最後一戰", "每 10 波一只，共 10 只；第 100 波是最后一战" },
             ["vaultScales"] = new[] { "Fish scales {0}", "魚鱗 {0}", "鱼鳞 {0}" },
+            ["soulCurrency"] = new[] { "Souls", "魂", "魂" },
+            ["vaultMoney"] = new[] { "Money", "金錢", "金钱" },
             ["vaultSalvage"] = new[] { "Dismantle (+{0} scales)", "拆成魚鱗（+{0}）", "拆成鱼鳞（+{0}）" },
             ["vaultAscend"] = new[] { "Rank up ({0} scales)", "升階（魚鱗 {0}）", "升阶（鱼鳞 {0}）" },
             ["vaultNoAscend"] = new[] { "Already the highest rarity", "已經是最高階", "已经是最高阶" },
@@ -1091,9 +1238,22 @@ namespace HtfFortress
         public static string T(string key, params object[] args)
         {
             if (!Table.TryGetValue(key, out var row)) return key;
-            string s = row[(int)Current()];
+            var lang = Current();
+            string s;
+            if ((int)lang < row.Length) s = row[(int)lang];
+            else if (Extra(lang) is Dictionary<string, string> extra && extra.TryGetValue(key, out var translated)) s = translated;
+            else s = row[0]; // English
             return args.Length == 0 ? s : string.Format(s, args);
         }
+
+        private static Dictionary<string, string> Extra(Lang lang) => lang switch
+        {
+            Lang.Fr => L10nExtra.Fr, Lang.De => L10nExtra.De, Lang.It => L10nExtra.It,
+            Lang.Es => L10nExtra.Es, Lang.EsMx => L10nExtra.Es, // one Spanish translation serves both game locales
+            Lang.PtBr => L10nExtra.PtBr, Lang.Ru => L10nExtra.Ru, Lang.Pl => L10nExtra.Pl,
+            Lang.Tr => L10nExtra.Tr, Lang.Uk => L10nExtra.Uk, Lang.Ja => L10nExtra.Ja,
+            Lang.Ko => L10nExtra.Ko, Lang.Sv => L10nExtra.Sv, _ => null,
+        };
 
         private static Lang Current()
         {
@@ -1102,12 +1262,38 @@ namespace HtfFortress
                 case LanguageSetting.English: return Lang.En;
                 case LanguageSetting.TraditionalChinese: return Lang.ZhTW;
                 case LanguageSetting.SimplifiedChinese: return Lang.ZhCN;
+                case LanguageSetting.French: return Lang.Fr;
+                case LanguageSetting.German: return Lang.De;
+                case LanguageSetting.Italian: return Lang.It;
+                case LanguageSetting.SpanishSpain: return Lang.Es;
+                case LanguageSetting.SpanishMexico: return Lang.EsMx;
+                case LanguageSetting.PortugueseBrazil: return Lang.PtBr;
+                case LanguageSetting.Russian: return Lang.Ru;
+                case LanguageSetting.Polish: return Lang.Pl;
+                case LanguageSetting.Turkish: return Lang.Tr;
+                case LanguageSetting.Ukrainian: return Lang.Uk;
+                case LanguageSetting.Japanese: return Lang.Ja;
+                case LanguageSetting.Korean: return Lang.Ko;
+                case LanguageSetting.Swedish: return Lang.Sv;
             }
             string code;
             try { code = LocalizationSettings.SelectedLocale?.Identifier.Code ?? ""; }
             catch { code = ""; }
-            if (!code.StartsWith("zh")) return Lang.En;
-            return code.Contains("TW") || code.Contains("HK") || code.Contains("Hant") ? Lang.ZhTW : Lang.ZhCN;
+            code = code.Replace("_", "-").ToLowerInvariant();
+            if (code.StartsWith("zh")) return code.Contains("tw") || code.Contains("hk") || code.Contains("hant") ? Lang.ZhTW : Lang.ZhCN;
+            if (code.StartsWith("pt")) return Lang.PtBr;
+            if (code.StartsWith("es")) return code.Contains("mx") ? Lang.EsMx : Lang.Es;
+            if (code.StartsWith("fr")) return Lang.Fr;
+            if (code.StartsWith("de")) return Lang.De;
+            if (code.StartsWith("it")) return Lang.It;
+            if (code.StartsWith("ru")) return Lang.Ru;
+            if (code.StartsWith("pl")) return Lang.Pl;
+            if (code.StartsWith("tr")) return Lang.Tr;
+            if (code.StartsWith("uk")) return Lang.Uk;
+            if (code.StartsWith("ja")) return Lang.Ja;
+            if (code.StartsWith("ko")) return Lang.Ko;
+            if (code.StartsWith("sv")) return Lang.Sv;
+            return Lang.En;
         }
     }
 }

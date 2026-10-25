@@ -238,8 +238,10 @@ namespace HtfFortress
                 Aim(p, Quaternion.Slerp(eyeRot, Quaternion.LookRotation(lantern - p), Ease(k)));
             });
             string team = string.Join("、", PlayerManager.Players.Where(p => p).Select(Loot.NameOf));
+            int wins = Loot.Instance && Loot.Instance.ClientVault != null ? Loot.Instance.ClientVault.Wins.Count : 0;
+            string count = wins <= 1 ? L10n.T("resultVictoryFirst") : L10n.T("resultVictoryRepeat", wins);
             Style(0);
-            Title(L10n.T("revealTitle"), L10n.T("victorySub"), team + "　·　" + DateTime.Now.ToString("yyyy-MM-dd"));
+            Title(L10n.T("revealTitle"), L10n.T("victorySub"), count + "　·　" + team + "　·　" + DateTime.Now.ToString("yyyy-MM-dd"));
             float nextBurst = 0f;
             bool shot = false;
             yield return Over(7.5f, k =>
