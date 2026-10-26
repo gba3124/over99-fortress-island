@@ -1,0 +1,15 @@
+rows top to bottom: before Flame 3/4, before Flame front, after Flame 3/4, after Flame front; columns: Lv1, A Lv3, B Lv3, A1 Lv9, A2 Lv9, B1 Lv9, B2 Lv9
+before Flame Lv1 top 1.50 m, 16784 tris in view
+before Flame A Lv3 top 1.82 m, 18848 tris in view
+before Flame B Lv3 top 1.79 m, 18788 tris in view
+before Flame A1 Lv9 top 2.13 m, 20168 tris in view
+before Flame A2 Lv9 top 2.05 m, 19636 tris in view
+before Flame B1 Lv9 top 2.02 m, 18912 tris in view
+before Flame B2 Lv9 top 2.16 m, 21448 tris in view
+after Flame Lv1 top 1.58 m, 12872 tris in view
+after Flame A Lv3 top 1.95 m, 13052 tris in view
+after Flame B Lv3 top 1.63 m, 12836 tris in view
+after Flame A1 Lv9 top 2.54 m, 13360 tris in view
+after Flame A2 Lv9 top 2.18 m, 13216 tris in view
+after Flame B1 Lv9 top 1.90 m, 13152 tris in view
+after Flame B2 Lv9 top 2.15 m, 13160 tris in view

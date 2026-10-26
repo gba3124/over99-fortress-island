@@ -31,7 +31,7 @@ namespace HtfFortress
         // is attached as the "Head"; the module carries the barrels and the branch's silhouette.
         // Art pass 3 split every turret into Body + swappable head modules; Owen preferred the original, characterful
         // single-piece heads (the build poster's silhouettes), so use those by default and keep the modular set as an option.
-        public static bool ClassicHeads = true;
+        public static bool ClassicHeads = false; // art pass 4 (tools/make_turrets_v4.py): every turret modular again, each with its own body
         public static bool HasModules(PieceType t) => !ClassicHeads && IsTurret(t);
         public static string BodyModel(PieceType t) => HasModules(t) ? t + "Body" : HeadModel(t);
         public static string ModuleModel(PieceType t, int branch)
@@ -43,13 +43,21 @@ namespace HtfFortress
         }
         // The extra gun a turret grows at Lv5/10/15 (its own kind of barrel, not a copy of the whole head).
         public static string BarrelModel(PieceType t) => t + "Barrel";
-        // Where an extra barrel sits on the head (it must line up with the real barrel, not float at the foot).
+        // Where an extra barrel sits on the head (x across, y up, z forward): just under the module's own barrel, its rear
+        // where the module's barrel starts (the <T>Barrel models point +Z from their rear; tools/make_turrets_v4.py).
         public static Vector3 BarrelMount(PieceType t)
         {
-            float z = t == PieceType.Gun ? 0.46f : t == PieceType.Cannon ? 0.56f : t == PieceType.Mortar ? 0.58f
-                    : t == PieceType.Tesla ? 0.62f : t == PieceType.Flame ? 0.44f : t == PieceType.Harpoon ? 0.42f
-                    : t == PieceType.Sniper ? 0.38f : t == PieceType.Bubble ? 0.5f : 0.5f; // Mender
-            return new Vector3(0f, -0.08f, z);
+            switch (t)
+            {
+                case PieceType.Gun: return new Vector3(0f, 0.54f, 0.4f);
+                case PieceType.Cannon: return new Vector3(0f, 0.56f, 0.3f);
+                case PieceType.Harpoon: return new Vector3(0f, 0.83f, 0.3f);
+                case PieceType.Mortar: return new Vector3(0f, 0.55f, 0.1f);
+                case PieceType.Tesla: return new Vector3(0f, 1.12f, 0.3f);
+                case PieceType.Flame: return new Vector3(0f, 0.36f, 0.2f);
+                case PieceType.Sniper: return new Vector3(0f, 0.83f, 0.4f);
+                default: return new Vector3(0f, 0.6f, 0.3f); // Bubble, Mender: never get one
+            }
         }
         // How many barrels the volley physically has (and how many fish/shells it fires at once): the model follows the stat, so
         // an upgrade that adds a shot also grows a barrel (Owen: "要跟他同時可以射幾發有關").

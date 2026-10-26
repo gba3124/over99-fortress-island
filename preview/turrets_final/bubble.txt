@@ -1,0 +1,15 @@
+rows top to bottom: before Bubble 3/4, before Bubble front, after Bubble 3/4, after Bubble front; columns: Lv1, A Lv3, B Lv3, A1 Lv9, A2 Lv9, B1 Lv9, B2 Lv9
+before Bubble Lv1 top 2.17 m, 16048 tris in view
+before Bubble A Lv3 top 2.38 m, 18112 tris in view
+before Bubble B Lv3 top 2.38 m, 18052 tris in view
+before Bubble A1 Lv9 top 2.70 m, 19432 tris in view
+before Bubble A2 Lv9 top 2.70 m, 18900 tris in view
+before Bubble B1 Lv9 top 2.70 m, 18176 tris in view
+before Bubble B2 Lv9 top 2.70 m, 20712 tris in view
+after Bubble Lv1 top 2.47 m, 12920 tris in view
+after Bubble A Lv3 top 2.82 m, 13016 tris in view
+after Bubble B Lv3 top 2.73 m, 13160 tris in view
+after Bubble A1 Lv9 top 3.23 m, 13224 tris in view
+after Bubble A2 Lv9 top 3.23 m, 13444 tris in view
+after Bubble B1 Lv9 top 3.12 m, 13352 tris in view
+after Bubble B2 Lv9 top 3.16 m, 13326 tris in view

@@ -542,6 +542,25 @@ namespace HtfFortress.Headless
                   "repair tower: heals, doesn't shoot; A reaches further, B heals more");
             v.Unlocked.Add(PieceType.Bubble);
             Check(v.CanBuild(PieceType.Bubble) && !v.CanBuild(PieceType.Sniper), "a blueprint unlocks just its turret");
+            // Every turret's art (tools/make_turrets_v4.py): a body, seven branch heads and an extra barrel, each on disk and
+            // within the budget (TURRET-UPGRADE-DESIGN: at most 2500 triangles and 5 materials a model).
+            foreach (var t in all.Where(Catalog.IsTurret))
+            {
+                Check(Catalog.HasModules(t) && Catalog.BodyModel(t) == t + "Body", $"{t}: not modular");
+                var names = new List<string> { Catalog.BodyModel(t), Catalog.BarrelModel(t) };
+                for (int b = 0; b <= 6; b++) names.Add(Catalog.ModuleModel(t, b));
+                Check(names.Distinct().Count() == 9, $"{t}: its nine models aren't distinct ({string.Join(",", names)})");
+                foreach (var n in names)
+                {
+                    string path = Path.Combine(Src, "Models", n + ".obj");
+                    if (!File.Exists(path) || !File.Exists(Path.ChangeExtension(path, ".mtl"))) { Check(false, $"{t}: no {n}.obj/.mtl"); continue; }
+                    var lines = File.ReadLines(path).ToList();
+                    int tris = lines.Where(l => l.StartsWith("f ")).Sum(l => l.Split(' ').Length - 3), mats = lines.Where(l => l.StartsWith("usemtl ")).Distinct().Count();
+                    Check(tris > 0 && tris <= 2500 && mats <= 5, $"{n}: {tris} triangles, {mats} materials (budget 2500 / 5)");
+                }
+                var mount = Catalog.BarrelMount(t);
+                Check(mount.y > 0.2f && mount.y < 1.3f && mount.z >= 0f, $"{t}: extra barrels mount at {mount}, off the head");
+            }
         }
 
         // ---------- enemies ----------

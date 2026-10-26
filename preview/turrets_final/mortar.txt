@@ -1,0 +1,15 @@
+rows top to bottom: before Mortar 3/4, before Mortar front, after Mortar 3/4, after Mortar front; columns: Lv1, A Lv3, B Lv3, A1 Lv9, A2 Lv9, B1 Lv9, B2 Lv9
+before Mortar Lv1 top 2.12 m, 16456 tris in view
+before Mortar A Lv3 top 2.33 m, 18520 tris in view
+before Mortar B Lv3 top 2.33 m, 18460 tris in view
+before Mortar A1 Lv9 top 2.63 m, 19840 tris in view
+before Mortar A2 Lv9 top 2.63 m, 19308 tris in view
+before Mortar B1 Lv9 top 2.63 m, 18584 tris in view
+before Mortar B2 Lv9 top 2.63 m, 21120 tris in view
+after Mortar Lv1 top 2.22 m, 12882 tris in view
+after Mortar A Lv3 top 2.43 m, 13072 tris in view
+after Mortar B Lv3 top 2.43 m, 13280 tris in view
+after Mortar A1 Lv9 top 2.76 m, 13406 tris in view
+after Mortar A2 Lv9 top 2.99 m, 13480 tris in view
+after Mortar B1 Lv9 top 2.76 m, 13956 tris in view
+after Mortar B2 Lv9 top 2.96 m, 13680 tris in view
