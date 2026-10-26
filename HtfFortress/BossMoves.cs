@@ -41,26 +41,26 @@ namespace HtfFortress
                 case "warden.anvil": Anvil(a, b, size); break;
                 // ---- the urchin ----
                 case "urchin.land": BossVfx.Impact(a, Mathf.Max(2f, size * 0.8f), Pink, Sand); Shake(a, 0.5f); Sound("ItemImpactHeavy_V", 1, 3, a, 1f); break;
-                case "urchin.roll": Run(Roll(e.PieceId, secs)); Fx.Sound("PufferfishRoll", a, 1f, AudioDistance.Long); break;
-                case "urchin.bristle": Run(Throb(e.PieceId, secs, 0.12f)); Run(Charge(e.PieceId, secs, Pink)); Fx.Sound("Pufferfish", a, 1f, AudioDistance.Long); break;
-                case "urchin.spike": Run(Fly(a, b, BossVfx.Spike, BossVfx.Glow(Pink, 3f), new Vector3(1.4f, 1.4f, 1.6f), 0.45f, 4f, Pink, () => { BossVfx.Flash(b + Vector3.up * 0.3f, 0.8f, Pink, 0.2f); BossVfx.Debris(b, 4, Sand, 3f, 0.15f); })); break;
-                case "urchin.caltrop": Run(Caltrops(a, secs)); break;
+                case "urchin.roll": Run(Roll(e.PieceId, secs)); BossAudio.Sound("PufferfishRoll", a, 1f, AudioDistance.Long); break;
+                case "urchin.bristle": Run(Throb(e.PieceId, secs, 0.12f)); Run(Charge(e.PieceId, secs, Pink)); BossAudio.Sound("Pufferfish", a, 1f, AudioDistance.Long); break;
+                case "urchin.spike": Pitched("PunchSwoosh", 0, a, 0.8f, 0.8f); Run(Fly(a, b, BossVfx.Spike, BossVfx.Glow(Pink, 3f), new Vector3(1.4f, 1.4f, 1.6f), 0.45f, 4f, Pink, () => { BossVfx.Flash(b + Vector3.up * 0.3f, 0.8f, Pink, 0.2f); BossVfx.Debris(b, 4, Sand, 3f, 0.15f); Pitched("ArrowHitSand_0", 5, b, 1f, 0.8f); })); break;
+                case "urchin.caltrop": Run(Caltrops(a, secs)); Pitched("ArrowHitStone_0", 5, a, 0.8f, 1.1f); BossAudio.After(0.08f, () => Pitched("ArrowHitSand_0", 5, a, 0.8f, 1f)); break;
                 case "urchin.bloom": Run(Bloom(a, size)); Sound("Slap_0", 1, 3, a, 1f); Sound("ItemImpactHeavy_V", 1, 3, a, 0.8f); break;
                 case "urchin.nova":
                     Run(Bloom(a, size, 40, 0.9f));
                     BossVfx.Flash(a + Vector3.up * 1.5f, size * 0.6f, Pink, 0.3f);
                     BossVfx.Shock(a, size * 1.25f, Violet, 0.6f, 0.85f);
-                    Shake(a, 0.6f); Sound("Slap_0", 1, 3, a, 1f); Sound("ItemImpactHeavy_V", 1, 3, a, 1f); Fx.Sound("Pufferfish", a, 1f, AudioDistance.Long);
+                    Shake(a, 0.6f); Sound("Slap_0", 1, 3, a, 1f); Sound("ItemImpactHeavy_V", 1, 3, a, 1f); BossAudio.Sound("Pufferfish", a, 1f, AudioDistance.Long);
                     break;
                 // ---- the anglerfish ----
-                case "angler.lure": Run(Lure(e.PieceId, secs)); Fx.Sound("RadarPing", a, 1f, AudioDistance.Long); break;
+                case "angler.lure": Run(Lure(e.PieceId, secs)); BossAudio.Sound("RadarPing", a, 1f, AudioDistance.Long); break;
                 case "angler.flash": LureFlash(a); break;
-                case "angler.lunge": Fx.Sound("Swallow", a, 1f, AudioDistance.Long); Run(Trail(e.PieceId, secs, WeaponFx.Bubbles, 4)); WeaponFx.Game("WaterSplashWhite", a, Vector3.up); break;
-                case "angler.gulp": Fx.Sound("Eat_V" + Random.Range(1, 4), a, 1f); WeaponFx.Game("BloodSmall", a, Vector3.up); BossVfx.Flash(a + Vector3.up * 0.6f, 1f, Cyan, 0.15f); break;
-                case "angler.blackout": Run(Blackout(e.PieceId, secs)); Fx.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), a, 0.8f, AudioDistance.Long); break;
+                case "angler.lunge": BossAudio.Sound("Swallow", a, 1f, AudioDistance.Long); Run(Trail(e.PieceId, secs, WeaponFx.Bubbles, 4)); WeaponFx.Game("WaterSplashWhite", a, Vector3.up); break;
+                case "angler.gulp": BossAudio.Sound("Eat_V" + Random.Range(1, 4), a, 1f); WeaponFx.Game("BloodSmall", a, Vector3.up); BossVfx.Flash(a + Vector3.up * 0.6f, 1f, Cyan, 0.15f); break;
+                case "angler.blackout": Run(Blackout(e.PieceId, secs)); BossAudio.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), a, 0.8f, AudioDistance.Long); break;
                 // ---- the steed ----
-                case "steed.splash": WeaponFx.Emit(WeaponFx.Foam, a, 3, Vector3.up); WeaponFx.Emit(WeaponFx.Drops, a, 4, Vector3.up); break;
-                case "steed.rear": Fx.Sound("BoatLandCollisionMedium_V" + Random.Range(1, 4), a, 1f, AudioDistance.Long); BossFx.Burst(a + Vector3.up * 3f, "Gold", 24, 0.14f); break;
+                case "steed.splash": WeaponFx.Emit(WeaponFx.Foam, a, 3, Vector3.up); WeaponFx.Emit(WeaponFx.Drops, a, 4, Vector3.up); if (Random.value < 0.25f) Pitched("ItemHitWaterLight_V", 3, a, 0.6f, 0.9f); break; // (sent most frames)
+                case "steed.rear": BossAudio.Sound("BoatLandCollisionMedium_V" + Random.Range(1, 4), a, 1f, AudioDistance.Long); BossFx.Burst(a + Vector3.up * 3f, "Gold", 24, 0.14f); break;
                 case "steed.land": BossVfx.Shock(a, 4f, Gold, 0.35f); BossVfx.Dust(a, 2f, 6); Sound("ItemImpactHeavy_V", 1, 3, a, 0.9f); break;
                 case "steed.charge": Run(Charge(e.PieceId, a, b, secs)); Sound("Footstep_Sand_V", 1, 5, a, 1f); break;
                 case "steed.stomp":
@@ -70,88 +70,91 @@ namespace HtfFortress
                     Shake(a, 0.6f); Sound("ItemImpactHeavy_V", 1, 3, a, 1f);
                     break;
                 case "steed.phantom": Run(Phantom(e.PieceId, a, b, secs)); break;
-                case "steed.golden": Run(GoldenSpin(e.PieceId)); break;
-                case "steed.fissure": Run(Fissure(a, b, secs)); break;
+                case "steed.golden": Run(GoldenSpin(e.PieceId)); Pitched("ShinyCreatureCaught_0", 3, a, 1f, 0.85f); break;
+                case "steed.fissure": Run(Fissure(a, b, secs)); Pitched("ItemImpactHeavy_V", 3, a, 1f, 0.6f); Pitched("LavaEruption_01", 0, Vector3.Lerp(a, b, 0.5f), 0.7f, 1.3f, 1.6f); break;
                 // ---- the stonefish ----
                 case "stone.rise":
                     BossVfx.Spires(Circle(a, size + 1.2f, 9), 2.4f, Basalt, Venom, 1.2f, 0.02f);
                     Erupt(a, size, Basalt); Shake(a, 0.5f); Sound("ItemImpactHeavy_V", 1, 3, a, 1f);
                     break;
-                case "stone.dig": Erupt(a, 3f, Basalt); break;
+                case "stone.dig": Erupt(a, 3f, Basalt); Pitched("ArrowHitSand_0", 5, a, 1f, 0.6f); Pitched("ItemImpactHeavy_V", 3, a, 0.9f, 0.55f); break;
                 case "stone.tunnel": Run(Tunnel(a, b, secs)); break;
-                case "stone.rumble": Shake(a, 0.3f); Fx.Sound("LavaEruption_01", a, 0.6f, AudioDistance.Long); break;
-                case "stone.spires": BossVfx.Spires(Line(a, b, 1.4f, 0.5f), 2.8f, Basalt, Venom, 1.8f); BossVfx.Shock(a, 4f, Venom, 0.4f); Fx.Sound("LavaEruption_01", a, 0.8f, AudioDistance.Long); break;
-                case "stone.spines": Run(Throb(e.PieceId, secs, 0.08f)); Run(Charge(e.PieceId, secs, Venom)); break;
+                case "stone.rumble": Shake(a, 0.3f); BossAudio.Sound("LavaEruption_01", a, 0.6f, AudioDistance.Long); break;
+                case "stone.spires": BossVfx.Spires(Line(a, b, 1.4f, 0.5f), 2.8f, Basalt, Venom, 1.8f); BossVfx.Shock(a, 4f, Venom, 0.4f); BossAudio.Sound("LavaEruption_01", a, 0.8f, AudioDistance.Long); break;
+                case "stone.spines": Run(Throb(e.PieceId, secs, 0.08f)); Run(Charge(e.PieceId, secs, Venom)); Pitched("Ignite", 0, a, 0.8f, 0.55f); break;
                 case "stone.spit": Run(Fly(a, b, WeaponFx.Ball, BossVfx.Glow(Venom, 2.5f), Vector3.one * 0.7f, 0.5f, 4f, Venom, () => { BossVfx.Flash(b + Vector3.up * 0.3f, 1.2f, Venom, 0.2f); WeaponFx.Emit(WeaponFx.Gas, b, 4, Vector3.up); })); Sound("PiranhaVomit_V", 1, 3, a, 0.8f); break;
-                case "stone.pool": Run(Pool(a, size, secs)); break;
-                case "stone.eyes": Run(Eyes(e.PieceId, secs, Venom)); break;
-                case "stone.gaze": Run(Gaze(a, b, e.Who)); Fx.Sound("Ignite", a, 1f, AudioDistance.Long); break;
+                case "stone.pool": Run(Pool(a, size, secs)); Pitched("FishSplatHard", 0, a, 1f, 0.6f); Pitched("SizzlingLoop", 0, a, 0.45f, 0.9f, Mathf.Min(secs, 3f)); break;
+                case "stone.eyes": Run(Eyes(e.PieceId, secs, Venom)); Pitched("RadarPing", 0, a, 1f, 0.45f); break;
+                case "stone.gaze": Run(Gaze(a, b, e.Who)); BossAudio.Sound("Ignite", a, 1f, AudioDistance.Long); break;
                 case "stone.petrify": Run(Petrify(e.Who, a, b, secs)); break;
-                case "stone.vent": Run(Vent(a, secs)); break;
-                case "stone.geyser": Run(Geyser(a, size)); Fx.Sound("LavaEruption_01", a, 0.7f, AudioDistance.Long); Sound("PiranhaVomit_V", 1, 3, a, 0.8f); break;
+                case "stone.vent": Run(Vent(a, secs)); Pitched("SizzlingLoop", 0, a, 0.7f, 0.75f, secs); break;
+                case "stone.geyser": Run(Geyser(a, size)); BossAudio.Sound("LavaEruption_01", a, 0.7f, AudioDistance.Long); Sound("PiranhaVomit_V", 1, 3, a, 0.8f); break;
                 // ---- the flying fish ----
-                case "sky.pass": Fx.Sound("PunchSwoosh", a, 1f, AudioDistance.Long); Shake(a, 0.3f); BossVfx.Shock(a, 6f, Color.white, 0.4f); break;
+                case "sky.pass": BossAudio.Sound("PunchSwoosh", a, 1f, AudioDistance.Long); Shake(a, 0.3f); BossVfx.Shock(a, 6f, Color.white, 0.4f); break;
                 case "sky.bomb": Explode(a, 2.6f); break;
                 case "sky.call": Sound("Seagull_V", 1, 11, a, 1f); break;
                 case "sky.boom": Run(Boom(a, b, secs)); break;
-                case "sky.fall": Fx.Sound("AlbatrossScreamTakeDamage", a, 1f, AudioDistance.Long); Run(Smoke(e.PieceId, 0.8f)); break;
+                case "sky.fall": BossAudio.Sound("AlbatrossScreamTakeDamage", a, 1f, AudioDistance.Long); Run(Smoke(e.PieceId, 0.8f)); break;
                 case "sky.ring": SonicRing(a, e.Arg / 100f, size); break;
                 // ---- the kraken ----
                 case "kraken.rise": Run(SeaBurst(a, secs)); break;
-                case "kraken.dive": WeaponFx.Game("WaterExplosionWhite", a, Vector3.up); BossVfx.Shock(a, 7f, Water, 0.6f); Fx.Sound("ItemHitWaterHeavy_V1", a, 1f, AudioDistance.Long); break;
+                case "kraken.dive": WeaponFx.Game("WaterExplosionWhite", a, Vector3.up); BossVfx.Shock(a, 7f, Water, 0.6f); BossAudio.Sound("ItemHitWaterHeavy_V1", a, 1f, AudioDistance.Long); break;
                 case "kraken.tentacles": Run(Tentacles(a, b, secs, Mathf.Max(2, e.Who))); break;
                 case "kraken.sweep": Run(SweepFx(a, b, e.Who, Water)); break;
-                case "kraken.reach": Run(Reach(e.Who, a, b, secs)); break;
+                case "kraken.reach": Run(Reach(e.Who, a, b, secs)); Pitched("BaitLeaveWater_V", 3, a, 1f, 0.6f); Pitched("ItemImpactHeavy_V", 3, a, 0.8f, 1f); break;
                 case "kraken.grab": Run(Dragged(e.Who, a, b)); break;
                 case "kraken.squeeze": Run(Squeeze(e.Who, a, b)); break;
                 case "kraken.ink": Run(Ink(a, size, secs)); break;
                 case "kraken.whirl": Run(Whirl(a, size, secs)); break;
                 // ---- the voxel fish ----
                 case "voxel.load": Run(Load(a, secs)); break;
-                case "voxel.in": Cubes(a, 50, true); BossVfx.Flash(a, 2f, Pixel, 0.2f); Fx.Sound("TypingClick" + Random.Range(1, 4), a, 1f, AudioDistance.Long); break;
-                case "voxel.out": Cubes(a, 50, false); Fx.Sound("Error", a, 0.6f, AudioDistance.Long); break;
-                case "voxel.copy": Run(Words(a, "Ctrl+C  Ctrl+V", Pixel, secs + 0.8f)); Fx.Sound("Typing" + Random.Range(1, 4), a, 1f, AudioDistance.Long); break;
-                case "voxel.select": Run(Selection(a, b, size, secs)); break;
-                case "voxel.delete": Run(Pixelate(a, b, size)); BossVfx.Flash(a + Vector3.up, size, Blood, 0.25f); Fx.Sound("Error", a, 1f, AudioDistance.Long); break;
-                case "voxel.undo": Run(Words(a + Vector3.up * 6f, "Ctrl+Z", new Color(0.4f, 0.8f, 1f), secs)); Run(Rewind(e.PieceId, secs)); break;
-                case "voxel.restored": Cubes(a, 70, true); BossVfx.Flash(a, 3f, new Color(0.4f, 0.8f, 1f), 0.3f); Fx.Sound("QuestFinished", a, 0.7f, AudioDistance.Long); break;
-                case "voxel.bolt": Run(Fly(a, b, WeaponFx.Cube, BossVfx.Glow(Random.value < 0.5f ? Pixel : Pink, 4f), Vector3.one * 0.5f, 0.35f, 1.2f, Pixel, () => { Cubes(b, 14, false); BossVfx.Shock(b, 2.5f, Pixel, 0.3f); })); break;
-                case "voxel.fatal": H.Overlay(OverlayKind.Glitch, secs); Fx.Sound("Error", a, 1f, AudioDistance.Long); Fx.Sound("RadioNoise_loop", a, 0.8f, AudioDistance.Long); break;
-                case "voxel.tile": Run(Tile(a, b, size, secs)); Fx.Sound("Error", a, 0.6f, AudioDistance.Long); break;
+                case "voxel.in": Cubes(a, 50, true); BossVfx.Flash(a, 2f, Pixel, 0.2f); BossAudio.Sound("TypingClick" + Random.Range(1, 4), a, 1f, AudioDistance.Long); break;
+                case "voxel.out": Cubes(a, 50, false); BossAudio.Sound("Error", a, 0.6f, AudioDistance.Long); break;
+                case "voxel.copy": Run(Words(a, "Ctrl+C  Ctrl+V", Pixel, secs + 0.8f)); BossAudio.Sound("Typing" + Random.Range(1, 4), a, 1f, AudioDistance.Long); break;
+                case "voxel.select": Run(Selection(a, b, size, secs)); Pitched("Select", 0, a, 1f, 0.8f); Pitched("TypingClick", 3, a, 0.8f, 1f); break;
+                case "voxel.delete": Run(Pixelate(a, b, size)); BossVfx.Flash(a + Vector3.up, size, Blood, 0.25f); BossAudio.Sound("Error", a, 1f, AudioDistance.Long); break;
+                case "voxel.undo":
+                    Run(Words(a + Vector3.up * 6f, "Ctrl+Z", new Color(0.4f, 0.8f, 1f), secs)); Run(Rewind(e.PieceId, secs));
+                    Pitched("Typing", 3, a, 1f, 1f); BossAudio.After(0.12f, () => Pitched("Typing", 3, a, 1f, 1f)); BossAudio.After(0.25f, () => Pitched("Back", 0, a, 1f, 0.8f));
+                    break;
+                case "voxel.restored": Cubes(a, 70, true); BossVfx.Flash(a, 3f, new Color(0.4f, 0.8f, 1f), 0.3f); BossAudio.Sound("QuestFinished", a, 0.7f, AudioDistance.Long); break;
+                case "voxel.bolt": Pitched("Error", 0, a, 0.6f, 1.5f); Run(Fly(a, b, WeaponFx.Cube, BossVfx.Glow(Random.value < 0.5f ? Pixel : Pink, 4f), Vector3.one * 0.5f, 0.35f, 1.2f, Pixel, () => { Cubes(b, 14, false); BossVfx.Shock(b, 2.5f, Pixel, 0.3f); Pitched("Error", 0, b, 0.8f, 0.8f); Pitched("ItemImpactLight_V", 3, b, 0.8f, 1f); })); break;
+                case "voxel.fatal": H.Overlay(OverlayKind.Glitch, secs); BossAudio.Sound("Error", a, 1f, AudioDistance.Long); BossAudio.Sound("RadioNoise_loop", a, 0.8f, AudioDistance.Long); break;
+                case "voxel.tile": Run(Tile(a, b, size, secs)); BossAudio.Sound("Error", a, 0.6f, AudioDistance.Long); break;
                 // ---- the koi ----
                 case "koi.gate": Run(Gate(a, secs)); break;
-                case "koi.jet": Run(Jet(a, b, secs, e.Who)); Fx.Sound("ItemHitWaterHeavy_V2", a, 1f, AudioDistance.Long); break;
+                case "koi.jet": Run(Jet(a, b, secs, e.Who)); BossAudio.Sound("ItemHitWaterHeavy_V2", a, 1f, AudioDistance.Long); break;
                 case "koi.splash":
                     WeaponFx.Game("WaterExplosionWhite", a, Vector3.up); try { VFXManager.Play("WaterExplosion", a); } catch { }
                     BossVfx.Shock(a, size * 2f, Water, 0.6f); BossVfx.Debris(a, 12, Sand, 7f); Ring(a, size, WeaponFx.Foam, 3);
-                    Shake(a, 0.6f); Fx.Sound("WhaleLanding_0" + Random.Range(1, 4), a, 1f, AudioDistance.Long);
+                    Shake(a, 0.6f); BossAudio.Sound("WhaleLanding_0" + Random.Range(1, 4), a, 1f, AudioDistance.Long);
                     break;
                 case "koi.call": Sound("ItemHitWaterLight_V", 1, 3, a, 1f); Run(Charge(e.PieceId, secs, Water)); break;
-                case "koi.drop": Run(Fly(a + Vector3.up * 30f + Random.insideUnitSphere * 3f, a, WeaponFx.Ball, WeaponFx.Water("BossDrop", new Color(0.55f, 0.8f, 1f, 0.85f)), Vector3.one * 1.3f, 0.6f, 0f, Water, () => { WeaponFx.Game("WaterSplashWhite", a, Vector3.up); WeaponFx.Emit(WeaponFx.Drops, a, 12, Vector3.up); BossVfx.Shock(a, 3f, Water, 0.35f); })); break;
-                case "koi.breath": Run(Breath(a, b, secs, e.Who)); Fx.Sound("Ignite", a, 0.8f, AudioDistance.Long); break; // short: the loop clip kept sizzling after the breath
-                case "koi.burn": Run(Burning(a, secs)); break;
-                case "koi.charge": Run(Charge(e.PieceId, secs, new Color(0.7f, 0.85f, 1f))); break;
+                case "koi.drop": Pitched("PickupWhoosh", 0, a + Vector3.up * 12f, 0.8f, 0.5f); Run(Fly(a + Vector3.up * 30f + Random.insideUnitSphere * 3f, a, WeaponFx.Ball, WeaponFx.Water("BossDrop", new Color(0.55f, 0.8f, 1f, 0.85f)), Vector3.one * 1.3f, 0.6f, 0f, Water, () => { WeaponFx.Game("WaterSplashWhite", a, Vector3.up); WeaponFx.Emit(WeaponFx.Drops, a, 12, Vector3.up); BossVfx.Shock(a, 3f, Water, 0.35f); Pitched("ItemHitWaterHeavy_V", 3, a, 1f, 1f); })); break;
+                case "koi.breath": Run(Breath(a, b, secs, e.Who)); BossAudio.Sound("Ignite", a, 0.8f, AudioDistance.Long); break; // short: the loop clip kept sizzling after the breath
+                case "koi.burn": Run(Burning(a, secs)); Pitched("Ignite", 0, a, 0.8f, 0.8f); Pitched("FireLoop", 0, a, 0.5f, 1f, Mathf.Min(secs, 2.5f)); break;
+                case "koi.charge": Run(Charge(e.PieceId, secs, new Color(0.7f, 0.85f, 1f))); Pitched("UnderwaterOnEnter_0", 2, a, 0.9f, 1.2f, secs); break;
                 case "koi.thunder": H.StartCoroutine(BossFx.Lightning(a, new Color(0.75f, 0.85f, 1f))); BossVfx.Impact(a, 2.6f, new Color(0.6f, 0.8f, 1f), Basalt); break;
                 case "koi.dragon": Run(Dragon(e.PieceId, secs)); break;
-                case "koi.flame": Run(FlameLine(a, b, secs)); Fx.Sound("Ignite", a, 0.9f, AudioDistance.Long); Fx.Sound("LavaEruption_01", b, 0.5f, AudioDistance.Long); break;
+                case "koi.flame": Run(FlameLine(a, b, secs)); BossAudio.Sound("Ignite", a, 0.9f, AudioDistance.Long); BossAudio.Sound("LavaEruption_01", b, 0.5f, AudioDistance.Long); break;
                 // ---- the eye ----
                 case "eye.descend": Run(Descend(a, secs)); break;
-                case "eye.red": H.RedSky(e.Arg > 0); if (BossEye.Of(e.PieceId) is BossEye raging) raging.Rage(e.Arg > 0); break;
+                case "eye.red": H.RedSky(e.Arg > 0); if (BossEye.Of(e.PieceId) is BossEye raging) raging.Rage(e.Arg > 0); if (e.Arg > 0) Pitched("LavaEruption_01", 0, a, 1f, 0.5f, 3f); break;
                 case "eye.open":
                     if (BossEye.Of(e.PieceId) is BossEye opening) opening.Flare(secs); // its own lids open wide
                     else Run(Eyes(e.PieceId, secs, Blood));
-                    Fx.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), a, 1f, AudioDistance.Long);
+                    BossAudio.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), a, 1f, AudioDistance.Long);
                     break;
                 case "eye.beam": Run(Gaze(e.PieceId, a, b, secs, e.Who)); break;
-                case "eye.spears": Fx.Sound("BowCharge", a, 1f, AudioDistance.Long); break;
-                case "eye.spear": Run(Fly(a + Vector3.up * 35f + Random.insideUnitSphere.Flat() * 4f, a, BossVfx.Shard, BossVfx.Glow(Blood, 4f), new Vector3(0.9f, 3f, 0.9f), 0.55f, 0f, Blood, () => { BossVfx.Impact(a, 1.6f, Blood, Basalt); }, upright: true)); break;
+                case "eye.spears": BossAudio.Sound("BowCharge", a, 1f, AudioDistance.Long); break;
+                case "eye.spear": Pitched("PickupWhoosh", 0, a + Vector3.up * 14f, 0.8f, 0.5f); Run(Fly(a + Vector3.up * 35f + Random.insideUnitSphere.Flat() * 4f, a, BossVfx.Shard, BossVfx.Glow(Blood, 4f), new Vector3(0.9f, 3f, 0.9f), 0.55f, 0f, Blood, () => { BossVfx.Impact(a, 1.6f, Blood, Basalt); Pitched("ArrowHitStone_0", 5, a, 1f, 0.7f); Pitched("ItemImpactHeavy_V", 3, a, 0.9f, 0.7f); }, upright: true)); break;
                 case "eye.echo": BossVfx.Impact(a, size, Shadow, new Color(0.1f, 0.05f, 0.1f)); WeaponFx.Game("BlackConfetti", a, Vector3.up); Sound("ItemImpactHeavy_V", 1, 3, a, 0.8f); break;
-                case "eye.echoLane": Run(Streak(a, b, 0.5f, Shadow, 1.6f)); BossVfx.Impact(b, 2f, Shadow, new Color(0.1f, 0.05f, 0.1f)); break;
+                case "eye.echoLane": Run(Streak(a, b, 0.5f, Shadow, 1.6f)); BossVfx.Impact(b, 2f, Shadow, new Color(0.1f, 0.05f, 0.1f)); Pitched("PunchSwoosh", 0, a, 1f, 0.5f); Pitched("ItemImpactHeavy_V", 3, b, 0.9f, 0.6f); break;
                 case "eye.echoCone": Run(SweepFx(a, b, e.Who, Shadow)); break;
                 case "eye.pupil":
                     if (BossEye.Of(e.PieceId) is BossEye wide) wide.Flare(secs);
                     Run(SecondPupil(e.PieceId, secs + 0.3f));
-                    Fx.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), a, 1f, AudioDistance.Long);
+                    BossAudio.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), a, 1f, AudioDistance.Long);
                     break;
                 case "eye.twin":
                     if (BossEye.Of(e.PieceId) is BossEye twin) twin.Flare(secs);
@@ -166,8 +169,10 @@ namespace HtfFortress
         }
 
         private static void Run(IEnumerator e) => H.StartCoroutine(e);
-        private static void Sound(string prefix, int min, int max, Vector3 at, float vol) => Fx.SoundRandom(prefix, min, max, at, vol, AudioDistance.Long);
-        private static void Sound(string clip, Vector3 at) => Fx.Sound(clip, at, 1f, AudioDistance.Long);
+        private static void Sound(string prefix, int min, int max, Vector3 at, float vol) => BossAudio.SoundRandom(prefix, min, max, at, vol, AudioDistance.Long);
+        private static void Sound(string clip, Vector3 at) => BossAudio.Sound(clip, at, 1f, AudioDistance.Long);
+        // One of `prefix`1..n (n 0: itself) at a pitch, faded out by `max` seconds (0: the whole clip).
+        private static void Pitched(string prefix, int n, Vector3 at, float vol, float pitch, float max = 0f) => BossAudio.Pitched(prefix, n, at, vol, pitch, max);
 
         // ---------- small pieces ----------
 
@@ -200,7 +205,7 @@ namespace HtfFortress
         {
             WeaponFx.Game(r > 3f ? "BigExplosion" : "SmallExplosion", at + Vector3.up * 0.3f, Vector3.up);
             BossVfx.Impact(at, r, Fire, Basalt);
-            Fx.Sound("Explosion", at, 0.8f, AudioDistance.Long);
+            BossAudio.Sound("Explosion", at, 0.8f, AudioDistance.Long);
             Shake(at, 0.3f);
         }
 
@@ -390,7 +395,7 @@ namespace HtfFortress
                     locked = true;
                     BossVfx.Flash(top, 1.2f, Fire, 0.2f);
                     BossFx.Burst(top, "Orange", 24, 0.1f);
-                    Fx.SoundRandom("MetallicItemImpact_V", 1, 3, top, 1f);
+                    BossAudio.SoundRandom("MetallicItemImpact_V", 1, 3, top, 1f);
                 }
                 if (locked)
                 {
@@ -402,7 +407,7 @@ namespace HtfFortress
             }
             BossFx.Burst(top, "Orange", 20, 0.1f);
             BossVfx.Debris(top, 8, Iron, 4f, 0.15f);
-            Fx.SoundRandom("MetallicItemImpact_V", 1, 3, top, 0.8f);
+            BossAudio.SoundRandom("MetallicItemImpact_V", 1, 3, top, 0.8f);
             for (float t = 0f; t < 0.6f; t += Time.deltaTime)
             {
                 foreach (var l in links) if (l) { l.position += Vector3.down * 9f * t * Time.deltaTime; l.localScale *= 0.97f; }
@@ -566,7 +571,7 @@ namespace HtfFortress
             Vector3 to = at - cam.transform.position;
             bool looking = to.magnitude < 45f && Vector3.Angle(cam.transform.forward, to) < 50f && !Physics.Linecast(cam.transform.position, at, GameInfo.LevelLayer);
             H.Overlay(looking ? OverlayKind.White : OverlayKind.Glint, looking ? 1.2f : 0.3f);
-            Fx.Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), at, 1f, AudioDistance.Long);
+            BossAudio.Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), at, 1f, AudioDistance.Long);
         }
 
         // Blackout: its lantern and its own glow go out, the night goes deeper still (BossFx.Blackout), and the lantern
@@ -586,7 +591,7 @@ namespace HtfFortress
             l.ball.gameObject.SetActive(true);
             BossVfx.Flash(l.ball.position, 4f, Cyan, 0.3f);
             WeaponFx.Emit(WeaponFx.Rings, l.ball.position, 1, Vector3.up, color: Cyan, size: 9f);
-            Fx.Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), l.ball.position, 1f, AudioDistance.Long);
+            BossAudio.Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), l.ball.position, 1f, AudioDistance.Long);
         }
 
         // ---------- the steed ----------
@@ -625,7 +630,7 @@ namespace HtfFortress
             var steed = body ? body.GetComponent<BossSteed>() : null;
             var ghost = steed ? steed.Phantom(mat) : body ? Ghost(body, mat) : null; // ours gallops; the game's horse is a still copy, bounced
             Vector3 dir = (b - a).Flat().normalized;
-            Fx.Sound("Footstep_Sand_V" + Random.Range(1, 6), a, 1f, AudioDistance.Long);
+            BossAudio.Sound("Footstep_Sand_V" + Random.Range(1, 6), a, 1f, AudioDistance.Long);
             H.StartCoroutine(Streak(a, b, seconds, new Color(0.7f, 0.85f, 1f), 0.6f));
             if (ghost) { var g0 = ghost.position; ghost.position = new Vector3(a.x, g0.y, a.z); }
             float yOff = ghost && body ? body.position.y - BossLooks.WorldBounds(body).min.y : 0f; // its middle over its hooves
@@ -713,7 +718,7 @@ namespace HtfFortress
                 p.y = BossFx.Ground(p);
                 BossVfx.Dust(p, 1.2f, 2);
                 BossVfx.Debris(p, 2, Basalt, 3.5f, 0.2f);
-                if (Random.value < 0.2f) Fx.SoundRandom("ItemImpactLight_V", 1, 3, p, 0.6f);
+                if (Random.value < 0.2f) BossAudio.SoundRandom("ItemImpactLight_V", 1, 3, p, 0.6f);
                 yield return new WaitForSeconds(0.07f);
             }
         }
@@ -769,7 +774,7 @@ namespace HtfFortress
             yield return new WaitForSeconds(0.12f);
             BossVfx.Flash(bounds.center, 2.6f, Venom, 0.3f);
             BossFx.Burst(bounds.center, "Green", 30, 0.12f);
-            Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 0.9f);
+            BossAudio.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 0.9f);
             var rends = (piece ? piece.GetComponentsInChildren<Renderer>().Where(r => r.enabled && !(r is ParticleSystemRenderer) && !(r is LineRenderer)).ToArray() : new Renderer[0])
                 .OrderBy(r => r.bounds.min.y).ToArray(); // from its foot up
             var was = rends.Select(r => r.sharedMaterials).ToArray();
@@ -812,7 +817,7 @@ namespace HtfFortress
                 }
                 yield return null;
             }
-            Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 0.7f);
+            BossAudio.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 0.7f);
             BossVfx.Dust(at, w * 1.2f, 8);
             for (float t = 0.8f; t < seconds - 0.3f && !FreedSince(pieceId, began); t += 0.25f)
             {
@@ -826,7 +831,7 @@ namespace HtfFortress
             BossVfx.Debris(bounds.center, 12, Stone, 5f, 0.2f);
             BossVfx.Dust(at, w * 1.4f, 12);
             BossVfx.Shock(at, w * 3f, Stone, 0.4f);
-            Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 1f);
+            BossAudio.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 1f);
             foreach (var (s, _, _) in crust) if (s) Object.Destroy(s.gameObject);
             for (int i = rends.Length - 1; i >= 0; i--)
             {
@@ -896,7 +901,7 @@ namespace HtfFortress
         private static IEnumerator Boom(Vector3 a, Vector3 b, float seconds)
         {
             H.StartCoroutine(Streak(a, b, seconds, Color.white, 1.4f));
-            Fx.Sound("IntroCrash", Vector3.Lerp(a, b, 0.5f), 1f, AudioDistance.Long);
+            BossAudio.Sound("IntroCrash", Vector3.Lerp(a, b, 0.5f), 1f, AudioDistance.Long);
             for (int i = 0; i <= 10; i++)
             {
                 Vector3 p = Vector3.Lerp(a, b, i / 10f), g = new Vector3(p.x, BossFx.Ground(p), p.z);
@@ -906,7 +911,7 @@ namespace HtfFortress
                 BossVfx.Debris(g, 4, Sand, 6f, 0.2f);
                 yield return new WaitForSeconds(seconds / 10f);
             }
-            Fx.Sound("Explosion", Vector3.Lerp(a, b, 0.5f), 1f, AudioDistance.Long);
+            BossAudio.Sound("Explosion", Vector3.Lerp(a, b, 0.5f), 1f, AudioDistance.Long);
             Shake(Vector3.Lerp(a, b, 0.5f), 0.8f);
         }
 
@@ -920,8 +925,8 @@ namespace HtfFortress
             for (int i = 0; i < 3; i++) WeaponFx.Emit(WeaponFx.Rings, g + Vector3.up * (2f + 2f * i), 1, Vector3.up, color: Color.white, size: outer * (1.2f + 0.4f * i));
             foreach (var p in Circle(g, Mathf.Lerp(inner, outer, 0.6f), 12)) BossVfx.Dust(p, 1.2f, 2);
             BossVfx.Debris(g, 10, Sand, 6f, 0.2f);
-            Fx.Sound("IntroCrash", g, 1f, AudioDistance.Long);
-            Fx.Sound("Explosion", g, 0.7f, AudioDistance.Long);
+            BossAudio.Sound("IntroCrash", g, 1f, AudioDistance.Long);
+            BossAudio.Sound("Explosion", g, 0.7f, AudioDistance.Long);
             Shake(g, 0.7f);
         }
 
@@ -951,7 +956,7 @@ namespace HtfFortress
             WeaponFx.Game("WaterExplosionWhite", at, Vector3.up);
             try { VFXManager.Play("WaterExplosion", at); } catch { }
             BossVfx.Shock(at, 12f, Water, 0.7f);
-            Fx.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), at, 1f, AudioDistance.Long);
+            BossAudio.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), at, 1f, AudioDistance.Long);
         }
 
         // A tentacle: a crimson tube from `root` curling up toward `toward` (`rise` 0..1 how far out of the water it is,
@@ -1009,7 +1014,7 @@ namespace HtfFortress
                 WeaponFx.Game("WaterSplashWhite", root, Vector3.up);
                 BossVfx.Shock(root, 3f, Water, 0.4f);
             }
-            Fx.Sound("ItemHitWaterHeavy_V" + Random.Range(1, 4), shore, 1f, AudioDistance.Long);
+            BossAudio.Sound("ItemHitWaterHeavy_V" + Random.Range(1, 4), shore, 1f, AudioDistance.Long);
             for (float t = 0f; t < seconds + 0.6f; t += Time.deltaTime)
             {
                 float rise = Mathf.Clamp01(t / 0.5f), lash = Mathf.Clamp01((t - seconds) / 0.22f);
@@ -1031,7 +1036,7 @@ namespace HtfFortress
         {
             Vector3 dir = (far - apex).Flat().normalized;
             float range = (far - apex).Flat().magnitude;
-            Fx.Sound("WhaleLanding_0" + Random.Range(1, 4), apex, 1f, AudioDistance.Long);
+            BossAudio.Sound("WhaleLanding_0" + Random.Range(1, 4), apex, 1f, AudioDistance.Long);
             for (int i = 0; i <= 12; i++)
             {
                 Vector3 p = apex + Quaternion.Euler(0f, Mathf.Lerp(-half, half, i / 12f), 0f) * dir * range * 0.75f;
@@ -1075,7 +1080,7 @@ namespace HtfFortress
                 copy = Ghost(piece.transform, null);
                 foreach (var r in piece.GetComponentsInChildren<Renderer>()) r.enabled = false;
             }
-            Fx.SoundRandom("WoodItemImpact_V", 1, 3, at, 1f);
+            BossAudio.SoundRandom("WoodItemImpact_V", 1, 3, at, 1f);
             BossVfx.Debris(at, 14, Sand, 7f);
             Vector3 start = copy ? copy.position : at;
             for (float t = 0f; t < 1.3f; t += Time.deltaTime)
@@ -1088,7 +1093,7 @@ namespace HtfFortress
             }
             WeaponFx.Game("WaterExplosionWhite", sea, Vector3.up);
             BossVfx.Shock(sea, 6f, Water, 0.5f);
-            Fx.Sound("ItemHitWaterHeavy_V2", sea, 1f, AudioDistance.Long);
+            BossAudio.Sound("ItemHitWaterHeavy_V2", sea, 1f, AudioDistance.Long);
             arm?.Destroy();
             if (copy) Object.Destroy(copy.gameObject);
         }
@@ -1103,8 +1108,8 @@ namespace HtfFortress
             root.y = BossFx.Ground(root) - 0.4f;
             BossVfx.Impact(at, 1.8f, Crimson, Sand, false);
             WeaponFx.Game("BloodSmall", at + Vector3.up, Vector3.up);
-            Fx.SoundRandom("WoodItemImpact_V", 1, 3, at, 1f);
-            Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 0.8f);
+            BossAudio.SoundRandom("WoodItemImpact_V", 1, 3, at, 1f);
+            BossAudio.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 0.8f);
             for (float t = 0f; t < 0.9f; t += Time.deltaTime)
             {
                 float k = t / 0.9f;
@@ -1117,7 +1122,7 @@ namespace HtfFortress
         // Ink: splattered black over the beach and a cloud of it; anyone in it has ink all over their eyes.
         private static IEnumerator Ink(Vector3 at, float r, float seconds)
         {
-            Fx.Sound("PiranhaVomit_V" + Random.Range(1, 4), at, 1f, AudioDistance.Long);
+            BossAudio.Sound("PiranhaVomit_V" + Random.Range(1, 4), at, 1f, AudioDistance.Long);
             var splats = new List<(GameObject go, Material m)>();
             for (int i = 0; i < 6; i++)
             {
@@ -1148,7 +1153,7 @@ namespace HtfFortress
             var funnel = WeaponFx.Piece(WeaponFx.Funnel, WeaponFx.Water("BossWhirl", new Color(0.45f, 0.12f, 0.22f, 0.8f), WeaponFx.SpiralTex));
             funnel.position = at;
             var foam = WeaponFx.Orbit(at + Vector3.up * 0.1f, r * 0.7f);
-            Fx.Sound("UnderwaterLoop", at, 1f, AudioDistance.Long);
+            BossAudio.Sound("UnderwaterLoop", at, 1f, AudioDistance.Long);
             for (float t = 0f; t < seconds && funnel; t += Time.deltaTime)
             {
                 float k = Mathf.Min(1f, t / 0.8f) * Mathf.Min(1f, (seconds - t) / 0.8f);
@@ -1177,7 +1182,7 @@ namespace HtfFortress
         private static IEnumerator Load(Vector3 at, float seconds)
         {
             H.Overlay(OverlayKind.Glitch, 0.6f);
-            Fx.Sound("RadioNoise_loop", at, 0.8f, AudioDistance.Long);
+            BossAudio.Sound("RadioNoise_loop", at, 0.8f, AudioDistance.Long);
             H.StartCoroutine(Words(at + Vector3.up * 7f, "NOW LOADING... 99%", Pixel, seconds + 0.4f));
             for (float t = 0f; t < seconds; t += 0.06f) { Cubes(at, 8, true); yield return new WaitForSeconds(0.06f); }
         }
@@ -1331,7 +1336,7 @@ namespace HtfFortress
             Part(WeaponFx.Cube, red, Vector3.up * 8f, new Vector3(9f, 0.5f, 0.7f));
             var col = WeaponFx.Piece(WeaponFx.Cyl, BossVfx.Wash(new Color(0.55f, 0.82f, 1f, 0.5f)));
             var colMat = col.GetComponent<MeshRenderer>().sharedMaterial;
-            Fx.Sound("ItemHitWaterHeavy_V3", at, 1f, AudioDistance.Long);
+            BossAudio.Sound("ItemHitWaterHeavy_V3", at, 1f, AudioDistance.Long);
             Quaternion turn = Quaternion.LookRotation(Vector3.Cross(side, Vector3.up));
             for (float t = 0f; t < seconds; t += Time.deltaTime)
             {
@@ -1462,8 +1467,8 @@ namespace HtfFortress
             BossLooks.Dress(body, EnemyKind.Koi, true);
             BossVfx.Flash(body.position, 9f, Gold, 0.5f);
             for (int i = 0; i < 3; i++) WeaponFx.Emit(WeaponFx.Rings, body.position, 1, Random.onUnitSphere, color: Gold, size: 14f + 6f * i);
-            Fx.Sound("BossFightIntro", body.position, 1f, AudioDistance.Long);
-            Fx.Sound("LavaWhaleNoise_03", body.position, 1f, AudioDistance.Long);
+            BossAudio.Sound("BossFightIntro", body.position, 1f, AudioDistance.Long);
+            BossAudio.Sound("LavaWhaleNoise_03", body.position, 1f, AudioDistance.Long);
         }
 
         // ---------- the eye ----------
@@ -1471,7 +1476,7 @@ namespace HtfFortress
         private static IEnumerator Descend(Vector3 home, float seconds)
         {
             H.RedSky(true);
-            Fx.Sound("LavaWhaleNoise_04", home, 1f, AudioDistance.Long);
+            BossAudio.Sound("LavaWhaleNoise_04", home, 1f, AudioDistance.Long);
             for (float t = 0f; t < seconds; t += 0.45f)
             {
                 H.StartCoroutine(BossFx.Lightning(home + Random.insideUnitSphere.Flat() * 18f + Vector3.down * 10f, new Color(1f, 0.25f, 0.25f)));
@@ -1500,7 +1505,7 @@ namespace HtfFortress
             var sparks = BossVfx.Sparks(Fire);
             Vector3 g = new Vector3(eye.x, BossFx.Ground(eye), eye.z), dir = (far - g).Flat().normalized;
             float range = (far - g).Flat().magnitude;
-            Fx.Sound("Ignite", far, 0.7f, AudioDistance.Long); // a short sizzle, not the grill loop ringing out over the fort
+            BossAudio.Sound("Ignite", far, 0.7f, AudioDistance.Long); // a short sizzle, not the grill loop ringing out over the fort
             Vector3 lastMark = Vector3.zero, lastMark2 = Vector3.zero;
             for (float t = 0f; t < seconds && core; t += Time.deltaTime)
             {
@@ -1572,7 +1577,7 @@ namespace HtfFortress
         {
             field = Mathf.Max(12f, field);
             H.RedSky(true);
-            Fx.Sound("BossFightIntro", core, 1f, AudioDistance.Long);
+            BossAudio.Sound("BossFightIntro", core, 1f, AudioDistance.Long);
             var sun = WeaponFx.Piece(WeaponFx.Ball, BossVfx.Glow(Blood, 5f));
             var beam = WeaponFx.Line("BossJudgment", BossVfx.Glow(Blood, 6f), 0.2f);
             beam.positionCount = 2;
@@ -1610,7 +1615,7 @@ namespace HtfFortress
                 H.StartCoroutine(BossFx.Lightning(p, new Color(1f, 0.2f, 0.2f)));
                 BossVfx.Impact(p, 2f, Blood, Basalt);
             }
-            Fx.Sound("LavaWhaleDeathExplosion", core, 1f, AudioDistance.Long);
+            BossAudio.Sound("LavaWhaleDeathExplosion", core, 1f, AudioDistance.Long);
             Shake(core, 1f);
             H.Overlay(OverlayKind.White, 0.6f);
         }
@@ -1681,7 +1686,7 @@ namespace HtfFortress
             var flash = new GameObject("BossLightningFlash").AddComponent<Light>();
             flash.type = LightType.Point; flash.color = c; flash.range = 60f; flash.intensity = 6f; flash.transform.position = at + Vector3.up * 8f;
             WeaponFx.Emit(WeaponFx.Sparks("Cyan"), at, 20, Vector3.up, color: c, size: 0.1f);
-            Fx.Sound("Explosion", at, 0.5f, AudioDistance.Long);
+            BossAudio.Sound("Explosion", at, 0.5f, AudioDistance.Long);
             yield return new WaitForSeconds(0.08f);
             if (line) line.enabled = false;
             yield return new WaitForSeconds(0.05f);

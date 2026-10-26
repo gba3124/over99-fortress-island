@@ -728,6 +728,49 @@ namespace HtfFortress.Headless
                 .Select(m => m.Groups[1].Value).Distinct().ToList();
             var unseen = sent.Where(k => !looks.Contains($"case \"{k}\"")).ToList();
             Check(sent.Count >= 90 && unseen.Count == 0, $"{sent.Count} boss effects sent, with no look: {string.Join(", ", unseen)}");
+            // Every boss has a voice and a sound on the move, and every boss move makes a sound, in its own case or in what
+            // that calls, two deep (Owen: 「怪物沒有自己的叫聲 還有怪物本身招式或是他移動都沒聲音」).
+            var calls = Enum.GetValues(typeof(BossVoice.Call)).Cast<BossVoice.Call>().ToList();
+            foreach (var k in EnemyCatalog.BossOrder) Check(calls.All(c => BossVoice.Lines(k, c).Length > 0) && BossVoice.GaitOf(k) != null, $"{k}: a call or its sound on the move missing");
+            string lib = string.Concat(Sources.Where(f => Path.GetFileName(f).StartsWith("Boss")).Select(File.ReadAllText));
+            var bodies = new Dictionary<string, string>();
+            string Body(string name)
+            {
+                if (bodies.TryGetValue(name, out var known)) return known;
+                var all = "";
+                foreach (Match d in new Regex(@"\b(?:IEnumerator|void|bool)\s+" + name + @"\s*\([^;{]*\)\s*(=>|\{)").Matches(lib))
+                {
+                    int at = d.Groups[1].Index, i = at, depth = 0;
+                    if (d.Groups[1].Value == "=>") { all += lib.Substring(at, lib.IndexOf(';', at) - at); continue; }
+                    for (; i < lib.Length; i++) { if (lib[i] == '{') depth++; else if (lib[i] == '}' && --depth == 0) break; }
+                    all += lib.Substring(at, i - at);
+                }
+                return bodies[name] = all;
+            }
+            var noisy = new Regex(@"\b(?:BossAudio|BossVoice)\.|\b(?:Sound|SoundRandom|Rapid|Pitched)\(");
+            var named = new Regex(@"\b([A-Z][A-Za-z0-9]*)\(");
+            bool Heard(string code, int deep) => noisy.IsMatch(code) || deep > 0 && named.Matches(code).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().Any(n => Heard(Body(n), deep - 1));
+            string play = looks.Substring(looks.IndexOf("public static bool Play(BossFx host"));
+            play = play.Substring(0, play.IndexOf("default: return false;"));
+            var moves = new Regex(@"case ""([a-z]+\.[A-Za-z0-9]+)"":").Matches(play).Cast<Match>().ToList();
+            var silent = moves.Where((m, i) => !Heard(play.Substring(m.Index, (i + 1 < moves.Count ? moves[i + 1].Index : play.Length) - m.Index), 2)).Select(m => m.Groups[1].Value).ToList();
+            Check(moves.Count >= 85 && silent.Count == 0, $"{moves.Count} boss moves, silent: {string.Join(", ", silent)}");
+            // ... and every one of those sounds is a clip the game has (its list: BepInEx/fortress-sounds.txt, written in game).
+            string clipList = Path.Combine(Program.Game, "BepInEx/fortress-sounds.txt");
+            if (File.Exists(clipList))
+            {
+                var clips = new HashSet<string>(File.ReadAllLines(clipList).Select(l => l.Trim()));
+                bool Has(string prefix, int n) => n <= 0 ? clips.Contains(prefix) : Enumerable.Range(1, n).All(i => clips.Contains(prefix + i));
+                foreach (EnemyKind k in Enum.GetValues(typeof(EnemyKind)))
+                {
+                    foreach (var c in calls) foreach (var l in BossVoice.Lines(k, c)) Check(Has(l.Clip, l.N), $"{k} {c}: no clip {l.Clip} 1-{l.N}");
+                    if (BossVoice.GaitOf(k) is BossVoice.Gait g) Check(Has(g.Clip, g.N), $"{k} on the move: no clip {g.Clip} 1-{g.N}");
+                }
+                Check(Has(BossVoice.Splash, BossVoice.Splashes), "no splash clips");
+                foreach (Match m in new Regex(@"Pitched\(""([A-Za-z0-9_]+)"", (\d+)").Matches(lib))
+                    Check(Has(m.Groups[1].Value, int.Parse(m.Groups[2].Value)), $"a boss move: no clip {m.Groups[1].Value} 1-{m.Groups[2].Value}");
+            }
+            else Console.WriteLine("  (no fortress-sounds.txt: the boss sounds' clips unchecked)");
             // Their trophies: items 180-189 (after the game's 0-102 and the rocket and guns' 150-177, before the first weapons' 200-255), one each, worth more the later the boss.
             var ids = EnemyCatalog.BossOrder.Select(BossTrophies.IdOf).ToList();
             Check(ids.Distinct().Count() == 10 && ids.Min() == BossTrophies.FirstId && ids.Max() == BossTrophies.FirstId + 9, "trophy ids: " + string.Join(",", ids));

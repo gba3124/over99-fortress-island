@@ -315,7 +315,7 @@ namespace HtfFortress
                 BossFx.Instance.StartCoroutine(Grow(s, size, 0.12f));
                 Debris(p, 4, rock, 5f, 0.22f);
                 WeaponFx.Emit(WeaponFx.Dust, p + Vector3.up * 0.3f, 4, Vector3.up);
-                if (i % 3 == 0) Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, p, 0.5f);
+                if (i % 3 == 0) BossAudio.SoundRandom("ItemImpactHeavy_V", 1, 3, p, 0.5f);
                 if (every > 0f) yield return new WaitForSeconds(every);
             }
             yield return new WaitForSeconds(hold);

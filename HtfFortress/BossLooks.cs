@@ -263,9 +263,8 @@ namespace HtfFortress
             _born = Time.time;
             _me = GetComponent<Creature>();
             _grounded = Kind == EnemyKind.Warden || Kind == EnemyKind.Urchin || Kind == EnemyKind.Steed || Kind == EnemyKind.Stonefish;
-            if (Kind == EnemyKind.Warden) (_step, _steps, _stride, _stepVol) = ("SpidercrabWalk_V", 8, 2.2f, 0.8f);
-            if (Kind == EnemyKind.Stonefish) (_step, _steps, _stride, _stepVol) = ("Footstep_Sand_V", 5, 1.6f, 0.7f);
-            if (Kind == EnemyKind.Steed) (_step, _steps, _stride, _stepVol) = ("Footstep_Sand_V", 5, 3f, 0.8f);
+            _gait = BossVoice.GaitOf(Kind);
+            _growlAt = Time.time + Random.Range(12f, 18f); // (after its entrance)
             _steed = GetComponent<BossSteed>();
             if (_steed || GetComponent<BossEye>()) return; // a body of our own over the game's: it moves itself
             int i = 0;
@@ -317,9 +316,10 @@ namespace HtfFortress
         private Vector3 _center, _vel, _acc, _hitAxis = Vector3.right;
         private float _half, _size = 1f, _yaw, _yawRate, _squash, _squashVel, _fall, _hitTilt, _hitVel, _hitSum, _hitAt = -9f, _flashUntil, _freezeUntil, _top, _walked;
         private int _hp = int.MinValue;
-        private string _step;
-        private int _steps;
-        private float _stride, _stepVol;
+        private BossVoice.Gait? _gait;
+        private float _growlAt, _criedAt = -9f;
+        private static readonly Dictionary<EnemyKind, float> MinionStep = new Dictionary<EnemyKind, float>();
+        private int Id => _me ? _me.ObjectId : 0;
         private const float W = 16f, Damp = 0.32f, HitW = 30f;
         private static MaterialPropertyBlock _white;
 
@@ -386,10 +386,21 @@ namespace HtfFortress
                 if (_fall > 3.5f && above > -1f && above < 1.2f) Land(foot, _fall);
                 _fall = 0f;
             }
-            if (_step != null && !jumped && above < 0.6f && (_walked += step.Flat().magnitude) >= _stride)
+            // How it sounds on the move (BossVoice.GaitOf): feet on the ground (splashing in the surf), fins through the water,
+            // wings through the air. A swarm of minions shares a few steps between them.
+            if (_gait is BossVoice.Gait g && !jumped && _speed > 0.5f && (!g.Feet || above < 0.6f) && (_walked += step.Flat().magnitude) >= g.Stride)
             {
                 _walked = 0f;
-                Fx.SoundRandom(_step, 1, _steps, foot, _stepVol);
+                bool minion = BossVoice.Minion(Kind), due = !minion || !MinionStep.TryGetValue(Kind, out float next) || now >= next;
+                if (minion && due) MinionStep[Kind] = now + 0.3f;
+                bool wet = g.Feet && foot.y < WaterManager.GetWaterHeight(foot) + 0.2f;
+                if (due) BossAudio.Pitched(wet ? BossVoice.Splash : g.Clip, wet ? BossVoice.Splashes : g.N, g.Feet ? foot : mid, g.Vol, g.Pitch * Random.Range(0.94f, 1.06f));
+            }
+            // Now and then, while it's quiet, a growl of its own.
+            if (now >= _growlAt)
+            {
+                BossVoice.Say(transform, transform.position, Kind, Id, BossVoice.Call.Idle, Second);
+                _growlAt = now + Random.Range(7f, 13f);
             }
             Hurt(now, dt);
             if (!Frozen)
@@ -410,8 +421,8 @@ namespace HtfFortress
             if (Kind == EnemyKind.Eye || Kind == EnemyKind.Voxel || Kind == EnemyKind.Glitch || Kind == EnemyKind.Kraken || Kind == EnemyKind.Squadron) return; // they hover, or float in the surf
             _squashVel -= Mathf.Min(0.22f, impact * 0.016f) * W;
             float k = Mathf.Clamp01((impact - 3.5f) / 12f);
-            Fx.Sound(impact >= 8f ? "DeadPlayerImpactHard" : "DeadPlayerImpactMedium", at, Mathf.Lerp(0.5f, 0.9f, k), AudioDistance.Long);
-            if (impact >= 14f) Fx.SoundRandom("LavaWhaleLanding_0", 1, 3, at, 0.7f, AudioDistance.Long);
+            BossAudio.Sound(impact >= 8f ? "DeadPlayerImpactHard" : "DeadPlayerImpactMedium", at, Mathf.Lerp(0.5f, 0.9f, k), AudioDistance.Long);
+            if (impact >= 14f) BossAudio.SoundRandom("LavaWhaleLanding_0", 1, 3, at, 0.7f, AudioDistance.Long);
             BossVfx.Dust(at, _size * 0.8f, 3 + Mathf.RoundToInt(5f * k));
             BossMoves.Shake(at, Mathf.Lerp(0.08f, 0.45f, k));
         }
@@ -430,6 +441,7 @@ namespace HtfFortress
             _hitSum = 0f;
             _hitAt = now;
             Flash(0.05f + 0.04f * k);
+            if (k >= 0.8f && now - _criedAt >= 5f) { _criedAt = now; BossVoice.Say(transform, transform.position, Kind, Id, BossVoice.Call.Hurt, Second); } // a big hit: it cries out
             var cam = GameInfo.CurCamera;
             Vector3 away = cam ? (transform.position - cam.transform.position).Flat() : -transform.forward.Flat();
             if (away.sqrMagnitude > 1e-4f) _hitAxis = Vector3.Cross(Vector3.up, away.normalized);
