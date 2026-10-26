@@ -526,7 +526,7 @@ namespace HtfFortress
             if (Time.time >= _nextTrample)
             {
                 _nextTrample = Time.time + 0.55f;
-                BuildSystem.Instance.ServerDamagePiece(wall.Id, Scaled(55f));
+                BuildSystem.Instance.ServerDamagePiece(wall.Id, ScaledPiece(55f));
                 Send("stomp", wall.Pos, wall.Pos);
             }
             yield return null;
@@ -730,6 +730,8 @@ namespace HtfFortress
 
         // Damage that grows with the wave, like the fish's bites.
         protected int Scaled(float baseDmg) => Mathf.Max(1, Mathf.RoundToInt(baseDmg * (1f + 0.06f * (Wave - 1))));
+        // On buildings it also keeps up with the towers' health late, like the fish's bites (Siege.Late).
+        protected int ScaledPiece(float baseDmg) => Mathf.Max(1, Mathf.RoundToInt(Scaled(baseDmg) * Siege.Late(Wave)));
 
         protected static IEnumerable<PieceState> Pieces => BuildSystem.Instance.ServerPieces;
 
@@ -738,7 +740,7 @@ namespace HtfFortress
         {
             int n = 0;
             if (pieceDmg > 0f)
-                foreach (var p in Pieces.Where(p => inside(p.Pos)).ToList()) { BuildSystem.Instance.ServerDamagePiece(p.Id, Scaled(pieceDmg)); n++; }
+                foreach (var p in Pieces.Where(p => inside(p.Pos)).ToList()) { BuildSystem.Instance.ServerDamagePiece(p.Id, ScaledPiece(pieceDmg)); n++; }
             if (coreDmg > 0f && inside(Core)) Siege.Instance.DamageCore(Scaled(coreDmg));
             if (playerDmg > 0f) HurtPlayers(inside, Scaled(playerDmg), from, knock);
             return n;
@@ -773,7 +775,7 @@ namespace HtfFortress
         // Like Hit, but each piece, player and the lighthouse at most once per `done` (a charge, a roll, a sweep).
         protected void HitOnce(HashSet<int> done, HashSet<Player> hurt, Func<Vector3, bool> inside, float pieceDmg, float playerDmg, float coreDmg, Vector3 from, float knock = 6f)
         {
-            foreach (var p in Pieces.Where(p => !done.Contains(p.Id) && inside(p.Pos)).ToList()) { done.Add(p.Id); BuildSystem.Instance.ServerDamagePiece(p.Id, Scaled(pieceDmg)); }
+            foreach (var p in Pieces.Where(p => !done.Contains(p.Id) && inside(p.Pos)).ToList()) { done.Add(p.Id); BuildSystem.Instance.ServerDamagePiece(p.Id, ScaledPiece(pieceDmg)); }
             if (coreDmg > 0f && !done.Contains(-1) && inside(Core)) { done.Add(-1); Siege.Instance.DamageCore(Scaled(coreDmg)); }
             foreach (var p in Targets.ToList())
                 if (!hurt.Contains(p) && inside(p.Transform.position))
@@ -886,7 +888,7 @@ namespace HtfFortress
             _hazards.RemoveAll(h => Time.time > h.until);
             foreach (var h in _hazards)
             {
-                if (h.piece > 0) foreach (var p in Pieces.Where(p => (p.Pos - h.at).Flat().sqrMagnitude <= h.r * h.r).ToList()) BuildSystem.Instance.ServerDamagePiece(p.Id, h.piece);
+                if (h.piece > 0) foreach (var p in Pieces.Where(p => (p.Pos - h.at).Flat().sqrMagnitude <= h.r * h.r).ToList()) BuildSystem.Instance.ServerDamagePiece(p.Id, Mathf.RoundToInt(h.piece * Siege.Late(Wave)));
                 if (h.player > 0) foreach (var p in Targets.ToList()) if ((p.Transform.position - h.at).Flat().sqrMagnitude <= h.r * h.r && Mathf.Abs(p.Transform.position.y - h.at.y) < 3f) Siege.HurtPlayer(p, h.player, Vector3.up);
             }
         }
@@ -912,7 +914,7 @@ namespace HtfFortress
         {
             if (Pos.y - GroundY(Pos) > Foot + 2.5f) return; // up in the air
             float r = Reach + 0.6f;
-            BuildSystem.Instance.ServerDamageArea(Pos, r, Mathf.RoundToInt((15 + Wave) * 0.5f));
+            BuildSystem.Instance.ServerDamageArea(Pos, r, Mathf.RoundToInt((15 + Wave) * 0.5f * Siege.Late(Wave)));
             if ((Core - Pos).Flat().magnitude < r + 2f) Siege.Instance.DamageCore(Mathf.RoundToInt((20 + Wave) * 0.5f));
         }
 

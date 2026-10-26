@@ -140,7 +140,7 @@ namespace HtfFortress
             foreach (var t in turrets)
             {
                 Bosses.Instance.Silence(t.Id, hold);
-                BuildSystem.Instance.ServerDamagePiece(t.Id, Scaled(35f));
+                BuildSystem.Instance.ServerDamagePiece(t.Id, ScaledPiece(35f));
                 Send("warden.chain", Pos, t.Pos, Mathf.RoundToInt(hold * 1000f), t.Id);
             }
             Shout("wardenChains");
@@ -222,7 +222,7 @@ namespace HtfFortress
             {
                 Vector3 dir = (goal - Pos).Flat().normalized;
                 var wall = WallAhead(dir);
-                if (wall != null) { BuildSystem.Instance.ServerDamagePiece(wall.Value.Id, Scaled(40f)); Send("stomp", wall.Value.Pos, wall.Value.Pos); v = 0f; yield return 0.5f; continue; }
+                if (wall != null) { BuildSystem.Instance.ServerDamagePiece(wall.Value.Id, ScaledPiece(40f)); Send("stomp", wall.Value.Pos, wall.Value.Pos); v = 0f; yield return 0.5f; continue; }
                 v = Mathf.MoveTowards(v, 4.5f, 8f * Time.deltaTime); // it gets rolling
                 RollTo(Stand(Pos + dir * v * SlowFactor * Time.deltaTime));
                 yield return null;
@@ -1277,7 +1277,7 @@ namespace HtfFortress
             foreach (var g in picks)
             {
                 Send("kraken.squeeze", g.at, s, 0, g.key);
-                if (g.piece != 0 && Pieces.Any(p => p.Id == g.piece)) BuildSystem.Instance.ServerDamagePiece(g.piece, Scaled(150f));
+                if (g.piece != 0 && Pieces.Any(p => p.Id == g.piece)) BuildSystem.Instance.ServerDamagePiece(g.piece, ScaledPiece(150f));
                 HurtPlayers(Circle(g.at, 2.2f), Scaled(26f), g.at + (g.at - s).Flat().normalized * 3f, 12f); // thrown from the land side: toward the sea
                 AutoTest.Count("kraken_twoarm");
             }
@@ -1386,7 +1386,7 @@ namespace HtfFortress
             {
                 Vector3 f = (to - c).Flat().normalized;
                 var inBox = Lane(c - f * half, c + f * half, half * 2f);
-                foreach (var p in Pieces.Where(p => inBox(p.Pos)).ToList()) BuildSystem.Instance.ServerDamagePiece(p.Id, Mathf.Max(Scaled(140f), Mathf.RoundToInt(p.MaxHp * 0.45f)));
+                foreach (var p in Pieces.Where(p => inBox(p.Pos)).ToList()) BuildSystem.Instance.ServerDamagePiece(p.Id, Mathf.Max(ScaledPiece(140f), Mathf.RoundToInt(p.MaxHp * 0.45f)));
                 if (inBox(Core)) Siege.Instance.DamageCore(Scaled(60f));
                 HurtPlayers(inBox, Mathf.Min(80, Scaled(25f)), c, 6f);
                 Send("voxel.delete", c, to, 0, Mathf.RoundToInt(half * 100f));

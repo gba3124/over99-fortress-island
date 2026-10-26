@@ -864,6 +864,12 @@ namespace HtfFortress
 
         private static void Halt(Rigidbody rig) => rig.linearVelocity = new Vector3(0f, rig.linearVelocity.y, 0f);
 
+        // Bites on buildings also keep up with the fish's health from wave 20 on (Owen: 怪打建築加上後期係數): towers grow
+        // x1.25 health a level, and a bite that grew only +8% a wave left a tower of the wave's level standing through 41 bites
+        // at wave 10 but 963 at wave 100. With this it's 55-90 from wave 20 on (x1 to 20, x3.2 at 50, x17 at 100). The
+        // lighthouse and players keep the plain bite: neither grows with the wave.
+        public static float Late(int wave) => Mathf.Pow(Mathf.Max(1f, FortressPlugin.HpMult(wave) / FortressPlugin.HpMult(20)), 0.6f);
+
         private void TryAttack(RunningFish fish, Collider wall, EnemyTag tag, EnemyStats stats)
         {
             if (!InstanceFinder.IsServerStarted) return;
@@ -875,9 +881,10 @@ namespace HtfFortress
             if (tag.Kind == EnemyKind.Bomber) { Explode(fish, dmg); return; }
             if (wall)
             {
-                BuildSystem.Instance.ServerDamage(wall, Mathf.RoundToInt(dmg * stats.WallMult));
+                int bite = Mathf.RoundToInt(dmg * stats.WallMult * Late(_server.Wave));
+                BuildSystem.Instance.ServerDamage(wall, bite);
                 AutoTest.Count("walker_hit_piece");
-                if (Perks.TeamLegend(Gear.Rebar)) { fish.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(dmg * stats.WallMult * 0.3f))); AutoTest.Count("legend_thorns"); Perks.Proc(Gear.Rebar, fish.transform.position); } // legendary: walls bite back
+                if (Perks.TeamLegend(Gear.Rebar)) { fish.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(bite * 0.3f))); AutoTest.Count("legend_thorns"); Perks.Proc(Gear.Rebar, fish.transform.position); } // legendary: walls bite back
             }
             else { DamageCore(Mathf.Max(1, dmg / 2)); AutoTest.Count("walker_hit_core"); } // the lighthouse is sturdier than a wall
         }
@@ -979,7 +986,7 @@ namespace HtfFortress
             Vector3 at = fish.transform.position + Vector3.up * 0.5f;
             if (atBuilding)
             {
-                BuildSystem.Instance.ServerDamageArea(at, 3.5f, dmg);
+                BuildSystem.Instance.ServerDamageArea(at, 3.5f, Mathf.RoundToInt(dmg * Late(_server.Wave)));
                 if ((at - _server.CorePos).sqrMagnitude < 4.5f * 4.5f) DamageCore(dmg / 2);
             }
             HurtPlayersAround(at, 3.5f, PlayerDamage(35));
@@ -1045,7 +1052,7 @@ namespace HtfFortress
         {
             yield return new WaitForSeconds(Fx.SpitFlight);
             if (!_server.Active) yield break;
-            BuildSystem.Instance.ServerDamageArea(at, 1.6f, dmg);
+            BuildSystem.Instance.ServerDamageArea(at, 1.6f, Mathf.RoundToInt(dmg * Late(_server.Wave)));
             if ((at - _server.CorePos).sqrMagnitude < 2.5f * 2.5f) DamageCore(dmg);
             HurtPlayersAround(at, 2f, PlayerDamage(15));
         }
