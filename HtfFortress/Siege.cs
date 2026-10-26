@@ -183,7 +183,7 @@ namespace HtfFortress
         // Everything remembered about this round's fish.
         private void ClearFish()
         {
-            _walkers.Clear(); _nextAttack.Clear(); _progress.Clear(); _stuckTries.Clear(); _blockedSince.Clear(); _flank.Clear(); _slow.Clear(); _airborne.Clear(); _freezeNext.Clear();
+            _walkers.Clear(); _fuse.Clear(); _nextAttack.Clear(); _progress.Clear(); _stuckTries.Clear(); _blockedSince.Clear(); _flank.Clear(); _slow.Clear(); _airborne.Clear(); _freezeNext.Clear();
             _carry.Clear(); _nextHop.Clear(); _nextHeal.Clear(); _hidden.Clear(); _dug.Clear();
             _nextSpit.Clear(); _nextMove.Clear(); _spitterBorn.Clear(); _decoys.Clear(); _bubbled.Clear(); _reeled.Clear();
         }
@@ -345,7 +345,13 @@ namespace HtfFortress
             if (FortressPlugin.Showcase.Contains(fish)) { fish.Rig.isKinematic = true; return true; } // test gallery: stand still
             if (!_server.Active || !_walkers.Contains(fish)) return false;
             if (FortressPlugin.Frozen) { Halt(fish.Rig); return true; } // test key F11
-            if (fish.IsDead) { _walkers.Remove(fish); return false; }
+            if (fish.IsDead) { _walkers.Remove(fish); _fuse.Remove(fish); return false; }
+            if (_fuse.TryGetValue(fish, out var lit))
+            {
+                Halt(fish.Rig);
+                if (Time.time >= lit.at) { _fuse.Remove(fish); Explode(fish, lit.dmg, lit.building); }
+                return true;
+            }
             if (IsBubbled(fish) || _reeled.Contains(fish)) return true; // floating in a bubble, or on a hook line
             Enemies.Instance.TryGet(fish, out var tag);
             var stats = Enemies.StatsOf(tag);
@@ -426,7 +432,7 @@ namespace HtfFortress
             Player prey = Prey(pos, tag.Kind);
             if (prey && tag.Kind == EnemyKind.Bomber && (prey.Transform.position - pos).sqrMagnitude < 1.8f * 1.8f)
             {
-                Explode(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage), atBuilding: false);
+                Light(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage), atBuilding: false);
                 return true;
             }
             bool decoyed = DecoyNear(pos, out var duck);
@@ -447,7 +453,7 @@ namespace HtfFortress
             {
                 // Pecking at a rubber duck. A bomber blows itself up on it.
                 Halt(rig);
-                if (tag.Kind == EnemyKind.Bomber) Explode(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage), atBuilding: false);
+                if (tag.Kind == EnemyKind.Bomber) Light(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage), atBuilding: false);
                 AutoTest.Count("decoyed");
                 return true;
             }
@@ -892,7 +898,7 @@ namespace HtfFortress
             _nextAttack[fish] = Time.time + AttackInterval;
             _progress[fish] = (fish.transform.position, Time.time); // attacking counts as progress
             int dmg = Mathf.RoundToInt(WalkerDamage.Value * stats.Damage * (1f + 0.08f * Mathf.Max(0, _server.Wave - 1))); // hits harder each wave
-            if (tag.Kind == EnemyKind.Bomber) { Explode(fish, dmg); return; }
+            if (tag.Kind == EnemyKind.Bomber) { Light(fish, dmg); return; }
             if (wall)
             {
                 int bite = Mathf.RoundToInt(dmg * stats.WallMult * Late(_server.Wave));
@@ -995,6 +1001,18 @@ namespace HtfFortress
         // Bomber: blows up on whatever stopped it. On a wall or the lighthouse every piece (and the core) around takes it; on a
         // person or a decoy duck only the people round it do (Owen: 「塔和地板卡到人」: one that ran into a player on the fort
         // blew up the floor and the tower they stood by).
+        // It lights its fuse first: half a second of red flashing and hissing, standing still, so it can still be shot or
+        // walked away from (Owen's list: 自爆魚 0.5 秒引信). Killed meanwhile, it never goes off.
+        public const float FuseTime = 0.5f;
+        private readonly Dictionary<RunningFish, (float at, int dmg, bool building)> _fuse = new Dictionary<RunningFish, (float, int, bool)>();
+        private void Light(RunningFish fish, int dmg, bool atBuilding = true)
+        {
+            if (_fuse.ContainsKey(fish)) return;
+            _fuse[fish] = (Time.time + FuseTime, dmg, atBuilding);
+            Fx.Send(FxKind.Fuse, fish.transform.position, fish.transform.position, fish.ObjectId);
+            AutoTest.Count("bomber_lit");
+        }
+
         private void Explode(RunningFish fish, int dmg, bool atBuilding = true)
         {
             Vector3 at = fish.transform.position + Vector3.up * 0.5f;

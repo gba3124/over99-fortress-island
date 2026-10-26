@@ -27,7 +27,8 @@ namespace HtfFortress
         FinalBoss, // the last boss has just died: the short "the last boss falls" card (every client) // souls rising at the lighthouse after a settlement (drawn by Weapons)
         ChestOpen, // a chest opened: Arg the best rarity inside
         BossMusic, // a fortress boss fight: Arg 1 start, 0 stop
-        RoundEnd } // Arg 1 victory, 0 defeat: the full-screen end beat
+        RoundEnd, // Arg 1 victory, 0 defeat: the full-screen end beat
+        Fuse } // a bomber's fuse lit (Siege.FuseTime to go): PieceId the fish
 
     // Host -> everyone: a visual effect (and for Announce, a banner: Key = string key, Arg = number). Who = the player whose weapon did it.
     public struct FxEvent : IBroadcast { public FxKind Kind; public Vector3 From; public Vector3 To; public int PieceId; public string Key; public int Arg; public int Who; }
@@ -111,6 +112,13 @@ namespace HtfFortress
         {
             if (!MayPlay(prefix, Time.unscaledTime)) return;
             try { AudioManager.PlayRandomClipAt(prefix, min, max, at, true, dist, volume); } catch { }
+        }
+
+        // Rapid fire: the game's player holds every clip family back 0.1 s (AudioManager's minDelay), which left a 12-a-second
+        // gun sounding every second or third shot. These skip both holds; the callers keep their own beat and count.
+        public static void Rapid(string prefix, int min, int max, Vector3 at, float volume)
+        {
+            try { AudioManager.PlayRandomClipAt(prefix, min, max, at, true, AudioDistance.Medium, volume, 0f); } catch { }
         }
 
         // Every sound of ours goes through here: one clip (a random one's whole family) at most every SameGap, and at most
@@ -301,6 +309,7 @@ namespace HtfFortress
             if (e.Kind == FxKind.Absorb) { StartCoroutine(Swallow.View(e)); return; }
             if (e.Kind == FxKind.BossIntro) { Reveal.Instance.Boss((EnemyKind)e.Arg, e.To, e.From, e.PieceId); return; }
             if (e.Kind == FxKind.BossFx) { if (BossFx.Instance) BossFx.Instance.Play(e); return; }
+            if (e.Kind == FxKind.Fuse) { StartCoroutine(Fuse(e.PieceId, e.From)); return; }
             if (e.Arg > 0 && e.Kind != FxKind.Proc && e.Kind != FxKind.Decoy) { try { PlayerUI.AddDamageNumber(e.To + Vector3.up * 0.8f, e.Arg, false); } catch { } }
             if (!_tracer)
             {
@@ -326,7 +335,10 @@ namespace HtfFortress
             if (e.PieceId != 0 && e.Kind != FxKind.Scoop) AimTurret(e.PieceId, e.To); // for a scoop it's the body being netted
             switch (e.Kind)
             {
-                case FxKind.Tracer: StartCoroutine(Tracer(e.From, e.To, e.Key, TurretLevel(e.PieceId))); SoundRandom("SMGFireOutside_V", 1, 4, e.From, 0.35f); break;
+                case FxKind.Tracer:
+                    if (e.PieceId != 0) Rattling(e.PieceId, e.From, e.To);
+                    else StartCoroutine(Tracer(e.From, e.To, e.Key)); // a second barrel's fish: the rattle above is its sound
+                    break;
                 case FxKind.Cannonball: StartCoroutine(Arc(e.From, e.To, e.Key == "Cannon" ? _stone : _ball, (e.Key == "Cannon" ? 0.46f : 0.35f) * (1f + 0.035f * (TurretLevel(e.PieceId) - 1)), 0.35f, 1.5f, true, e.Key, TurretLevel(e.PieceId))); SoundRandom("ShotgunFireOutside_0", 1, 4, e.From, 0.8f); break;
                 case FxKind.Spit: StartCoroutine(Arc(e.From, e.To, _spit, 0.3f, SpitFlight, 6f, false)); SoundRandom("PiranhaVomit_V", 1, 3, e.From, 0.8f); break; // higher lob for the spitter
                 case FxKind.Blast:
@@ -422,6 +434,75 @@ namespace HtfFortress
             if (pool.Count < 200) pool.Push(go); else Destroy(go);
         }
 
+        // Machine-gun turrets rattle at a steady beat on every client. The host's tracer only says "still firing at X" every
+        // 0.15 s; a shot sound per tracer, through the game's 0.1 s hold, came out ragged (Owen: 「機關槍射擊的聲音跟節奏現在不像
+        // 機關槍」). The beat follows the turret's own fire rate, 8 to 14 rounds a second.
+        private sealed class Rattle { public Vector3 From, To; public float Until, Beat; public int Level; }
+        private readonly Dictionary<int, Rattle> _rattles = new Dictionary<int, Rattle>();
+        private const int AudibleRattles = 2; // the nearest ones: every turret on the island at once crackled
+
+        private void Rattling(int id, Vector3 from, Vector3 to)
+        {
+            if (!_rattles.TryGetValue(id, out var r))
+            {
+                r = new Rattle { Level = 1, Beat = 0.12f };
+                if (BuildSystem.Instance && BuildSystem.Instance.TryGetState(id, out var st))
+                {
+                    r.Level = st.Level;
+                    r.Beat = Mathf.Clamp(Catalog.Turret(st.Type, st.Level, st.Branch).Interval, 0.07f, 0.12f);
+                }
+                _rattles[id] = r;
+                StartCoroutine(RattleLoop(id, r));
+            }
+            r.From = from; r.To = to; r.Until = Time.time + 0.25f;
+        }
+
+        private IEnumerator RattleLoop(int id, Rattle r)
+        {
+            float next = Time.time;
+            while (Time.time < r.Until)
+            {
+                if (Time.time >= next)
+                {
+                    next += r.Beat;
+                    if (next < Time.time) next = Time.time + r.Beat; // after a hitch it carries on, it doesn't catch up
+                    StartCoroutine(Tracer(r.From, r.To + Random.insideUnitSphere * 0.25f, "Gun", r.Level));
+                    if (Audible(r)) Rapid("AssaultrifleFireOutside_0", 1, 4, r.From, 0.3f);
+                }
+                yield return null;
+            }
+            _rattles.Remove(id);
+        }
+
+        private bool Audible(Rattle r)
+        {
+            var cam = GameInfo.CurCamera;
+            if (!cam) return false;
+            Vector3 at = cam.transform.position;
+            float d = (r.From - at).sqrMagnitude;
+            int closer = 0;
+            foreach (var o in _rattles.Values)
+                if (o != r && (o.From - at).sqrMagnitude < d && ++closer >= AudibleRattles) return false;
+            return true;
+        }
+
+        // A lit bomber: it blinks red three times and its head spits sparks, hissing, until it goes off.
+        private IEnumerator Fuse(int fish, Vector3 at)
+        {
+            Sound("Ignite", at, 1f);
+            var red = new Color(1f, 0.15f, 0.1f);
+            float end = Time.time + Siege.FuseTime, blink = 0f;
+            while (Time.time < end)
+            {
+                var body = BossFx.BodyOf(fish);
+                if (!body) yield break; // shot before it went off
+                Vector3 top = body.position + Vector3.up * 0.7f;
+                if (Time.time >= blink) { blink = Time.time + Siege.FuseTime / 3f; BossVfx.Flash(top, 1.8f, red, 0.12f); }
+                WeaponFx.Emit(WeaponFx.Sparks("Gold"), top, 2, Vector3.up);
+                yield return null;
+            }
+        }
+
         private IEnumerator Tracer(Vector3 from, Vector3 to, string key = null, int level = 1)
         {
             float grow = 1f + 0.045f * (Mathf.Max(1, level) - 1);
@@ -432,7 +513,7 @@ namespace HtfFortress
             float w = (sniper ? 0.035f : gun ? 0.06f : 0.05f) * grow;
             go.transform.localScale = new Vector3(w, w, d.magnitude);
             // Sparks leave the muzzle; where it lands, a few chips fly back out of the fish (the gatling's hit look).
-            if (gun) { WeaponFx.Emit(WeaponFx.Sparks("Gold"), from, Mathf.RoundToInt(4 + level * 0.4f), d.normalized); WeaponFx.Emit(WeaponFx.Sparks("Gold"), to, 3, -d.normalized + Vector3.up * 0.5f); }
+            if (gun) { WeaponFx.Emit(WeaponFx.Sparks("Gold"), from, Mathf.RoundToInt(2 + level * 0.15f), d.normalized); WeaponFx.Emit(WeaponFx.Sparks("Gold"), to, 2, -d.normalized + Vector3.up * 0.5f); } // a dozen rounds a second now
             else if (sniper) { WeaponFx.Emit(WeaponFx.Sparks("Cyan"), from, Mathf.RoundToInt(6 + level * 0.5f), d.normalized); WeaponFx.Emit(WeaponFx.Sparks("Cyan"), to, 6, -d.normalized + Vector3.up * 0.5f); }
             yield return new WaitForSeconds(sniper ? 0.09f : 0.05f);
             Done(go);

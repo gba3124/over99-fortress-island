@@ -32,7 +32,7 @@ namespace HtfFortress
 
         // Expansions, priced in fish scales only (Owen: "倉庫格子的限制 只用魚鱗限制就好 不要用關卡 然後就合適的量" --
         // no wave requirement any more, the scales are the gate): team slots 5-8, personal slots 3-4, the vault
-        // 30 -> 130 slots (a slot holds up to 50 of one thing). Priced against what dismantling brings in (a 30-wave run
+        // 60 -> 210 slots (a slot holds up to 50 of one thing). Priced against what dismantling brings in (a 30-wave run
         // drops about 70 pieces; dismantling the spares is roughly 60-100 scales): the first steps come within a run or
         // two, the last team slot is a long-term goal next to legendary enhancing (15-90 a level). The second number stays
         // in the tuple (the format the vault, the shop and the tests share) but is 0 = no wave needed.
@@ -40,7 +40,7 @@ namespace HtfFortress
         public static readonly (int scales, int best)[] PersonalSlotPrices = { (60, 0), (180, 0) };
         public static readonly (int scales, int best)[] StoragePrices =
             { (20, 0), (30, 0), (45, 0), (60, 0), (80, 0), (100, 0), (125, 0), (150, 0), (180, 0), (220, 0) };
-        public const int StorageBase = 40, StorageStep = 15, Stack = 50;
+        public const int StorageBase = 60, StorageStep = 15, Stack = 50;
 
         public static (int scales, int best)[] PricesOf(Expansion e) =>
             e == Expansion.TeamSlot ? TeamSlotPrices : e == Expansion.PersonalSlot ? PersonalSlotPrices : StoragePrices;
@@ -125,6 +125,13 @@ namespace HtfFortress
         // Active gear has none: each one is used up (Actives).
         public static float Cooldown(Gear g, Rarity r) => IsWeapon(g) ? WeaponCooldowns[g - Gear.Laser][(int)r] : 0f;
 
+        // Weapons with a magazine (Owen: 「這些武器會有換子彈的需求嗎？」, then all of a / b / c): shots before a reload. Inside
+        // one they come twice as fast; the reload takes the rest, so a magazine's shots take as long as they did one cooldown
+        // at a time: the same damage a second as before (nothing retuned), only in bursts. R reloads early.
+        public static int Magazine(Gear g) => g == Gear.Rocket ? 3 : g == Gear.BubbleGun ? 5 : g == Gear.StarThrower ? 6 : 0;
+        public const float InMagazine = 0.5f;
+        public static float ReloadTime(Gear g, float cooldown) => cooldown * (Magazine(g) - (Magazine(g) - 1) * InMagazine);
+
         // The same kind worn twice or more adds up (Owen: "同一件裝備可以疊", the playtest: "想坦我就穿三個鯊魚衣"): a cut
         // (damage taken, prices, the frost's slow) multiplies down so it never reaches all of it, the lucky charm adds its
         // extra chance (two legendaries: x5, not x9), the rest add. 0 when none is worn.
@@ -163,7 +170,9 @@ namespace HtfFortress
         public static string Name(Gear g) => L10n.T("gear" + g);
         public static string Effect(Gear g, Rarity r) => Effect(g, r, Value(g, r));
         public static string Effect(Gear g, Rarity r, float v, float cooldownMult = 1f) =>
-            L10n.T("gearFx" + g, FormatValue(g, v)) + (Cooldown(g, r) > 0f ? "<size=85%><color=#9aa4b0>　" + L10n.T("cooldown", (Cooldown(g, r) * cooldownMult).ToString("0.#")) + "</color></size>" : "");
+            L10n.T("gearFx" + g, FormatValue(g, v)) + (Cooldown(g, r) > 0f ? "<size=85%><color=#9aa4b0>　" + (Magazine(g) > 0
+                ? L10n.T("magazine", Magazine(g), (ReloadTime(g, Cooldown(g, r)) * cooldownMult).ToString("0.#"))
+                : L10n.T("cooldown", (Cooldown(g, r) * cooldownMult).ToString("0.#"))) + "</color></size>" : "");
         public static string RarityName(Rarity r) => L10n.T("rarity" + r);
         public static Color Color(Rarity r) => r == Rarity.Legendary ? new Color(1f, 0.71f, 0.18f) : r == Rarity.Epic ? new Color(0.71f, 0.36f, 1f) : r == Rarity.Rare ? new Color(0.29f, 0.64f, 1f) : new Color(0.91f, 0.91f, 0.91f);
         public static string Hex(Rarity r) => ColorUtility.ToHtmlStringRGB(Color(r));

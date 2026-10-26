@@ -13,6 +13,8 @@ namespace HtfFortress
     {
         public const int BranchLevel = 3;          // the last level in the tables; turrets choose A or B reaching it
         public const int SecondBranchLevel = BranchLevel + 6; // Lv9: six upgrades after the Lv3 branch, then A/B splits again (four kinds a turret)
+        public const int OverdriveLevel = 20;      // a turret that shoots also blows up the fish round it every few seconds (Turrets.Nova)
+        public static float NovaRadius(float range) => 9f + range * 0.25f;
         public static int FirstOf(int branch) => branch <= 2 ? branch : branch <= 4 ? 1 : 2;   // old saves: 1/2 are first-only
         public static int SecondOf(int branch) => branch <= 2 ? 0 : (branch == 3 || branch == 5) ? 1 : 2; // 3/5 = first side, 4/6 = second
         public static int BranchCode(int first, int second) => first == 1 ? (second == 1 ? 3 : 4) : (second == 1 ? 5 : 6);
@@ -20,7 +22,10 @@ namespace HtfFortress
         public static string BranchName(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch));
         public static string BranchDesc(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch) + "_d");
         public const float BeyondDamage = 1.3f, BeyondHp = 1.25f, BeyondCost = 1.35f, BeyondRange = 0.4f, BeyondRangeMax = 4f;
-        public const float MendCore = 0.5f; // a repair tower gives the lighthouse this share of what it gives a building
+        // A repair tower gives a building a share of the building's own health a second (two over one building: only the stronger,
+        // Turrets.Mend), and the lighthouse a quarter of that share (Owen 2026-10-26: two repair towers and he never had to
+        // look at a tower's health; it used to be a flat amount growing ×1.3 a level, stacking, the lighthouse half of it).
+        public const float MendCore = 0.25f, BeyondHeal = 1.03f;
 
         public static bool IsTurret(PieceType t) => (t >= PieceType.Gun && t <= PieceType.Tesla) || t >= PieceType.Flame;
         public static bool NeedsBlueprint(PieceType t) => t >= PieceType.Flame && t != PieceType.Mender;
@@ -209,6 +214,7 @@ namespace HtfFortress
             public int Chain, Shots, Targets; public bool Pierce; public float Slow, SlowTime, Burn;
             public float BossMult, WaterMult;
             public float Cone, Shield; // flamethrower half-angle; bubble damage reduction
+            public float Heal, CoreMend; // repair tower: share of a building's health a second; the lighthouse's share of that
         }
 
         // Branch 1 = A, 2 = B (chosen when upgrading to Lv3).
@@ -216,11 +222,12 @@ namespace HtfFortress
         {
             int first = FirstOf(branch), second = SecondOf(branch);
             var s = TableTurret(t, level, first);
-            if (second > 0) SecondSplit(t, first, second, s);
+            if (second > 0) SecondSplit(t, first, second, ref s); // by ref: from 0.2.9 a copy took the split and was dropped
             if (Beyond(level) == 0) return s;
             float k = Grow(BeyondDamage, level);
             s.Damage = Mathf.RoundToInt(Mathf.Min(1e8f, s.Damage * k));
-            s.Interval = Mathf.Max(0.05f, s.Interval * Mathf.Pow(0.96f, Beyond(level))); // every level also fires faster
+            if (t != PieceType.Mender) s.Interval = Mathf.Max(0.05f, s.Interval * Mathf.Pow(0.96f, Beyond(level))); // every level also fires faster
+            s.Heal *= Grow(BeyondHeal, level);
             s.Burn *= k;
             s.Range += Mathf.Min(BeyondRangeMax, BeyondRange * Beyond(level));
             if (t == PieceType.Bubble) s.Shield = Mathf.Min(0.85f, s.Shield + 0.025f * Beyond(level));
@@ -284,10 +291,11 @@ namespace HtfFortress
                     if (first == 1) s.Range += 4f;                         // Expanse
                     if (first == 2) s.Shield = 0.65f;                      // Hardened
                     break;
-                case PieceType.Mender: // no attack: once a second every damaged building within Range gets Damage health back, the lighthouse MendCore of it
-                    s.Damage = new[] { 5, 8, 12 }[i]; s.Interval = 1f; s.Range = new[] { 7f, 8f, 9f }[i];
+                case PieceType.Mender: // no attack: every damaged building within Range gets Heal of its health back a second
+                    s.Damage = 0; s.Interval = 1f; s.Range = new[] { 7f, 8f, 9f }[i];
+                    s.Heal = new[] { 0.008f, 0.01f, 0.012f }[i]; s.CoreMend = MendCore;
                     if (first == 1) s.Range += 4f;                         // Wide
-                    if (first == 2) s.Damage *= 2;                         // Surge
+                    if (first == 2) s.Heal *= 1.6f;                        // Surge
                     break;
                 case PieceType.Tesla:
                     s.Damage = new[] { 14, 22, 33 }[i]; s.Interval = new[] { 1.2f, 1f, 0.85f }[i]; s.Range = new[] { 11f, 13f, 15f }[i];
@@ -301,7 +309,7 @@ namespace HtfFortress
 
         // The Lv6 split continues its own Lv3 choice (Owen: "沿著第一個選擇延伸，每個要夠獨特"): A1/A2 only along A,
         // B1/B2 only along B, each with its own name and effect.
-        private static void SecondSplit(PieceType t, int first, int second, TurretStats s)
+        private static void SecondSplit(PieceType t, int first, int second, ref TurretStats s)
         {
             switch (t)
             {
@@ -338,8 +346,8 @@ namespace HtfFortress
                     else { if (second == 1) { s.Shield = Mathf.Min(0.9f, s.Shield + 0.2f); } else { s.Range += 2f; s.Shield = Mathf.Min(0.9f, s.Shield + 0.1f); } }
                     break;
                 case PieceType.Mender:
-                    if (first == 1) { if (second == 1) { s.Range += 4f; s.Damage = Mathf.RoundToInt(s.Damage * 1.3f); } else { s.Range += 2f; s.Damage = Mathf.RoundToInt(s.Damage * 1.5f); } }
-                    else { if (second == 1) { s.Damage = Mathf.RoundToInt(s.Damage * 1.6f); } else { s.Range += 2f; s.Interval *= 0.8f; } }
+                    if (first == 1) { if (second == 1) { s.Range += 4f; s.Heal *= 1.3f; } else { s.Range += 2f; s.Heal *= 1.5f; s.CoreMend *= 3f; } } // grand / core mender
+                    else { if (second == 1) { s.Heal *= 1.4f; } else { s.Range += 2f; s.Interval *= 0.8f; } }                                   // overheal / cleanse
                     break;
             }
         }

@@ -264,7 +264,7 @@ namespace HtfFortress.Headless
             // Expansions: they cost scales, wait for the record, add a slot each, stop at the top, survive a save.
             {
                 var e = new VaultData { Scales = 3000, Best = 0 };
-                Check(e.SlotsOf(0) == 4 && e.SlotsOf(1) == 2 && e.StorageSlots == 40, "starting slots and room");
+                Check(e.SlotsOf(0) == 4 && e.SlotsOf(1) == 2 && e.StorageSlots == 60, "starting slots and room");
                 Check(!e.Apply(VaultAction.Expand, default, default, 3, 1), "an expansion that isn't one (the old weapon rack) is refused");
                 // Expansions are gated by scales only now (Owen: "倉庫格子的限制 只用魚鱗限制就好 不要用關卡"): no record needed.
                 int bought = 0;
@@ -272,19 +272,19 @@ namespace HtfFortress.Headless
                 Check(bought == 6 && e.SlotsOf(0) == 10, $"team slots: bought {bought}, now {e.SlotsOf(0)} (expect 6 more, 10)");
                 Check(e.Scales == 3000 - GearCatalog.TeamSlotPrices.Sum(p => p.scales), "team slots charged their price");
                 e.Scales = 10;
-                Check(!e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 40, "storage bought without the scales");
+                Check(!e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 60, "storage bought without the scales");
                 e.Scales = 1000;
-                Check(e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 55, "storage +15 slots");
+                Check(e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 75, "storage +15 slots");
                 var e2 = VaultData.Read(e.Write());
-                Check(e2.SlotsOf(0) == 10 && e2.StorageSlots == 55, "expansions lost in a save");
+                Check(e2.SlotsOf(0) == 10 && e2.StorageSlots == 75, "expansions lost in a save");
                 foreach (Expansion x in Enum.GetValues(typeof(Expansion)))
                 {
                     var prices = GearCatalog.PricesOf(x);
                     for (int i = 1; i < prices.Length; i++) Check(prices[i].scales > prices[i - 1].scales && prices[i].best >= prices[i - 1].best, $"{x} step {i + 1} isn't dearer");
                 }
-                // The vault: scales only, no wave gate, up to 130 slots.
+                // The vault: scales only, no wave gate, 60 up to 210 slots (Owen's list: base 40 -> 60).
                 var sp = GearCatalog.StoragePrices;
-                Check(sp.All(p => p.best == 0) && GearCatalog.StorageBase + GearCatalog.StorageStep * sp.Length == 190,
+                Check(sp.All(p => p.best == 0) && GearCatalog.StorageBase + GearCatalog.StorageStep * sp.Length == 210,
                       "vault steps: " + string.Join(", ", sp.Select(p => $"{p.scales}@{p.best}")));
                 // Equipping into a bought slot works; one past it doesn't.
                 var f = new VaultData { Scales = 1000, Best = 100 };
@@ -337,9 +337,10 @@ namespace HtfFortress.Headless
                 Check(st.SlotsUsed == 1, "50 lasers still one slot");
                 st.Add(Gear.Laser, Rarity.Common, 1);
                 Check(st.SlotsUsed == 1, "51 lasers stay in their one (gear, rarity) slot; stars are sub-stacks");
-                int gi = 0;
-                while (st.SlotsUsed < st.StorageSlots) st.Add(GearCatalog.All[gi++ % GearCatalog.All.Length], Rarity.Common, 1);
-                Check(st.VaultFull && st.Fits(Gear.Laser, Rarity.Common) && !st.Fits(Gear.Scope, Rarity.Rare),
+                // 43 kinds: commons alone no longer fill 60 slots (this looped till the counter overflowed), so the colours go round too.
+                int n = GearCatalog.All.Length;
+                for (int gi = 0; st.SlotsUsed < st.StorageSlots && gi < 3 * n; gi++) st.Add(GearCatalog.All[gi % n], (Rarity)(gi / n), 1);
+                Check(st.VaultFull && st.Fits(Gear.Laser, Rarity.Common) && !st.Fits(Gear.Scope, Rarity.Legendary),
                       $"full vault ({st.SlotsUsed}/{st.StorageSlots}): only an existing group or a free slot takes more");
                 var fish = new StoredItem { Dead = true, Saved = new SavedItem { Exists = true, ItemID = 37, Weight = 1.734f, Cookness = 0.25f, BettingMultiplier = 1f, KillScoreMultiplier = 1.5f, SkinIndex = 2, IsDripCreature = true } };
                 var gun = new StoredItem { Saved = new SavedItem { Exists = true, ItemID = 12, Weight = 1f, Sight = 3, AmmoType = 1, ExtendedMag = true, LaserSight = true, Sharpness = 0, Quiver = 0, BarrelAttachment = 2 } };
@@ -495,7 +496,7 @@ namespace HtfFortress.Headless
 
         // ---------- buildings ----------
 
-        private static float Dps(Catalog.TurretStats s) => s.Interval > 0f ? s.Damage * s.Shots / s.Interval : 0f;
+        private static float Dps(Catalog.TurretStats s) => s.Interval > 0f ? (s.Heal > 0f ? s.Heal * 1e4f : s.Damage * s.Shots) / s.Interval : 0f; // a repair tower: its heal
 
         private static void Buildings()
         {
@@ -553,9 +554,31 @@ namespace HtfFortress.Headless
             var v = new VaultData();
             Check(all.Count(v.CanBuild) == 10, "10 pieces buildable without blueprints (the repair tower among them)");
             var mend = Catalog.Turret(PieceType.Mender, 1, 0);
-            Check(!Catalog.Shoots(PieceType.Mender) && !Catalog.Shoots(PieceType.Bubble) && Catalog.Shoots(PieceType.Gun) && mend.Damage > 0 && mend.Range > 0f
-                  && Catalog.Turret(PieceType.Mender, 3, 1).Range > Catalog.Turret(PieceType.Mender, 3, 2).Range && Catalog.Turret(PieceType.Mender, 3, 2).Damage > Catalog.Turret(PieceType.Mender, 3, 1).Damage,
+            Check(!Catalog.Shoots(PieceType.Mender) && !Catalog.Shoots(PieceType.Bubble) && Catalog.Shoots(PieceType.Gun) && mend.Heal > 0f && mend.Range > 0f
+                  && Catalog.Turret(PieceType.Mender, 3, 1).Range > Catalog.Turret(PieceType.Mender, 3, 2).Range && Catalog.Turret(PieceType.Mender, 3, 2).Heal > Catalog.Turret(PieceType.Mender, 3, 1).Heal,
                   "repair tower: heals, doesn't shoot; A reaches further, B heals more");
+            // Owen 2026-10-26: two repair towers and towers never needed looking after. Now a share of the building's own health
+            // a second that grows slowly with levels, whatever the branch.
+            for (int br = 0; br <= 6; br++)
+            {
+                var m3 = Catalog.Turret(PieceType.Mender, 3, br); var m25 = Catalog.Turret(PieceType.Mender, 25, br);
+                float r3 = m3.Heal / m3.Interval, r25 = m25.Heal / m25.Interval;
+                Check(r3 > 0.005f && r25 > r3 && r25 < 0.06f && m25.CoreMend * r25 < 0.03f, $"repair tower branch {br}: {r3 * 100:0.0}%/s at Lv3, {r25 * 100:0.0}%/s at Lv25 (under 6%), lighthouse {m25.CoreMend * r25 * 100:0.0}%/s");
+            }
+            Check(Catalog.Turret(PieceType.Mender, 9, 4).CoreMend > Catalog.Turret(PieceType.Mender, 9, 3).CoreMend * 2.5f, "the core mender mends the lighthouse three times as much");
+            Check(Catalog.Turret(PieceType.Mender, 9, 6).Interval < Catalog.Turret(PieceType.Mender, 9, 5).Interval, "cleanse mends more often");
+            // The Lv9 split must change something (from 0.2.9 to 0.3.0 it was applied to a copy and dropped: every split did nothing).
+            foreach (var t in all.Where(Catalog.HasSecondBranch))
+                for (int b = 3; b <= 6; b++)
+                    Check(!Catalog.Turret(t, 9, b).Equals(Catalog.Turret(t, 9, Catalog.FirstOf(b))), $"{t} split {Catalog.BranchKey(t, b)} changes nothing");
+            if (Environment.GetEnvironmentVariable("SPLIT_TABLE") == "1")
+                foreach (var t in all.Where(Catalog.Shoots))
+                    for (int b = 3; b <= 6; b++)
+                    {
+                        float Tot(Catalog.TurretStats x) => Dps(x) * x.Targets;
+                        var was = Catalog.Turret(t, 12, Catalog.FirstOf(b)); var now = Catalog.Turret(t, 12, b);
+                        Console.WriteLine($"  split {Catalog.BranchKey(t, b),-10} Lv12 dps {Tot(was),9:0} -> {Tot(now),9:0} (x{Tot(now) / Tot(was):0.00})");
+                    }
             v.Unlocked.Add(PieceType.Bubble);
             Check(v.CanBuild(PieceType.Bubble) && !v.CanBuild(PieceType.Sniper), "a blueprint unlocks just its turret");
             // Every turret's art (art pass 5, tools/t5_<turret>.py): a static plinth, a turntable, seven class heads, the
@@ -819,7 +842,15 @@ namespace HtfFortress.Headless
                 Check(g == Gear.Laser || g == Gear.WaterCannon || g == Gear.Boomerang || g == Gear.Gatling || GearCatalog.IsGameGun(g) || GearCatalog.Cooldown(g, Rarity.Common) > 0f, $"{g} fires with no cooldown"); // the laser heats up, the cannon's tank runs dry, the gatling spins up; the game's guns have their own rate
                 for (var r = Rarity.Rare; r <= Rarity.Legendary; r++)
                     Check(GearCatalog.Cooldown(g, r) <= GearCatalog.Cooldown(g, r - 1), $"{g}: {r} recharges slower than {r - 1}");
+                // A magazine's shots and its reload take what the same shots took one cooldown at a time (the same damage a second).
+                int mag = GearCatalog.Magazine(g);
+                foreach (var r in GearCatalog.Rarities)
+                {
+                    float cd = GearCatalog.Cooldown(g, r), cycle = (mag - 1) * cd * GearCatalog.InMagazine + GearCatalog.ReloadTime(g, cd);
+                    Check(mag == 0 || (Mathf.Abs(cycle - mag * cd) < 1e-3f && GearCatalog.ReloadTime(g, cd) > cd), $"{g} {r}: a magazine of {mag} cycles in {cycle:0.00}s, not {mag * cd:0.00}s");
+                }
             }
+            Check(GearCatalog.Magazine(Gear.Rocket) == 3 && GearCatalog.Magazine(Gear.Laser) == 0 && GearCatalog.Magazine(Gear.Gatling) == 0, "magazines: the rocket 3, the held streams none");
             Check(File.Exists(Model("Shark")), "no Shark.obj for the shark whistle");
             Check(File.Exists(Model("RocketShell")), "no RocketShell.obj for the rocket in flight");
             foreach (var g in weapons.Where(GearCatalog.IsGameGun))
@@ -1098,8 +1129,9 @@ namespace HtfFortress.Headless
                 Check(Math.Abs(v.WeaponValue(9, g, Rarity.Epic) - GearCatalog.Value(g, Rarity.Epic) * 1.3f) < 1e-4f && v.WeaponValue(8, g, Rarity.Epic) == GearCatalog.Value(g, Rarity.Epic), $"{g}: power isn't the shooter's own");
                 string fx = v.EffectFor(9, g, Rarity.Rare), shown = GearCatalog.FormatValue(g, v.WeaponValue(9, g, Rarity.Rare));
                 Check(fx.Contains(shown), $"{g}: card '{fx}' doesn't show {shown}");
-                if (GearCatalog.Cooldown(g, Rarity.Rare) > 0f)
-                    Check(fx.Contains((GearCatalog.Cooldown(g, Rarity.Rare) * WeaponMods.TimeMult(5)).ToString("0.#")), $"{g}: card '{fx}' doesn't show the faster cooldown");
+                float cd = GearCatalog.Cooldown(g, Rarity.Rare), shownCd = GearCatalog.Magazine(g) > 0 ? GearCatalog.ReloadTime(g, cd) : cd; // a magazine's card shows its reload
+                if (cd > 0f)
+                    Check(fx.Contains((shownCd * WeaponMods.TimeMult(5)).ToString("0.#")), $"{g}: card '{fx}' doesn't show the faster cooldown");
             }
             // "+N" on a tile, the hotbar and a name: a weapon's is that player's mods, gear's its enhancement (legendaries only).
             var pv = new VaultData();

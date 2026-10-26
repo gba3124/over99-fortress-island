@@ -336,6 +336,10 @@ namespace HtfFortress
         {
             if (!on) { _moveFromWalkUp = false; EndMove(); }
             _building = on;
+            // The repair towers' range crosses only while building (Owen's list: 只在建造模式顯示); out of it they cluttered the island.
+            foreach (var kv in _pieces)
+                if (kv.Value && _states.TryGetValue(kv.Key, out var ps) && ps.Type == PieceType.Mender && kv.Value.transform.Find("BubbleRing") is Transform ring)
+                    ring.gameObject.SetActive(on);
             if (on && Weapons.Drawn) Weapons.Instance.Holster(); // the hammer and a fortress weapon don't go together
             if (!on && _ghost) _ghost.SetActive(false);
             if (!on) HideCell();
@@ -682,7 +686,8 @@ namespace HtfFortress
             float r = Catalog.Turret(type, level, branch).Range;
             if (type == PieceType.Bubble) { BubbleShell.Make(ring, r); return; }
             // Repair tower: no soap dome or solid ring (it looked like a second bubble shield). Four broken green
-            // "repair cross" markers on the ground mark the reach instead.
+            // "repair cross" markers on the ground mark the reach instead, shown only while building (SetBuilding).
+            ring.gameObject.SetActive(Building);
             if (!_mendRimMat) _mendRimMat = BossVfx.Wash(new Color(0.36f, 1f, 0.52f, 0.55f));
             for (int k = 0; k < 4; k++)
             {
@@ -1096,8 +1101,8 @@ namespace HtfFortress
                 return L10n.T("lookSplit", Catalog.BranchName(s.Type, Catalog.BranchCode(first, 1)), Catalog.BranchName(s.Type, Catalog.BranchCode(first, 2))) + "　" + price;
             }
             string line = L10n.T("lookUpgrade", PieceMenu.Lv(s.Level + 1)) + "　" + price + "　";
-            if (Catalog.IsTurret(s.Type) && Catalog.Milestones(s.Level + 1) > Catalog.Milestones(s.Level))
-                return line + PieceMenu.Paint("· ★ " + L10n.T("lookPerk", PieceMenu.Perk(s.Type)), Hud.Gold);
+            if (PieceMenu.PerkAt(s.Type, s.Level + 1, s.Branch) is string perk)
+                return line + PieceMenu.Paint("· ★ " + L10n.T("lookPerk", perk), Hud.Gold);
             var rows = PieceMenu.Rows(s, s.Level + 1, s.Branch);
             var r = rows.Find(x => x.label == L10n.T("statDamage")); // damage where there is any, else the first number
             if (r.label == null) r = rows[0];
@@ -1196,8 +1201,8 @@ namespace HtfFortress
             string text = s.Branch != was.Branch && s.Branch > 0
                 ? L10n.T("toastBranch", name, PieceMenu.Chip(PieceMenu.Tag(s.Branch) + " " + Catalog.BranchName(s.Type, s.Branch), Hud.Accent, 85)) + "　" + lv
                 : L10n.T("toastUp", name, lv);
-            if (Catalog.IsTurret(s.Type) && Catalog.Milestones(s.Level) > Catalog.Milestones(was.Level))
-                text += "　" + PieceMenu.Paint("★ " + L10n.T("lookPerk", PieceMenu.Perk(s.Type)), Hud.Gold);
+            for (int l = s.Level; l > was.Level; l--)
+                if (PieceMenu.PerkAt(s.Type, l, s.Branch) is string perk) { text += "　" + PieceMenu.Paint("★ " + L10n.T("lookPerk", perk), Hud.Gold); break; }
             _toastText.fontSize = 22f;
             _toastText.text = text;
             Hud.ShowPicture(_toastPic, PieceMenu.PictureOf(s));
@@ -1428,18 +1433,16 @@ namespace HtfFortress
         }
 
         // Host: a repair tower's pulse: every damaged piece within `radius` but itself gets `hp` back. Returns where they are.
-        public List<Vector3> ServerMendArea(Vector3 at, float radius, int hp, int self)
+        // A repair tower's tick on one building: `share` of its own health back (Turrets.Mend picks the strongest tower).
+        public bool ServerMend(int id, float share, out Vector3 at)
         {
-            var hit = new List<Vector3>();
-            foreach (var p in _serverPieces.Values.Where(p => p.Id != self && p.Hp < p.MaxHp && (p.Pos - at).Flat().sqrMagnitude <= radius * radius).ToList())
-            {
-                var s = p;
-                s.Hp = Mathf.Min(s.MaxHp, s.Hp + hp);
-                _serverPieces[s.Id] = s;
-                InstanceFinder.ServerManager.Broadcast(s);
-                hit.Add(s.Pos);
-            }
-            return hit;
+            at = default;
+            if (!_serverPieces.TryGetValue(id, out var s) || s.Hp >= s.MaxHp) return false;
+            s.Hp = Mathf.Min(s.MaxHp, s.Hp + Mathf.Max(1, Mathf.CeilToInt(s.MaxHp * share)));
+            _serverPieces[id] = s;
+            InstanceFinder.ServerManager.Broadcast(s);
+            at = s.Pos;
+            return true;
         }
 
         // Pieces a walker has to break through (it walks over floors and ramps).

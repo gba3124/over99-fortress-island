@@ -73,7 +73,7 @@ namespace HtfFortress
         private static readonly Color Blue = new Color(0.26f, 0.42f, 0.78f), Green = new Color(0.22f, 0.55f, 0.36f),
                                       Red = new Color(0.62f, 0.2f, 0.16f), Slate = new Color(0.29f, 0.33f, 0.41f);
         private const float W = 900f, HeaderH = 152f, TrackH = 118f, NextH = 196f, ChoiceH = 40f + 304f, Gap = 14f, FooterH = 52f + 24f;
-        private const int TrackLevels = 15; // Lv1 to the last perk; a turret past it stands on the last stop
+        private const int TrackLevels = Catalog.OverdriveLevel; // Lv1 to the overdrive; a turret past it stands on the last stop
 
         private void Redraw(PieceState s)
         {
@@ -83,6 +83,7 @@ namespace HtfFortress
                 s.MaxHp = Catalog.MaxHp(s.Type, s.Level); s.Hp = Mathf.Min(s.Hp, s.MaxHp);
             }
             if (_panel) Destroy(_panel.gameObject);
+            Hud.ProbeGlyphs();
             bool turret = Catalog.IsTurret(s.Type);
             bool branching = Catalog.HasBranches(s.Type) && s.Level == Catalog.BranchLevel - 1;
             bool freeSplit = Catalog.HasSecondBranch(s.Type) && s.Level >= Catalog.SecondBranchLevel && s.Branch <= 2;
@@ -118,12 +119,12 @@ namespace HtfFortress
             Btn(p, new Vector2(1f, 1f), new Vector2(-20f, -20f), new Vector2(46f, 46f), new Color(0.165f, 0.19f, 0.23f), "×", true, Close, new Vector2(1f, 1f), 30f, Hud.Muted);
         }
 
-        // Lv1..Lv15 as a row of stops, the branch (Lv3), the second split (Lv9) and the perks (Lv5/10/15) marked, the ones
-        // behind lit, where it stands ringed; under it, the next two things it gets.
+        // Lv1..Lv20 as a row of stops, the branch (Lv3), the second split (Lv9), the perks (Lv5/10/15) and the overdrive (Lv20)
+        // marked, the ones behind lit, where it stands ringed; under it, the next two things it gets.
         private void Track(Transform p, PieceState s, float top)
         {
             var box = Hud.Box(p, TL, new Vector2(26f, -top), new Vector2(848f, TrackH), Hud.Raised, 16f, pivot: TL).transform;
-            const float x0 = 46f, dx = 54f, y = -48f;
+            const float x0 = 46f, dx = 756f / (TrackLevels - 1), y = -48f;
             int at = Mathf.Min(s.Level, TrackLevels);
             Hud.Box(box, TL, new Vector2(x0, y), new Vector2(dx * (TrackLevels - 1), 4f), new Color(1f, 1f, 1f, 0.12f), 2f, pivot: new Vector2(0f, 0.5f));
             if (at > 1) Hud.Box(box, TL, new Vector2(x0, y), new Vector2(dx * (at - 1), 4f), Hud.Accent, 2f, pivot: new Vector2(0f, 0.5f));
@@ -132,31 +133,32 @@ namespace HtfFortress
             for (int i = 1; i <= TrackLevels; i++)
             {
                 float x = x0 + (i - 1) * dx;
-                var kind = Stop(i);
+                var kind = Stop(s.Type, i);
                 bool past = i < at, now = i == at;
-                Color mark = kind == StopKind.Perk ? Hud.Gold : Hud.Accent;
+                Color mark = kind == StopKind.Overdrive ? Hud.Bad : kind == StopKind.Perk ? Hud.Gold : Hud.Accent;
                 if (now)
                 {
                     Dot(box, x, y, 26f, Hud.Gold); Dot(box, x, y, 20f, Hud.Raised); Dot(box, x, y, 10f, Hud.Gold);
                 }
-                else if (kind == StopKind.Perk) Hud.Label(box, "★", 23f, TL, new Vector2(x, y + 1f), new Vector2(32f, 32f), TextAlignmentOptions.Center, past ? mark : Fade(mark, 0.45f), pivot: Mid);
+                else if (kind == StopKind.Perk || kind == StopKind.Overdrive) Hud.Label(box, "★", 23f, TL, new Vector2(x, y + 1f), new Vector2(32f, 32f), TextAlignmentOptions.Center, past ? mark : Fade(mark, 0.45f), pivot: Mid);
                 else if (kind != StopKind.Level)
                 {
                     Diamond(box, x, y, past ? 14f : 16f, past ? mark : Fade(mark, 0.8f));
                     if (!past) Diamond(box, x, y, 11f, Hud.Raised);
                 }
                 else Dot(box, x, y, past ? 12f : 10f, past ? Hud.Accent : new Color(1f, 1f, 1f, 0.28f));
-                string word = now ? L10n.T("nodeNow") : kind == StopKind.Branch ? L10n.T("nodeBranch") : kind == StopKind.Split ? L10n.T("nodeSplit") : kind == StopKind.Perk ? L10n.T("nodePerk") : null;
-                if (word != null) Hud.Label(box, word, 14f, TL, new Vector2(x, y + 28f), new Vector2(58f, 20f), TextAlignmentOptions.Center, now ? Hud.Gold : past ? Hud.Muted : Fade(mark, 0.75f), now, pivot: Mid);
+                string word = now ? L10n.T("nodeNow") : kind == StopKind.Branch ? L10n.T("nodeBranch") : kind == StopKind.Split ? L10n.T("nodeSplit") : kind == StopKind.Perk ? L10n.T("nodePerk") : kind == StopKind.Overdrive ? L10n.T("nodeOverdrive") : null;
+                if (word != null) Hud.Label(box, word, 14f, TL, new Vector2(x, y + 28f), new Vector2(dx + 4f, 20f), TextAlignmentOptions.Center, now ? Hud.Gold : past ? Hud.Muted : Fade(mark, 0.75f), now, pivot: Mid);
                 string n = now ? s.Level.ToString() : i.ToString();
                 Hud.Label(box, n, now ? 14f : 13f, TL, new Vector2(x, y - 28f), new Vector2(44f, 18f), TextAlignmentOptions.Center, now ? Hud.Gold : past ? Hud.Muted : ahead, now, pivot: Mid);
             }
             Hud.Label(box, Upcoming(s), 15f, TL, new Vector2(14f, -90f), new Vector2(820f, 22f), TextAlignmentOptions.Left, Hud.Muted);
         }
 
-        private enum StopKind { Level, Branch, Split, Perk }
-        private static StopKind Stop(int level) =>
+        private enum StopKind { Level, Branch, Split, Perk, Overdrive }
+        private static StopKind Stop(PieceType t, int level) =>
             level == Catalog.BranchLevel ? StopKind.Branch : level == Catalog.SecondBranchLevel ? StopKind.Split
+            : level == Catalog.OverdriveLevel && Catalog.Shoots(t) ? StopKind.Overdrive
             : Catalog.Milestones(level) > Catalog.Milestones(level - 1) ? StopKind.Perk : StopKind.Level;
 
         // "Next: Lv9 second split: Typhoon or Hail　Lv10 perk: one more fish at a time"
@@ -165,14 +167,15 @@ namespace HtfFortress
             var next = new List<string>();
             int first = Catalog.FirstOf(s.Branch);
             for (int l = s.Level + 1; l <= TrackLevels && next.Count < 2; l++)
-                switch (Stop(l))
+                switch (Stop(s.Type, l))
                 {
                     case StopKind.Branch: next.Add(Paint(L10n.T("trackBranch", l, Catalog.BranchName(s.Type, 1), Catalog.BranchName(s.Type, 2)), Hud.Accent)); break;
                     case StopKind.Split:
                         next.Add(Paint(s.Branch > 0 ? L10n.T("trackSplit", l, Catalog.BranchName(s.Type, Catalog.BranchCode(first, 1)), Catalog.BranchName(s.Type, Catalog.BranchCode(first, 2)))
                                                     : L10n.T("trackSplitLater", l), Hud.Accent));
                         break;
-                    case StopKind.Perk: next.Add(Paint(L10n.T("trackPerk", l, Perk(s.Type)), Hud.Gold)); break;
+                    case StopKind.Perk: next.Add(Paint(L10n.T("trackPerk", l, PerkAt(s.Type, l, s.Branch)), Hud.Gold)); break;
+                    case StopKind.Overdrive: next.Add(Paint(L10n.T("trackPerk", l, PerkAt(s.Type, l, s.Branch)), Hud.Bad)); break;
                 }
             return next.Count > 0 ? L10n.T("trackNext", string.Join("　", next)) : L10n.T("trackDone");
         }
@@ -183,7 +186,7 @@ namespace HtfFortress
             var box = Hud.Box(p, TL, new Vector2(26f, -top), new Vector2(848f, NextH), Hud.Raised, 16f, pivot: TL).transform;
             int to = s.Level + 1;
             string rename = BuildSystem.PieceName(s.Type, to) != BuildSystem.PieceName(s.Type, s.Level) ? " " + BuildSystem.PieceName(s.Type, to) : ""; // wood -> stone -> iron
-            string perk = Catalog.IsTurret(s.Type) && Stop(to) == StopKind.Perk ? "　" + Paint("★ " + Perk(s.Type), Hud.Gold) : "";
+            string perk = PerkAt(s.Type, to, s.Branch) is string pk ? "　" + Paint("★ " + pk, Hud.Gold) : "";
             Hud.Label(box, L10n.T("menuNow"), 15f, TL, new Vector2(160f, -12f), new Vector2(140f, 22f), TextAlignmentOptions.Right, Hud.Muted);
             Hud.Label(box, Lv(to) + rename + perk, 15f, TL, new Vector2(380f, -12f), new Vector2(444f, 22f), TextAlignmentOptions.Left, Hud.Accent, bold: true);
             var rows = Rows(s, to, s.Branch);
@@ -289,7 +292,7 @@ namespace HtfFortress
                 }
                 else if (s.Type == PieceType.Mender)
                 {
-                    rows.Add((L10n.T("statHeal"), a.Damage + "/s", b.Damage + "/s"));
+                    rows.Add((L10n.T("statHeal"), (a.Heal / a.Interval * 100f).ToString("0.0") + "%/s", (b.Heal / b.Interval * 100f).ToString("0.0") + "%/s"));
                     rows.Add((L10n.T("statRadius"), a.Range.ToString("0"), b.Range.ToString("0")));
                 }
                 else
@@ -313,7 +316,12 @@ namespace HtfFortress
 
         internal static string Lv(int level) => L10n.T("lv", level);
         internal static string Tag(int branch) => (Catalog.FirstOf(branch) == 1 ? "A" : "B") + (branch > 2 ? Catalog.SecondOf(branch).ToString() : ""); // A, B2...
-        internal static string Perk(PieceType t) => L10n.T("milestone" + t).TrimStart('＋', '+', ' ');
+        // What a turret gets on reaching `level`: one more fish, shell... at Lv5/10/15 (Catalog.Milestones), and for one that
+        // shoots the overdrive at Lv20 (Turrets.Nova); null: nothing new there.
+        internal static string PerkAt(PieceType t, int level, int branch) =>
+            !Catalog.IsTurret(t) ? null
+            : level == Catalog.OverdriveLevel && Catalog.Shoots(t) ? L10n.T("perkOverdrive", Catalog.NovaRadius(Catalog.Turret(t, level, branch).Range).ToString("0"))
+            : Catalog.Milestones(level) > Catalog.Milestones(level - 1) ? L10n.T("milestone" + t) : null;
         internal static string Paint(string text, Color c) => $"<color={Hud.Hex(c)}>{text}</color>";
         // A tag on a tinted ground inside a line of text ("A Storm"), at `size` percent of the line's size.
         internal static string Chip(string text, Color c, int size) =>

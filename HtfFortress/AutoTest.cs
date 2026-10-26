@@ -1325,7 +1325,9 @@ namespace HtfFortress
             }
             // A full vault (every slot taken, and no part-filled stack of it): the next piece becomes scales.
             loot.Vault.Add(Gear.Incendiary, Rarity.Epic, -loot.Vault.Count(Gear.Incendiary, Rarity.Epic));
-            while (!loot.Vault.VaultFull) loot.ServerGive(Gear.Rebar, Rarity.Common, GearCatalog.Stack);
+            // A slot holds a whole (gear, colour) group, so it fills with different ones (more of one never filled it: a hang).
+            for (int i = 0, n = GearCatalog.All.Length; !loot.Vault.VaultFull && i < 4 * n; i++)
+                if (!(GearCatalog.All[i % n] == Gear.Incendiary && i / n == (int)Rarity.Epic)) loot.ServerGive(GearCatalog.All[i % n], (Rarity)(i / n), 1);
             int scales0 = loot.Vault.Scales;
             loot.DebugDrop(Gear.Incendiary, Rarity.Epic, me.Transform.position + Vector3.up);
             yield return new WaitForSecondsRealtime(1.5f);
@@ -3099,7 +3101,7 @@ namespace HtfFortress
                 float apart = near && far ? (far.transform.position - near.transform.position).magnitude : -1f;
                 Vector3 aim = ((near ? near.transform.position : mid) + Vector3.up * 0.5f - eye).normalized;
                 Weapons.Instance.ServerFire(me, new WeaponFire { Phase = 0, Origin = eye, Dir = aim });
-                yield return new WaitForSecondsRealtime(1.1f);
+                yield return new WaitForSecondsRealtime(0.7f); // inside the magazine a common's next rocket is 0.8 s off, 0.62 s with Lv5 rate
                 Weapons.Instance.ServerFire(me, new WeaponFire { Phase = 0, Origin = eye, Dir = aim });
                 yield return new WaitForSecondsRealtime(1.2f);
                 int n1 = near ? near._hp.Value : 0, f1 = far ? far._hp.Value : 0;
@@ -3319,7 +3321,7 @@ namespace HtfFortress
             FortressPlugin.Shot("mender");
             int wall1 = BuildSystem.Instance.ServerPieces.FirstOrDefault(p => p.Id == wall.Id).Hp;
             var ts = Catalog.Turret(PieceType.Mender, 1, 0);
-            Note($"repair tower placed {placed}, wall {wallPlaced} at {(wall.Pos - towerAt).Flat().magnitude:0.0} m: wall {wall0} -> {wall1}/{wall.MaxHp} (expect +{ts.Damage}/s), lighthouse {core0} -> {Siege.Instance.CoreHp} (expect +{ts.Damage * Catalog.MendCore:0.#}/s while within {ts.Range} m: it's {(core - towerAt).Flat().magnitude:0.0} m), pulses {C("mended") - mended0}");
+            Note($"repair tower placed {placed}, wall {wallPlaced} at {(wall.Pos - towerAt).Flat().magnitude:0.0} m: wall {wall0} -> {wall1}/{wall.MaxHp} (expect +{Mathf.CeilToInt(wall.MaxHp * ts.Heal)}/s), lighthouse {core0} -> {Siege.Instance.CoreHp} (expect +{Mathf.CeilToInt(Siege.Instance.CoreMax * ts.Heal * ts.CoreMend)}/s while within {ts.Range} m: it's {(core - towerAt).Flat().magnitude:0.0} m), pulses {C("mended") - mended0}");
 
             // Every kind of walker side by side (and an elite runner), each in its own build and colour.
             plugin.DebugKillAll();
