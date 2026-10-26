@@ -37,6 +37,8 @@ namespace HtfFortress
                 case "warden.swing": Sound("SpiderCrabSnip_V", 1, 3, a, 1f); break;
                 case "warden.chain": Run(Chain(e.PieceId, e.Who, b, secs)); Sound("MetallicItemImpact_V", 1, 3, b, 0.9f); break;
                 case "warden.shell": Run(Shell(e.PieceId, secs, c)); Sound("MetallicItemImpact_V", 1, 3, a, 1f); break;
+                case "warden.heat": Run(Charge(e.PieceId, secs, Fire)); Sound("SpiderCrabSnip_V", 1, 3, a, 1f); break;
+                case "warden.anvil": Anvil(a, b, size); break;
                 // ---- the urchin ----
                 case "urchin.land": BossVfx.Impact(a, Mathf.Max(2f, size * 0.8f), Pink, Sand); Shake(a, 0.5f); Sound("ItemImpactHeavy_V", 1, 3, a, 1f); break;
                 case "urchin.roll": Run(Roll(e.PieceId, secs)); Fx.Sound("PufferfishRoll", a, 1f, AudioDistance.Long); break;
@@ -44,11 +46,18 @@ namespace HtfFortress
                 case "urchin.spike": Run(Fly(a, b, BossVfx.Spike, BossVfx.Glow(Pink, 3f), new Vector3(1.4f, 1.4f, 1.6f), 0.45f, 4f, Pink, () => { BossVfx.Flash(b + Vector3.up * 0.3f, 0.8f, Pink, 0.2f); BossVfx.Debris(b, 4, Sand, 3f, 0.15f); })); break;
                 case "urchin.caltrop": Run(Caltrops(a, secs)); break;
                 case "urchin.bloom": Run(Bloom(a, size)); Sound("Slap_0", 1, 3, a, 1f); Sound("ItemImpactHeavy_V", 1, 3, a, 0.8f); break;
+                case "urchin.nova":
+                    Run(Bloom(a, size, 40, 0.9f));
+                    BossVfx.Flash(a + Vector3.up * 1.5f, size * 0.6f, Pink, 0.3f);
+                    BossVfx.Shock(a, size * 1.25f, Violet, 0.6f, 0.85f);
+                    Shake(a, 0.6f); Sound("Slap_0", 1, 3, a, 1f); Sound("ItemImpactHeavy_V", 1, 3, a, 1f); Fx.Sound("Pufferfish", a, 1f, AudioDistance.Long);
+                    break;
                 // ---- the anglerfish ----
                 case "angler.lure": Run(Lure(e.PieceId, secs)); Fx.Sound("RadarPing", a, 1f, AudioDistance.Long); break;
                 case "angler.flash": LureFlash(a); break;
                 case "angler.lunge": Fx.Sound("Swallow", a, 1f, AudioDistance.Long); Run(Trail(e.PieceId, secs, WeaponFx.Bubbles, 4)); WeaponFx.Game("WaterSplashWhite", a, Vector3.up); break;
                 case "angler.gulp": Fx.Sound("Eat_V" + Random.Range(1, 4), a, 1f); WeaponFx.Game("BloodSmall", a, Vector3.up); BossVfx.Flash(a + Vector3.up * 0.6f, 1f, Cyan, 0.15f); break;
+                case "angler.blackout": Run(Blackout(e.PieceId, secs)); Fx.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), a, 0.8f, AudioDistance.Long); break;
                 // ---- the steed ----
                 case "steed.splash": WeaponFx.Emit(WeaponFx.Foam, a, 3, Vector3.up); WeaponFx.Emit(WeaponFx.Drops, a, 4, Vector3.up); break;
                 case "steed.rear": Fx.Sound("BoatLandCollisionMedium_V" + Random.Range(1, 4), a, 1f, AudioDistance.Long); BossFx.Burst(a + Vector3.up * 3f, "Gold", 24, 0.14f); break;
@@ -62,6 +71,7 @@ namespace HtfFortress
                     break;
                 case "steed.phantom": Run(Phantom(e.PieceId, a, b, secs)); break;
                 case "steed.golden": Run(GoldenSpin(e.PieceId)); break;
+                case "steed.fissure": Run(Fissure(a, b, secs)); break;
                 // ---- the stonefish ----
                 case "stone.rise":
                     BossVfx.Spires(Circle(a, size + 1.2f, 9), 2.4f, Basalt, Venom, 1.2f, 0.02f);
@@ -77,12 +87,15 @@ namespace HtfFortress
                 case "stone.eyes": Run(Eyes(e.PieceId, secs, Venom)); break;
                 case "stone.gaze": Run(Gaze(a, b, e.Who)); Fx.Sound("Ignite", a, 1f, AudioDistance.Long); break;
                 case "stone.petrify": Run(Petrify(e.Who, a, b, secs)); break;
+                case "stone.vent": Run(Vent(a, secs)); break;
+                case "stone.geyser": Run(Geyser(a, size)); Fx.Sound("LavaEruption_01", a, 0.7f, AudioDistance.Long); Sound("PiranhaVomit_V", 1, 3, a, 0.8f); break;
                 // ---- the flying fish ----
                 case "sky.pass": Fx.Sound("PunchSwoosh", a, 1f, AudioDistance.Long); Shake(a, 0.3f); BossVfx.Shock(a, 6f, Color.white, 0.4f); break;
                 case "sky.bomb": Explode(a, 2.6f); break;
                 case "sky.call": Sound("Seagull_V", 1, 11, a, 1f); break;
                 case "sky.boom": Run(Boom(a, b, secs)); break;
                 case "sky.fall": Fx.Sound("AlbatrossScreamTakeDamage", a, 1f, AudioDistance.Long); Run(Smoke(e.PieceId, 0.8f)); break;
+                case "sky.ring": SonicRing(a, e.Arg / 100f, size); break;
                 // ---- the kraken ----
                 case "kraken.rise": Run(SeaBurst(a, secs)); break;
                 case "kraken.dive": WeaponFx.Game("WaterExplosionWhite", a, Vector3.up); BossVfx.Shock(a, 7f, Water, 0.6f); Fx.Sound("ItemHitWaterHeavy_V1", a, 1f, AudioDistance.Long); break;
@@ -90,6 +103,7 @@ namespace HtfFortress
                 case "kraken.sweep": Run(SweepFx(a, b, e.Who, Water)); break;
                 case "kraken.reach": Run(Reach(e.Who, a, b, secs)); break;
                 case "kraken.grab": Run(Dragged(e.Who, a, b)); break;
+                case "kraken.squeeze": Run(Squeeze(e.Who, a, b)); break;
                 case "kraken.ink": Run(Ink(a, size, secs)); break;
                 case "kraken.whirl": Run(Whirl(a, size, secs)); break;
                 // ---- the voxel fish ----
@@ -103,6 +117,7 @@ namespace HtfFortress
                 case "voxel.restored": Cubes(a, 70, true); BossVfx.Flash(a, 3f, new Color(0.4f, 0.8f, 1f), 0.3f); Fx.Sound("QuestFinished", a, 0.7f, AudioDistance.Long); break;
                 case "voxel.bolt": Run(Fly(a, b, WeaponFx.Cube, BossVfx.Glow(Random.value < 0.5f ? Pixel : Pink, 4f), Vector3.one * 0.5f, 0.35f, 1.2f, Pixel, () => { Cubes(b, 14, false); BossVfx.Shock(b, 2.5f, Pixel, 0.3f); })); break;
                 case "voxel.fatal": H.Overlay(OverlayKind.Glitch, secs); Fx.Sound("Error", a, 1f, AudioDistance.Long); Fx.Sound("RadioNoise_loop", a, 0.8f, AudioDistance.Long); break;
+                case "voxel.tile": Run(Tile(a, b, size, secs)); Fx.Sound("Error", a, 0.6f, AudioDistance.Long); break;
                 // ---- the koi ----
                 case "koi.gate": Run(Gate(a, secs)); break;
                 case "koi.jet": Run(Jet(a, b, secs, e.Who)); Fx.Sound("ItemHitWaterHeavy_V2", a, 1f, AudioDistance.Long); break;
@@ -118,6 +133,7 @@ namespace HtfFortress
                 case "koi.charge": Run(Charge(e.PieceId, secs, new Color(0.7f, 0.85f, 1f))); break;
                 case "koi.thunder": H.StartCoroutine(BossFx.Lightning(a, new Color(0.75f, 0.85f, 1f))); BossVfx.Impact(a, 2.6f, new Color(0.6f, 0.8f, 1f), Basalt); break;
                 case "koi.dragon": Run(Dragon(e.PieceId, secs)); break;
+                case "koi.flame": Run(FlameLine(a, b, secs)); Fx.Sound("Ignite", a, 0.9f, AudioDistance.Long); Fx.Sound("LavaEruption_01", b, 0.5f, AudioDistance.Long); break;
                 // ---- the eye ----
                 case "eye.descend": Run(Descend(a, secs)); break;
                 case "eye.red": H.RedSky(e.Arg > 0); if (BossEye.Of(e.PieceId) is BossEye raging) raging.Rage(e.Arg > 0); break;
@@ -132,8 +148,18 @@ namespace HtfFortress
                 case "eye.echo": BossVfx.Impact(a, size, Shadow, new Color(0.1f, 0.05f, 0.1f)); WeaponFx.Game("BlackConfetti", a, Vector3.up); Sound("ItemImpactHeavy_V", 1, 3, a, 0.8f); break;
                 case "eye.echoLane": Run(Streak(a, b, 0.5f, Shadow, 1.6f)); BossVfx.Impact(b, 2f, Shadow, new Color(0.1f, 0.05f, 0.1f)); break;
                 case "eye.echoCone": Run(SweepFx(a, b, e.Who, Shadow)); break;
-                case "eye.judgment": Run(Judgment(e.PieceId, a, b, secs)); break;
-                case "eye.verdict": Verdict(a); break;
+                case "eye.pupil":
+                    if (BossEye.Of(e.PieceId) is BossEye wide) wide.Flare(secs);
+                    Run(SecondPupil(e.PieceId, secs + 0.3f));
+                    Fx.Sound("LavaWhaleNoise_0" + Random.Range(1, 5), a, 1f, AudioDistance.Long);
+                    break;
+                case "eye.twin":
+                    if (BossEye.Of(e.PieceId) is BossEye twin) twin.Flare(secs);
+                    Run(SecondPupil(e.PieceId, secs));
+                    Run(Gaze(e.PieceId, a, b, secs, e.Who, true));
+                    break;
+                case "eye.judgment": Run(Judgment(e.PieceId, a, b, secs, size)); break;
+                case "eye.verdict": Verdict(a, size); break;
                 default: return false;
             }
             return true;
@@ -404,6 +430,20 @@ namespace HtfFortress
             Object.Destroy(mat);
         }
 
+        // The anvil: both claws down at once; iron spikes glowing at the tip burst up in a ring, a shock rolls out over the
+        // whole ring, sparks off the claws.
+        private static void Anvil(Vector3 at, Vector3 claws, float r)
+        {
+            BossVfx.Impact(claws, 2.4f, Fire, Sand);
+            BossVfx.Shock(at, r * 1.1f, Fire, 0.55f, 0.85f);
+            BossVfx.Shock(at, r * 0.75f, Sand, 0.45f);
+            BossVfx.Spires(Circle(at, r * 0.8f, 10), 1.4f, Iron, Fire, 0.6f, 0f);
+            BossFx.Burst(claws + Vector3.up * 0.8f, "Orange", 50, 0.16f);
+            BossVfx.Dust(at, r * 0.8f, 14);
+            Shake(at, 0.7f);
+            Sound("MetallicItemImpact_V", 1, 3, claws, 1f); Sound("ItemImpactHeavy_V", 1, 3, at, 1f);
+        }
+
         // ---------- the urchin ----------
 
         // Rolling: a furrow of marks and dust behind it, pink sparks off its spikes.
@@ -442,16 +482,17 @@ namespace HtfFortress
             foreach (var s in spikes) if (s) Object.Destroy(s.gameObject);
         }
 
-        // Every spike out at once: a crown of needles shooting out round it, a ring of shock, a flash of pink.
-        private static IEnumerator Bloom(Vector3 at, float radius)
+        // Every spike out at once: a crown of needles shooting out round it, a ring of shock, a flash of pink. (`n` needles
+        // rising up to `rise`: the nova's burst goes up as well as out.)
+        private static IEnumerator Bloom(Vector3 at, float radius, int n = 22, float rise = 0.35f)
         {
             BossVfx.Flash(at + Vector3.up * 1.5f, 3f, Pink, 0.25f);
             BossVfx.Shock(at, radius * 1.1f, Pink, 0.45f);
             var spikes = new List<(Transform t, Vector3 v)>();
             var mat = BossVfx.Glow(Pink, 3f);
-            for (int i = 0; i < 22; i++)
+            for (int i = 0; i < n; i++)
             {
-                Vector3 d = Quaternion.Euler(0f, i * 360f / 22f + Random.Range(-6f, 6f), 0f) * new Vector3(0f, Random.Range(0.05f, 0.35f), 1f).normalized;
+                Vector3 d = Quaternion.Euler(0f, i * 360f / n + Random.Range(-6f, 6f), 0f) * new Vector3(0f, Random.Range(0.05f, rise), 1f).normalized;
                 var s = WeaponFx.Piece(BossVfx.Spike, mat);
                 s.position = at + Vector3.up * 1.5f + d * 1.5f;
                 s.rotation = Quaternion.LookRotation(d);
@@ -520,6 +561,26 @@ namespace HtfFortress
             bool looking = to.magnitude < 45f && Vector3.Angle(cam.transform.forward, to) < 50f && !Physics.Linecast(cam.transform.position, at, GameInfo.LevelLayer);
             H.Overlay(looking ? OverlayKind.White : OverlayKind.Glint, looking ? 1.2f : 0.3f);
             Fx.Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), at, 1f, AudioDistance.Long);
+        }
+
+        // Blackout: its lantern and its own glow go out, the night goes deeper still (BossFx.Blackout), and the lantern
+        // flares back at the end.
+        private static IEnumerator Blackout(int id, float seconds)
+        {
+            var body = BossFx.BodyOf(id);
+            if (!body) yield break;
+            H.Blackout(seconds);
+            Lanterns.TryGetValue(id, out var l);
+            var glow = body.Find("BossGlow") is Transform g ? g.GetComponent<Light>() : null;
+            if (l.ball) l.ball.gameObject.SetActive(false); // its light is a child of it
+            if (glow) glow.enabled = false;
+            yield return new WaitForSeconds(seconds);
+            if (glow) glow.enabled = true;
+            if (!l.ball) yield break;
+            l.ball.gameObject.SetActive(true);
+            BossVfx.Flash(l.ball.position, 4f, Cyan, 0.3f);
+            WeaponFx.Emit(WeaponFx.Rings, l.ball.position, 1, Vector3.up, color: Cyan, size: 9f);
+            Fx.Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), l.ball.position, 1f, AudioDistance.Long);
         }
 
         // ---------- the steed ----------
@@ -597,6 +658,42 @@ namespace HtfFortress
                 yield return null;
             }
             foreach (var r in rings) if (r) Object.Destroy(r.gameObject);
+        }
+
+        // A crack of molten gold split along the ground from the stomp: it runs out in a blink, glows, throws up sparks, and
+        // dims and closes at the end.
+        private static IEnumerator Fissure(Vector3 a, Vector3 b, float seconds)
+        {
+            int n = Mathf.Clamp(Mathf.CeilToInt((b - a).Flat().magnitude / 1.2f) + 1, 3, 24);
+            Vector3 side = Vector3.Cross(Vector3.up, (b - a).Flat().normalized);
+            var pts = new Vector3[n];
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 p = Vector3.Lerp(a, b, i / (n - 1f)) + side * (i == 0 ? 0f : Random.Range(-0.4f, 0.4f));
+                p.y = BossFx.Ground(p) + 0.12f;
+                pts[i] = p;
+            }
+            var glow = WeaponFx.Line("BossFissure", BossVfx.Glow(Gold, 4f), 0.6f);
+            var core = WeaponFx.Line("BossFissureCore", BossVfx.Glow(new Color(1f, 0.95f, 0.7f), 7f), 0.18f);
+            glow.positionCount = core.positionCount = 0;
+            var sparks = BossVfx.Sparks(Gold);
+            for (float t = 0f; t < seconds && glow && core; t += Time.deltaTime)
+            {
+                int shown = Mathf.Clamp(Mathf.CeilToInt(n * t / 0.25f), 2, n);
+                if (glow.positionCount != shown)
+                {
+                    glow.positionCount = core.positionCount = shown;
+                    for (int i = 0; i < shown; i++) { glow.SetPosition(i, pts[i]); core.SetPosition(i, pts[i]); }
+                    BossVfx.Debris(pts[shown - 1], 2, Sand, 4f, 0.15f);
+                }
+                float fade = Mathf.Clamp01((seconds - t) / 1f);
+                glow.widthMultiplier = 0.6f * fade * (0.85f + 0.15f * Mathf.Sin(t * 9f));
+                core.widthMultiplier = 0.18f * fade;
+                if (Random.value < 0.25f) WeaponFx.Emit(sparks, pts[Random.Range(0, shown)], 1, Vector3.up, size: 0.1f, velocity: Vector3.up * 2.5f, life: 0.5f);
+                yield return null;
+            }
+            if (glow) Object.Destroy(glow.gameObject);
+            if (core) Object.Destroy(core.gameObject);
         }
 
         // ---------- the stonefish ----------
@@ -748,6 +845,44 @@ namespace HtfFortress
             if (core) Object.Destroy(core.gameObject);
         }
 
+        // A venom spring welling up: the ground stained green, bubbles and gas, faster as it's about to blow.
+        private static IEnumerator Vent(Vector3 at, float seconds)
+        {
+            BossVfx.Scar(at, 1.4f, Venom, seconds + 0.3f);
+            for (float t = 0f; t < seconds; t += 0.08f)
+            {
+                float k = t / seconds;
+                WeaponFx.Emit(WeaponFx.Bubbles, at + Random.insideUnitSphere.Flat() * 1.2f + Vector3.up * 0.1f, 1 + Mathf.RoundToInt(k * 3f), Vector3.up, color: new Color(0.6f, 1f, 0.4f));
+                if (Random.value < 0.2f + 0.5f * k) WeaponFx.Emit(WeaponFx.Gas, at + Vector3.up * 0.3f, 1, Vector3.up, color: new Color(0.45f, 0.8f, 0.3f));
+                yield return new WaitForSeconds(0.08f);
+            }
+        }
+
+        // The spring blows: a column of venom shooting up out of the ground and falling back, drops flung off it, a green
+        // blast round its foot.
+        private static IEnumerator Geyser(Vector3 at, float r)
+        {
+            Color c = new Color(0.55f, 1f, 0.35f, 0.55f);
+            var col = WeaponFx.Piece(WeaponFx.Cyl, BossVfx.Wash(c));
+            var mat = col.GetComponent<MeshRenderer>().sharedMaterial;
+            var drops = BossVfx.Sparks(Venom);
+            BossVfx.Flash(at + Vector3.up, r * 1.4f, Venom, 0.25f);
+            BossVfx.Shock(at, r * 1.6f, Venom, 0.4f);
+            WeaponFx.Emit(WeaponFx.Gas, at + Vector3.up * 0.5f, 6, Vector3.up, color: new Color(0.45f, 0.8f, 0.3f));
+            for (float t = 0f; t < 0.9f && col; t += Time.deltaTime)
+            {
+                float k = t / 0.9f, h = 7f * Mathf.Sin(Mathf.Min(1f, k * 2.2f) * Mathf.PI * 0.5f) * (1f - k * k), w = r * 0.9f * (1f - 0.4f * k);
+                col.position = at;
+                col.localScale = new Vector3(w, Mathf.Max(0.05f, h), w);
+                col.rotation = Quaternion.Euler(0f, t * 300f, 0f);
+                mat.color = new Color(c.r, c.g, c.b, c.a * (1f - k));
+                if (Random.value < 0.6f) WeaponFx.Emit(drops, at + Vector3.up * h, 2, Vector3.up, size: 0.16f, velocity: Random.insideUnitSphere.Flat() * 2.5f + Vector3.up * 3f, life: 0.7f);
+                yield return null;
+            }
+            Object.Destroy(mat);
+            if (col) Object.Destroy(col.gameObject);
+        }
+
         // ---------- the flying fish ----------
 
         // The sonic boom: a white streak, rings of shock bursting along its path one after another, a wall of dust.
@@ -766,6 +901,21 @@ namespace HtfFortress
             }
             Fx.Sound("Explosion", Vector3.Lerp(a, b, 0.5f), 1f, AudioDistance.Long);
             Shake(Vector3.Lerp(a, b, 0.5f), 0.8f);
+        }
+
+        // A sonic boom over one spot: the air cracks in white rings rolling out to `outer` (the second one round the first's
+        // edge, `inner`), dust thrown up under it, a bang that shakes the screen.
+        private static void SonicRing(Vector3 at, float inner, float outer)
+        {
+            Vector3 g = new Vector3(at.x, BossFx.Ground(at), at.z);
+            BossVfx.Shock(g, outer, Color.white, 0.45f, 0.85f);
+            BossVfx.Shock(g, outer * 1.15f, new Color(0.75f, 0.9f, 1f), 0.6f, 0.92f);
+            for (int i = 0; i < 3; i++) WeaponFx.Emit(WeaponFx.Rings, g + Vector3.up * (2f + 2f * i), 1, Vector3.up, color: Color.white, size: outer * (1.2f + 0.4f * i));
+            foreach (var p in Circle(g, Mathf.Lerp(inner, outer, 0.6f), 12)) BossVfx.Dust(p, 1.2f, 2);
+            BossVfx.Debris(g, 10, Sand, 6f, 0.2f);
+            Fx.Sound("IntroCrash", g, 1f, AudioDistance.Long);
+            Fx.Sound("Explosion", g, 0.7f, AudioDistance.Long);
+            Shake(g, 0.7f);
         }
 
         // Smoke trailing off it as it falls.
@@ -936,6 +1086,27 @@ namespace HtfFortress
             if (copy) Object.Destroy(copy.gameObject);
         }
 
+        // The squeeze (Two-Arm Grab): the coil round its target clenches, a crimson burst and splinters, then it lets go and
+        // slides back under. The arm is the one Reach put up (taken over from it, like Dragged does).
+        private static IEnumerator Squeeze(int key, Vector3 at, Vector3 shore)
+        {
+            if (!Holding.TryGetValue(key, out var arm)) yield break; // broken: Reach lets it go by itself
+            Holding.Remove(key);
+            Vector3 dir = (at - shore).Flat().normalized, root = at - dir * 2.2f;
+            root.y = BossFx.Ground(root) - 0.4f;
+            BossVfx.Impact(at, 1.8f, Crimson, Sand, false);
+            WeaponFx.Game("BloodSmall", at + Vector3.up, Vector3.up);
+            Fx.SoundRandom("WoodItemImpact_V", 1, 3, at, 1f);
+            Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 0.8f);
+            for (float t = 0f; t < 0.9f; t += Time.deltaTime)
+            {
+                float k = t / 0.9f;
+                arm.Pose(root, at, 1f - Mathf.Clamp01((k - 0.4f) / 0.6f), 0.85f + 0.15f * Mathf.Sin(Mathf.Min(1f, k * 2.5f) * Mathf.PI), t * 3f);
+                yield return null;
+            }
+            arm.Destroy();
+        }
+
         // Ink: splattered black over the beach and a cloud of it; anyone in it has ink all over their eyes.
         private static IEnumerator Ink(Vector3 at, float r, float seconds)
         {
@@ -1062,6 +1233,44 @@ namespace HtfFortress
                 yield return null;
             }
             foreach (var l in lines) if (l) Object.Destroy(l.gameObject);
+        }
+
+        // A glitch tile: a square of ground flickering through broken colours, pixels popping off it; whoever stands on it
+        // sees the glitch on their own screen.
+        private static IEnumerator Tile(Vector3 c, Vector3 to, float half, float seconds)
+        {
+            var go = BossFx.Decal("box", c, to, half, 0, Pixel);
+            var mesh = go.GetComponent<MeshFilter>().sharedMesh;
+            var mat = go.GetComponent<MeshRenderer>().sharedMaterial;
+            var cols = new List<Color>();
+            mesh.GetColors(cols);
+            var pink = BossVfx.Sparks(Pink);
+            var green = BossVfx.Sparks(Pixel);
+            Vector3 f = (to - c).Flat().normalized, r = Vector3.Cross(Vector3.up, f);
+            bool glitched = false;
+            Cubes(c, 24, false);
+            for (float t = 0f, next = 0f; t < seconds && go; t += Time.deltaTime)
+            {
+                if (t >= next)
+                {
+                    next = t + 0.08f;
+                    for (int i = 0; i < cols.Count; i++) { float v = Random.value; cols[i] = v < 0.33f ? new Color(1f, 0f, 0.4f, 0.7f) : v < 0.66f ? new Color(0f, 1f, 0.5f, 0.6f) : new Color(0.2f, 0.4f, 1f, 0.6f); }
+                    mesh.SetColors(cols);
+                    Vector3 p = c + f * Random.Range(-half, half) + r * Random.Range(-half, half);
+                    p.y = BossFx.Ground(p) + 0.2f;
+                    WeaponFx.Emit(Random.value < 0.5f ? pink : green, p, 2, Vector3.up, size: 0.3f, velocity: Vector3.up * Random.Range(1.5f, 4f), life: 0.5f);
+                }
+                mat.color = new Color(1f, 1f, 1f, Mathf.Clamp01(Mathf.Min(t / 0.1f, (seconds - t) / 0.3f)) * (Random.value < 0.1f ? 0.3f : 1f));
+                var me = Player.LocalPlayer;
+                if (!glitched && me && me.Transform)
+                {
+                    Vector3 d = (me.Transform.position - c).Flat();
+                    if (Mathf.Abs(Vector3.Dot(d, f)) < half && Mathf.Abs(Vector3.Dot(d, r)) < half) { glitched = true; H.Overlay(OverlayKind.Glitch, Mathf.Max(0.5f, seconds - t)); }
+                }
+                yield return null;
+            }
+            Object.Destroy(mat);
+            if (go) Object.Destroy(go);
         }
 
         // Everything in the box breaks into pixels flying up.
@@ -1196,6 +1405,39 @@ namespace HtfFortress
             }
         }
 
+        // Dragonfire down a line: a roaring jet from the mouth to the ground just ahead, then along it, its front running out
+        // to the far end; white-hot in the middle, scorched ground and flames bursting up where the front passed.
+        private static IEnumerator FlameLine(Vector3 mouth, Vector3 far, float seconds)
+        {
+            var outer = WeaponFx.Line("BossFlame", BossVfx.Glow(Fire, 5f), 2.2f);
+            var core = WeaponFx.Line("BossFlameCore", BossVfx.Glow(new Color(1f, 0.9f, 0.55f), 8f), 0.7f);
+            outer.positionCount = core.positionCount = 3;
+            Vector3 g = new Vector3(mouth.x, BossFx.Ground(mouth), mouth.z), dir = (far - g).Flat().normalized;
+            float len = (far - g).Flat().magnitude;
+            Vector3 land = g + dir * Mathf.Min(4f, len * 0.3f);
+            land.y = BossFx.Ground(land) + 0.5f;
+            var fire = BossVfx.Sparks(Fire);
+            var light = new GameObject("BossFlameLight").AddComponent<Light>();
+            light.type = LightType.Point; light.color = Fire; light.range = len; light.shadows = LightShadows.None;
+            Vector3 lastMark = Vector3.zero;
+            for (float t = 0f; t < seconds && outer && core; t += Time.deltaTime)
+            {
+                Vector3 front = g + dir * Mathf.Max(Mathf.Min(4f, len * 0.3f) + 0.5f, len * Mathf.Clamp01(t / 0.35f));
+                front.y = BossFx.Ground(front) + 0.5f;
+                outer.SetPosition(0, mouth); outer.SetPosition(1, land); outer.SetPosition(2, front);
+                core.SetPosition(0, mouth); core.SetPosition(1, land); core.SetPosition(2, front);
+                outer.widthMultiplier = 2.2f + 0.4f * Mathf.Sin(t * 45f);
+                light.transform.position = Vector3.Lerp(land, front, 0.5f) + Vector3.up * 2f;
+                light.intensity = 3f + Random.value * 1.5f;
+                WeaponFx.Emit(fire, front, 6, Vector3.up, size: 0.4f, velocity: Vector3.up * 3f + dir * 4f, life: 0.5f);
+                if ((front - lastMark).sqrMagnitude > 2.2f * 2.2f) { lastMark = front; BossVfx.Scar(front, 1.5f, Fire, 5f); WeaponFx.Game("LavaPoof", front, Vector3.up); }
+                yield return null;
+            }
+            if (outer) Object.Destroy(outer.gameObject);
+            if (core) Object.Destroy(core.gameObject);
+            Object.Destroy(light.gameObject);
+        }
+
         // The koi becomes a dragon: thunder, bursts of gold, and it's repainted gold and crimson, glowing.
         private static IEnumerator Dragon(int id, float seconds)
         {
@@ -1232,39 +1474,96 @@ namespace HtfFortress
             H.RedSky(false);
         }
 
-        // Its gaze: a red beam swept over the fort, a white-hot heart in it, a scorched track behind it.
-        private static IEnumerator Gaze(int id, Vector3 eye, Vector3 far, float seconds, int sweep)
+        // Its gaze: a red beam swept over the fort, a white-hot heart in it, a scorched track behind it. `twin` (Second
+        // Pupil): a second beam out of the second pupil, swept the other way, the eyeball turned between the two.
+        private static IEnumerator Gaze(int id, Vector3 eye, Vector3 far, float seconds, int sweep, bool twin = false)
         {
             var glow = WeaponFx.Line("BossGaze", BossVfx.Glow(Blood, 6f), 2.6f);
             var core = WeaponFx.Line("BossGazeCore", BossVfx.Glow(new Color(1f, 0.85f, 0.8f), 8f), 0.6f);
             glow.positionCount = core.positionCount = 2;
+            LineRenderer glow2 = null, core2 = null;
+            if (twin)
+            {
+                glow2 = WeaponFx.Line("BossGaze", BossVfx.Glow(Blood, 6f), 2.6f);
+                core2 = WeaponFx.Line("BossGazeCore", BossVfx.Glow(new Color(1f, 0.85f, 0.8f), 8f), 0.6f);
+                glow2.positionCount = core2.positionCount = 2;
+            }
             var body = BossFx.BodyOf(id);
+            var seer = body ? body.GetComponent<BossEye>() : null;
+            var sparks = BossVfx.Sparks(Fire);
             Vector3 g = new Vector3(eye.x, BossFx.Ground(eye), eye.z), dir = (far - g).Flat().normalized;
             float range = (far - g).Flat().magnitude;
             Fx.Sound("Ignite", far, 0.7f, AudioDistance.Long); // a short sizzle, not the grill loop ringing out over the fort
-            Vector3 lastMark = Vector3.zero;
+            Vector3 lastMark = Vector3.zero, lastMark2 = Vector3.zero;
             for (float t = 0f; t < seconds && core; t += Time.deltaTime)
             {
                 Vector3 end = g + Quaternion.Euler(0f, Mathf.Lerp(-sweep, sweep, t / seconds), 0f) * dir * range;
                 end.y = BossFx.Ground(end);
-                var seer = body ? body.GetComponent<BossEye>() : null;
-                if (seer) seer.LookAt(end, 0.2f);
+                Vector3 end2 = g + Quaternion.Euler(0f, Mathf.Lerp(sweep, -sweep, t / seconds), 0f) * dir * range;
+                end2.y = BossFx.Ground(end2);
+                if (seer) seer.LookAt(twin ? Vector3.Lerp(end, end2, 0.5f) : end, 0.2f);
                 Vector3 from = seer ? seer.Pupil : body ? body.position : eye;
                 glow.SetPosition(0, from); glow.SetPosition(1, end);
                 core.SetPosition(0, from); core.SetPosition(1, end);
                 glow.widthMultiplier = 2.2f + 0.5f * Mathf.Sin(t * 40f);
-                WeaponFx.Emit(BossVfx.Sparks(Fire), end, 4, Vector3.up, size: 0.14f);
+                WeaponFx.Emit(sparks, end, 4, Vector3.up, size: 0.14f);
                 BossVfx.Dust(end, 0.6f, 1);
                 if ((end - lastMark).sqrMagnitude > 1.8f * 1.8f) { lastMark = end; BossVfx.Scar(end, 1.2f, Blood, 6f); }
+                if (twin && core2)
+                {
+                    Vector3 from2 = seer ? seer.PupilAt(SecondPupilYaw) : from;
+                    glow2.SetPosition(0, from2); glow2.SetPosition(1, end2);
+                    core2.SetPosition(0, from2); core2.SetPosition(1, end2);
+                    glow2.widthMultiplier = 2.2f + 0.5f * Mathf.Sin(t * 40f + 1.7f);
+                    WeaponFx.Emit(sparks, end2, 4, Vector3.up, size: 0.14f);
+                    if ((end2 - lastMark2).sqrMagnitude > 1.8f * 1.8f) { lastMark2 = end2; BossVfx.Scar(end2, 1.2f, Blood, 6f); }
+                }
                 yield return null;
             }
             if (glow) Object.Destroy(glow.gameObject);
             if (core) Object.Destroy(core.gameObject);
+            if (glow2) Object.Destroy(glow2.gameObject);
+            if (core2) Object.Destroy(core2.gameObject);
         }
 
-        // The Last Judgment: a red sun swelling over the lighthouse, a beam from the eye into it, lightning all round.
-        private static IEnumerator Judgment(int id, Vector3 eye, Vector3 core, float seconds)
+        // The second pupil: a red iris with a black slit in it, opening on the eyeball beside the first and held open until
+        // its time is up (the beams' event keeps it open longer; broken, it shuts after the wind-up).
+        private const float SecondPupilYaw = 32f;
+        private static readonly Dictionary<int, float> Pupils = new Dictionary<int, float>(); // boss id -> open until
+        private static IEnumerator SecondPupil(int id, float seconds)
         {
+            bool open = Pupils.ContainsKey(id);
+            Pupils[id] = Mathf.Max(open ? Pupils[id] : 0f, Time.time + seconds);
+            if (open) yield break; // already showing: just held open longer
+            var eye = BossEye.Of(id);
+            if (!eye) { Pupils.Remove(id); yield break; }
+            var iris = WeaponFx.Piece(WeaponFx.Ball, BossVfx.Glow(Blood, 6f));
+            var slit = WeaponFx.Piece(WeaponFx.Ball, BossVfx.Solid(new Color(0.04f, 0.01f, 0.02f)));
+            var rim = WeaponFx.Piece(WeaponFx.Torus, BossVfx.Glow(new Color(1f, 0.85f, 0.75f), 8f));
+            float k = 0f, t = 0f;
+            while (eye && Pupils.TryGetValue(id, out float until) && (Time.time < until || k > 0.01f))
+            {
+                k = Mathf.MoveTowards(k, Time.time < until ? 1f : 0f, Time.deltaTime / (Time.time < until ? 0.5f : 0.25f));
+                float s = Mathf.SmoothStep(0f, 1f, k) * (1f + 0.06f * Mathf.Sin(t * 20f));
+                Vector3 p = eye.PupilAt(SecondPupilYaw), n = (p - eye.Middle).normalized;
+                Quaternion face = Quaternion.LookRotation(n);
+                iris.SetPositionAndRotation(p - n * 0.1f, face); iris.localScale = new Vector3(1.1f, 1.1f, 0.14f) * s;
+                slit.SetPositionAndRotation(p - n * 0.05f, face); slit.localScale = new Vector3(0.35f, 0.8f, 0.16f) * s;
+                rim.SetPositionAndRotation(p - n * 0.08f, face); rim.localScale = Vector3.one * 1.3f * s;
+                t += Time.deltaTime;
+                yield return null;
+            }
+            Pupils.Remove(id);
+            if (iris) Object.Destroy(iris.gameObject);
+            if (slit) Object.Destroy(slit.gameObject);
+            if (rim) Object.Destroy(rim.gameObject);
+        }
+
+        // The Last Judgment: a red sun swelling over the lighthouse, a beam from the eye into it, lightning all round (out to
+        // `field`: the whole island).
+        private static IEnumerator Judgment(int id, Vector3 eye, Vector3 core, float seconds, float field)
+        {
+            field = Mathf.Max(12f, field);
             H.RedSky(true);
             Fx.Sound("BossFightIntro", core, 1f, AudioDistance.Long);
             var sun = WeaponFx.Piece(WeaponFx.Ball, BossVfx.Glow(Blood, 5f));
@@ -1282,7 +1581,7 @@ namespace HtfFortress
                 beam.SetPosition(0, seer ? seer.Pupil : body ? body.position : eye);
                 beam.SetPosition(1, over);
                 beam.widthMultiplier = 0.2f + 1.6f * k;
-                if (Random.value < 0.08f + 0.3f * k) H.StartCoroutine(BossFx.Lightning(core + Random.insideUnitSphere.Flat() * 12f, new Color(1f, 0.2f, 0.2f)));
+                if (Random.value < 0.08f + 0.3f * k) H.StartCoroutine(BossFx.Lightning(core + Random.insideUnitSphere.Flat() * field, new Color(1f, 0.2f, 0.2f)));
                 if (Random.value < 0.3f) { Vector3 from = over + Random.onUnitSphere * 10f; WeaponFx.Emit(BossVfx.Sparks(Blood), from, 1, over - from, size: 0.2f, velocity: (over - from) * 2f, life: 0.5f); }
                 yield return null;
             }
@@ -1290,12 +1589,20 @@ namespace HtfFortress
             if (beam) Object.Destroy(beam.gameObject);
         }
 
-        private static void Verdict(Vector3 core)
+        private static void Verdict(Vector3 core, float field)
         {
             try { VFXManager.Play("LavaExplosion", core); VFXManager.Play("VolcanoEruption", core); } catch { }
             WeaponFx.Game("BiggestExplosion", core + Vector3.up * 2f, Vector3.up);
             BossVfx.Impact(core, 6f, Blood, Basalt);
-            BossVfx.Shock(core, 28f, Blood, 0.9f, 0.85f);
+            BossVfx.Shock(core, Mathf.Max(28f, field), Blood, 0.9f, 0.85f);
+            // the rest of the island struck too: bolts and blasts scattered over it
+            for (int i = 0; i < (field > 12f ? 8 : 0); i++)
+            {
+                Vector3 p = core + Random.insideUnitSphere.Flat() * field * 0.85f;
+                p.y = BossFx.Ground(p);
+                H.StartCoroutine(BossFx.Lightning(p, new Color(1f, 0.2f, 0.2f)));
+                BossVfx.Impact(p, 2f, Blood, Basalt);
+            }
             Fx.Sound("LavaWhaleDeathExplosion", core, 1f, AudioDistance.Long);
             Shake(core, 1f);
             H.Overlay(OverlayKind.White, 0.6f);

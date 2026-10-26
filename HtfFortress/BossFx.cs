@@ -304,6 +304,9 @@ namespace HtfFortress
         private Coroutine _mood;
         public void Night(bool on) { _night = on; if (on && _mood == null) _mood = StartCoroutine(Mood()); }
         public void RedSky(bool on) { _red = on; if (on && _mood == null) _mood = StartCoroutine(Mood()); }
+        // The anglerfish's blackout: for a moment darker still (its lantern is out; only the lighthouse shines). Only the look.
+        private float _blackUntil, _blackK;
+        public void Blackout(float seconds) { _blackUntil = Time.time + seconds; if (_mood == null) _mood = StartCoroutine(Mood()); }
         public bool Moody => _mood != null; // auto-test
 
         private IEnumerator Mood()
@@ -323,16 +326,18 @@ namespace HtfFortress
             }
             float exposure0 = sky && sky.HasProperty("_Exposure") ? sky0.GetFloat("_Exposure") : -1f;
             Color nightTint = new Color(0.3f, 0.36f, 0.62f), redTint = new Color(1f, 0.32f, 0.26f);
-            while (_night || _red || _nightK > 0f || _redK > 0f)
+            while (_night || _red || _nightK > 0f || _redK > 0f || _blackK > 0f || Time.time < _blackUntil)
             {
+                bool black = Time.time < _blackUntil;
                 _nightK = Mathf.MoveTowards(_nightK, _night ? 1f : 0f, Time.deltaTime / 1.5f);
                 _redK = Mathf.MoveTowards(_redK, _red ? 1f : 0f, Time.deltaTime / 1.2f);
-                float n = Mathf.SmoothStep(0f, 1f, _nightK), r = Mathf.SmoothStep(0f, 1f, _redK) * (1f - n);
+                _blackK = Mathf.MoveTowards(_blackK, black ? 1f : 0f, Time.deltaTime / (black ? 0.25f : 0.6f)); // out fast, back slower
+                float n = Mathf.SmoothStep(0f, 1f, _nightK), r = Mathf.SmoothStep(0f, 1f, _redK) * (1f - n), bk = Mathf.Lerp(1f, 0.3f, Mathf.SmoothStep(0f, 1f, _blackK));
                 Color tint = Color.Lerp(Color.Lerp(Color.white, redTint, r), nightTint, n);
-                float dim = Mathf.Lerp(1f, 0.1f, n) * Mathf.Lerp(1f, 0.8f, r), skyDim = Mathf.Lerp(1f, 0.15f, n) * Mathf.Lerp(1f, 0.7f, r);
+                float dim = Mathf.Lerp(1f, 0.1f, n) * Mathf.Lerp(1f, 0.8f, r) * bk, skyDim = Mathf.Lerp(1f, 0.15f, n) * Mathf.Lerp(1f, 0.7f, r) * bk;
                 if (sun) { sun.intensity = sunI0 * dim; sun.color = sunC0 * tint; }
                 var amb = amb0;
-                for (int ch = 0; ch < 3; ch++) for (int k = 0; k < 9; k++) amb[ch, k] *= tint[ch] * Mathf.Lerp(1f, 0.3f, n);
+                for (int ch = 0; ch < 3; ch++) for (int k = 0; k < 9; k++) amb[ch, k] *= tint[ch] * Mathf.Lerp(1f, 0.3f, n) * bk;
                 RenderSettings.ambientProbe = amb;
                 RenderSettings.fogColor = Color.Lerp(Color.Lerp(fogC0, new Color(0.4f, 0.05f, 0.05f), r), new Color(0.02f, 0.03f, 0.08f), n);
                 RenderSettings.fogDensity = fogD0 * (1f + 2.5f * Mathf.Max(n, r)) + 0.01f * n;

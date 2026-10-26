@@ -1418,6 +1418,13 @@ namespace HtfFortress
             int C(string k) => Counters.TryGetValue(k, out int n) ? n : 0;
             string Moves(EnemyKind k) => string.Join(", ", Counters.Where(kv => kv.Key.StartsWith(Prefix(k))).Select(kv => kv.Key.Substring(Prefix(k).Length) + " " + kv.Value));
             string Prefix(EnemyKind k) => k == EnemyKind.Steed ? "steed_" : k == EnemyKind.Stonefish ? "stone_" : k == EnemyKind.Skyfish ? "skyfish_" : k.ToString().ToLower() + "_";
+            // The counter each boss's second-form move bumps (BOSS-FORMS.md §2, 新招).
+            string NewMove(EnemyKind k) => k switch
+            {
+                EnemyKind.Warden => "warden_anvil", EnemyKind.Urchin => "urchin_nova", EnemyKind.Angler => "angler_blackout",
+                EnemyKind.Steed => "steed_fissure", EnemyKind.Stonefish => "stone_geyser", EnemyKind.Skyfish => "skyfish_boom2",
+                EnemyKind.Kraken => "kraken_twoarm", EnemyKind.Voxel => "voxel_tiles", EnemyKind.Koi => "koi_line", _ => "eye_pupil",
+            };
             var only = _arg.Length > 0 ? _arg.Split(',').Select(x => (EnemyKind)System.Enum.Parse(typeof(EnemyKind), x, true)).ToList() : EnemyCatalog.BossOrder.ToList();
             for (int i = 0; i < EnemyCatalog.BossOrder.Length; i++)
             {
@@ -1461,8 +1468,16 @@ namespace HtfFortress
                 // Its second form, then a move broken by the conch.
                 if (c) c.ServerChangeHp(c._hp.Value - plugin.MaxHpOf[c] * 45 / 100);
                 yield return Until(() => !c || C("boss_phase2_" + kind) > 0, 5f, kind + " second form");
+                // The change can't be hurt (BOSS-FORMS §1): a hit landed while it plays is turned away, its health unmoved.
+                int blocked0 = C("boss_hit_in_transition"), hp0 = c ? c._hp.Value : 0;
+                if (c && brain != null && brain.Transforming) c.ServerChangeHp(Mathf.Max(1, plugin.MaxHpOf[c] / 20));
+                Note($"{kind}: hit while changing: blocked {C("boss_hit_in_transition") - blocked0}, hp {hp0} -> {(c ? c._hp.Value : 0)}");
                 yield return new WaitForSecondsRealtime(3f);
                 if (c) FortressPlugin.Shot($"boss_{kind}_second");
+                // Its second form's own move: cast next instead of waiting on the dice, and counted.
+                if (brain != null) brain.CastNew = true;
+                yield return Until(() => !c || C(NewMove(kind)) > 0, 25f, kind + " " + NewMove(kind));
+                Note($"{kind}: new move {NewMove(kind)} {C(NewMove(kind))}");
                 yield return Until(() => !c || (brain != null && brain.Winding), 25f, kind + " winding up a move");
                 if (c) { Bosses.Instance.Interrupt(c); yield return new WaitForSecondsRealtime(0.5f); FortressPlugin.Shot($"boss_{kind}_broken"); }
                 yield return new WaitForSecondsRealtime(6f);

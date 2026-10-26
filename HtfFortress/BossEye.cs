@@ -81,6 +81,9 @@ namespace HtfFortress
 
         // The pupil, where its beams come out.
         public Vector3 Pupil => _ball ? _ball.TransformPoint(Vector3.forward * PupilAhead) : transform.position;
+        // A point as far out as the pupil, `yaw` degrees round from it: where the second form's second pupil opens.
+        public Vector3 PupilAt(float yaw) => _ball ? _ball.TransformPoint(Quaternion.Euler(0f, yaw, 0f) * Vector3.forward * PupilAhead) : transform.position;
+        public Vector3 Middle => _ball ? _ball.position : transform.position;
 
         public void Flare(float seconds) { _awake = true; _wideUntil = Mathf.Max(_wideUntil, Time.time + seconds); }
         public void Reel(float seconds) => _squintUntil = Time.time + seconds;

@@ -3,7 +3,7 @@
 > 2026-10-26。Owen：「還需要設計每隻王的二形態，還有需要讓剛變二形態的時候會變硬幾秒之類的，不然很多都沒看到王就掛了，然後如果王有 IK 可以各種情境有更自然的動作會更好。」
 >
 > 這份是**設計正本**：十隻王各自的第二形態、變身窗口規則、IK／程序化動作規格。
-> 程式現況（同一天）：框架、變身無敵窗口、十種第二形態配色、程序化 IK 都已實作；每隻王的「追加機制」欄位是下一輪要接的內容。
+> 程式現況（同一天）：框架、變身無敵窗口、十種第二形態配色、程序化 IK 都已實作；十隻王的「新招」與各自的變身演出也已實作（見各節「實作」行）；「追加機制」欄位是下一輪要接的內容。
 
 ---
 
@@ -37,21 +37,24 @@
 - **第二形態：熔鐵典獄長** — 配色換成鎔鐵（黑→暗紅→橙→白熱），鐵鉗發光。
 - 追加機制：Guillotine 連剁兩下（已有）＋ 每一刀在地面留下 3 秒的燒灼帶；Shackles 一次鎖 3 座塔（已有）。
 - 新招：**Anvil 鐵砧** — 雙鉗舉起後同時砸下，以自身為中心的環形衝擊（可打斷，前搖 1.4 秒）。
+  - 實作：`Warden.Anvil()`，環形預警（內圈＝自身腳下）半徑 Reach+5.5，90/28/40（塔／玩家／燈塔，同 Stomp 量級）；`warden.heat`／`warden.anvil`；`warden_anvil`。
 - IK：雙鉗在抬鉗階段朝最近的塔／玩家抬起，頭部持續注視目標。
-- 宣告：`wardenPhase2`「爐火重燃！」（待補字串）
+- 宣告：`wardenPhase2`「爐火重燃！」；變身演出：後仰舉鉗發熱 → 砸地（1.8 秒）。
 - 反制：站到燒灼帶的縫隙、斷招窗口在抬鉗時。
 
 ### 2.2 萬針刺皇 Thousand-Needle Urchin（wave 20，海膽）
 - **第二形態：虛空星爆** — 深紫→霓虹粉白。
 - 追加機制：滾動 Crush 滾過的地面留下 6 秒尖刺（`Caltrops`）、Volley 20 發（已有）、Bloom 4 圈（已有）。
 - 新招：**Bristle Nova** — 原地繃緊後全向爆刺，外圈同時生成尖刺（前搖 1.2 秒，可斷）。
+  - 實作：`Urchin.Nova()`，環形爆刺半徑 Radius+6（65/24/30）＋外圈 8 個 caltrop 點（35/12/15，留 6 秒）；`urchin.nova`；`urchin_nova`。
 - IK：無肢體；本體旋轉與尖刺伸缩改為「繃緊→釋放」的彈性動畫（BossBody 擺幅加大）。
-- 宣告：`urchinPhase2`「千針齊發！」
+- 宣告：`urchinPhase2`「千針齊發！」；變身演出：原地越轉越快 → 全身爆刺（1.9 秒，無傷害）。
 
 ### 2.3 深淵提燈 Abyssal Lantern（wave 30，燈籠魚）
 - **第二形態：永夜** — 深藍黑→電光青；「夜不再散去」（已實作）。
 - 追加機制：Lure 同時丟兩顆誘餌（一真一假）、Devour 連吃兩次（已有）。
 - 新招：**Blackout 熄燈** — 燈籠熄滅 2 秒，場上只剩燈塔光（純氛圍，不影響判定）。
+  - 實作：`Angler.Blackout()`。黑暗本身只是畫面（燈籠、BossGlow 熄滅＋`BossFx.Blackout` 再壓暗，砲塔射程不變）；為了「每招都要地面預警」，熄燈的 2 秒就是紅色通道的預警，燈一亮牠就沿通道突進（90/28/40，不可斷）；`angler.blackout`；`angler_blackout`。
 - IK：燈籠觸鬚朝最近玩家擺動（`BossIk` 的 tentacle 鏈）；頭部注視。
 - 宣告：`anglerPhase2`（已存在）。
 
@@ -59,6 +62,7 @@
 - **第二形態：黃金迴轉** — 銀白→鎏金。
 - 追加機制：Charge 來回兩趟（已有）、幻影騎兵 5 路（已有）。
 - 新招：**Golden Fissure** — 每次 Stomp 在地面留下放射狀金裂縫，踩到受傷（純視覺＋小傷害）。
+  - 實作：第二形態的 `Steed.Stomp()` 多 6 道裂縫（細通道預警，與 Stomp 同一個可斷前搖），裂縫上留 6 秒 Hazard（只傷玩家 Scaled(2)／0.5 秒，不傷建築）；`steed.fissure`；`steed_fissure`。
 - IK：頭部與前腳朝向衝鋒方向；四足步態在第二形態加速（BossBody 擺幅）。
 - 宣告：`steedPhase2`（已存在）。
 
@@ -66,13 +70,15 @@
 - **第二形態：毒潮** — 岩灰→毒綠白。
 - 追加機制：Spires 5 線（已有）、Venom 8 球（已有）、毒池加大。
 - 新招：**Geyser** — 鑽地後在原地留下 3 個毒泉，每 1.5 秒噴發一次（可斷）。
+  - 實作：`Stonefish.Geyser()`，毒泉在上次鑽下去的洞（`_hole`），噴 3 輪、每輪 1.5 秒前搖各自可斷（每輪 3% 血），55/20/25；`stone.vent`／`stone.geyser`；`stone_geyser`。
 - IK：頭部與毒刺朝目標；鑽地時整條身體下潛（BossBody）。
-- 宣告：`stonePhase2`「毒潮湧現！」
+- 宣告：`stonePhase2`「毒潮湧現！」；變身演出：眼睛發光、地鳴、毒刺脈動 → 岩刺環（1.9 秒）。
 
 ### 2.6 天翔魚雷提督 Sky Torpedo Admiral（wave 60，飛魚）
 - **第二形態：全彈發射** — 深藍→風暴白；升空高度更高（已實作）。
 - 追加機制：Squadron 6 架（已有）。
 - 新招：**Sonic Boom ×2** — 連續兩圈音爆，第二圈延遲 0.8 秒（逼玩家移動）。
+  - 實作：`Skyfish.DoubleBoom()`，先內圓（半徑 6+Tier×0.1）再 0.8 秒後外環（到 2 倍半徑），兩段預警同時出現、填色時間差 0.8 秒；各 90/26/40；`sky.ring`；`skyfish_boom2`。變身演出改為 1.6 秒爬升翻滾。
 - IK：無肢體；機身俯仰與側傾追蹤最近的玩家（BossIk 對 head 的 look-at 改為整身 banking）。
 - 宣告：`skyfishPhase2`（已存在）。
 
@@ -80,13 +86,15 @@
 - **第二形態：血潮** — 深紅→黑血紅；墨汁更濃。
 - 追加機制：Ink 遮蔽更久、Whirl 拉人更強。
 - 新招：**Two-Arm Grab** — 一次抓兩個目標（塔或玩家），兩條觸手同時收束（可斷）。
+  - 實作：`Kraken.TwoArm()`，最近的玩家＋最近的塔湊滿兩個，2 秒可斷前搖後收束：塔 150、圈內玩家 26 並往海拉（不像 Grab 會把塔拖走）；`kraken.squeeze`；`kraken_twoarm`。
 - IK：8 條觸手全部朝最近玩家伸（`BossIk` tentacle 鏈，第二形態 weight 1.0）。
-- 宣告：`krakenPhase2`「血潮來了！」
+- 宣告：`krakenPhase2`「血潮來了！」；變身演出：海面泛紅、四條觸手朝海面揮下、本體浮起（1.9 秒，無傷害）。
 
 ### 2.8 碎裂像素王 Shattered Pixel King（wave 80，方塊魚）
 - **第二形態：FATAL ERROR** — 綠→洋紅／青的故障色（已配）。
 - 追加機制：分身 3 隻、Delete／Undo（已有）。
 - 新招：**Glitch Tiles** — 場上冒出 5 塊故障格，塔的鎖定在 1.5 秒內亂跳（純干擾）。
+  - 實作：`Voxel.Tiles()`，5 個方框預警 1.2 秒，格上的塔 `Bosses.Scramble` 1.5 秒（`Turrets.Fire` 改成每發隨機挑射程內一隻，狙擊塔也不挑最硬的），不造成傷害；`voxel.tile`；`voxel_tiles`／`voxel_scrambled`。
 - IK：無肢體；本體以「逐格跳動」位移（BossBody 加抖動）。
 - 宣告：`voxelPhase2`（已存在）。
 
@@ -94,13 +102,15 @@
 - **第二形態：化龍** — 白紅金→龍金（已實作，`BossLooks.Paint` 的 koi second）。
 - 追加機制：Gate Leap 變 Dragon Dive（已有）、Jet 火焰、雷電鏈。
 - 新招：**Dragon Breath** — 龍化後沿直線吐息 1.2 秒，地面留火（可斷）。
+  - 實作：`Koi.DragonBreath()`，寬 3.4 的直線（長 12–26）、火線前緣 0.35 秒推到底，115/35/50，沿線每 2.6 m 留火 4 秒；`koi.flame`；`koi_line`。
 - IK：頭部與兩條鬚朝目標；飛行時身體 S 形擺動（BossBody 擺幅 ×1.35）。
-- 宣告：`koiPhase2`「登龍門！」
+- 宣告：`koiPhase2`「登龍門！」（飛上去時），到頂化龍時接原本的 `koiDragon`。
 
 ### 2.10 終焉之眼 The Eye at the End（wave 100，巨眼）
 - **第二形態：OVER 99** — 暗紅→白熱審判。
 - 追加機制：紅天不再退（已類似）、光束加寬。
 - 新招：**Second Pupil** — 第二顆瞳孔張開，兩道旋轉光束（前搖 2 秒，可斷）；Judgement 覆蓋全場一次。
+  - 實作：`Eye.SecondPupil()`，眼球旁長出第二瞳孔，兩道光束反向掃 ±48° 交叉（與 Beam 同傷害）；`eye.pupil`／`eye.twin`；`eye_pupil`。Judgment 加一層全場（半徑 30）預警：燈塔圈照舊 200/45、圈外 60/20，同一個 8 秒可斷前搖。
 - IK：瞳孔永遠追著主玩家（BossEye 自己處理），眼瞼在第二形態張更大。
 - 宣告：`eyePhase2`（已存在字串）。
 
@@ -123,10 +133,11 @@
 
 ## 4. 下一輪（已列入 backlog）
 
-- [ ] 每隻王的宣告詞補齊 16 語系（目前 Warden／Urchin／Stonefish／Kraken／Koi 用通用 `bossPhase2`）。
-- [ ] 「新招」欄位的實際招式實作（目前多數只有數值提升與配色）。
+- [x] 每隻王的宣告詞補齊 16 語系（`wardenPhase2`／`urchinPhase2`／`stonePhase2`／`krakenPhase2`／`koiPhase2`，加上十個新招的招式名）。
+- [x] 「新招」欄位的實際招式實作（十隻都有，見 §2 各節「實作」行）。
 - [ ] 變身時鏡頭輕微拉近／慢動作（可選；先確認不影響多人同步）。
-- [ ] 驗收腳本：AutoTest 增加「打到過半 → 記錄無敵期間傷害被擋次數 → 確認第二形態出現」。
+- [x] 驗收腳本：AutoTest `bosses` 打到過半 → 變身中補一擊、記錄被擋次數與血量不變 → `CastNew` 讓新招下一個出手並記數。
+- [ ] 「追加機制」欄位（燒灼帶、Crush 留刺、雙誘餌等）。
 
 ## 5. 對應程式
 
@@ -136,3 +147,6 @@
 | `BossFx.cs` | `"secondform"` → `SecondFormFx()`（全畫面重繪＋爆閃） |
 | `BossLooks.cs` | 十種第二形態配色（`Paint(k, second)`）、`Recolor()`、`BossBody.Second` |
 | `BossIk.cs` | 頭部注視與肢體彎曲 |
+| `BossBrains.cs` | 十個新招（`NewMove()`）與各王的 `SecondForm()` 演出 |
+| `BossMoves.cs` | 新招的畫面（`warden.anvil` … `eye.twin`） |
+| `Turrets.cs` | 故障格：被 `Bosses.Scramble` 的塔每發隨機選目標 |

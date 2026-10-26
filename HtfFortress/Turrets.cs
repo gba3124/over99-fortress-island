@@ -96,14 +96,18 @@ namespace HtfFortress
             bool IsBoss(Creature c) => Enemies.Instance.TryGet(c, out var bt) && EnemyCatalog.IsBoss(bt.Kind);
             // A boss is a big target: ordinary towers get a longer reach against it, so it isn't sniper-only.
             float Limit(Creature c) => IsBoss(c) ? range2 * 2.56f : range2;
+            // On one of the voxel fish's glitch tiles its lock jumps: any fish in range, a new one at random each shot.
+            bool scrambled = Bosses.Instance.IsScrambled(p.Id);
+            int seen = 0;
             foreach (var c in alive)
             {
                 if (!Alive(c)) continue;
                 float d = Flat2(c.transform.position - muzzle);
+                if (scrambled) { if (d < Limit(c) && d >= min && Random.Range(0, ++seen) == 0) target = c; continue; } // one in `seen`: each in range equally likely
                 if (d < Limit(c) && d >= min && d < best) { best = d; target = c; }
             }
             // The sniper picks the toughest fish in range instead of the nearest.
-            if (p.Type == PieceType.Sniper)
+            if (p.Type == PieceType.Sniper && !scrambled)
             {
                 int hp = -1;
                 for (int i = 0; i < alive.Count; i++)

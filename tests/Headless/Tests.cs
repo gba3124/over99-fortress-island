@@ -598,6 +598,13 @@ namespace HtfFortress.Headless
                 Check(BossLooks.Colour(k) != BossLooks.Colour(EnemyKind.Runner), $"{k}: no colour of its own");
             }
             Check(EnemyCatalog.BossOrder.Select(BossLooks.Colour).Distinct().Count() == 10, "two bosses share a colour");
+            // Every boss effect the host sends has a look on the clients: an unknown key only logs "BossFx: no effect" there.
+            string looks = File.ReadAllText(Path.Combine(Src, "BossMoves.cs")) + File.ReadAllText(Path.Combine(Src, "BossFx.cs"));
+            var sent = Sources.Where(f => Path.GetFileName(f).StartsWith("Boss"))
+                .SelectMany(f => new Regex(@"Send\(""([a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)?)""").Matches(File.ReadAllText(f)).Cast<Match>())
+                .Select(m => m.Groups[1].Value).Distinct().ToList();
+            var unseen = sent.Where(k => !looks.Contains($"case \"{k}\"")).ToList();
+            Check(sent.Count >= 90 && unseen.Count == 0, $"{sent.Count} boss effects sent, with no look: {string.Join(", ", unseen)}");
             // Their trophies: items 180-189 (after the game's 0-102 and the rocket and guns' 150-177, before the first weapons' 200-255), one each, worth more the later the boss.
             var ids = EnemyCatalog.BossOrder.Select(BossTrophies.IdOf).ToList();
             Check(ids.Distinct().Count() == 10 && ids.Min() == BossTrophies.FirstId && ids.Max() == BossTrophies.FirstId + 9, "trophy ids: " + string.Join(",", ids));

@@ -24,6 +24,7 @@ namespace HtfFortress
         private readonly Dictionary<Creature, BossBrain> _brains = new Dictionary<Creature, BossBrain>();
         private readonly List<KeyValuePair<Creature, BossBrain>> _brainsScratch = new List<KeyValuePair<Creature, BossBrain>>(); // reused in Update: no per-frame garbage
         private readonly Dictionary<int, float> _silenced = new Dictionary<int, float>(); // turret piece id -> until
+        private readonly Dictionary<int, float> _scrambled = new Dictionary<int, float>(); // turret piece id -> until
         private float _nextAura;
         private bool _musicOn;
 
@@ -62,6 +63,7 @@ namespace HtfFortress
             foreach (var b in _brains.Values) b.Stop();
             _brains.Clear();
             _silenced.Clear();
+            _scrambled.Clear();
             Dark = false;
             BossFx.Send("dark", null, Vector3.zero, Vector3.zero, 0);
         }
@@ -75,6 +77,10 @@ namespace HtfFortress
         // Turrets a boss has shut down (chained, turned to stone, inked over).
         public void Silence(int pieceId, float seconds) => _silenced[pieceId] = Mathf.Max(_silenced.TryGetValue(pieceId, out float u) ? u : 0f, Time.time + seconds);
         public bool IsSilenced(int pieceId) => _silenced.TryGetValue(pieceId, out float u) && Time.time < u;
+
+        // Turrets standing on the voxel fish's glitch tiles: they still fire, at whatever in range comes up (Turrets.Fire).
+        public void Scramble(int pieceId, float seconds) => _scrambled[pieceId] = Mathf.Max(_scrambled.TryGetValue(pieceId, out float u) ? u : 0f, Time.time + seconds);
+        public bool IsScrambled(int pieceId) => _scrambled.TryGetValue(pieceId, out float u) && Time.time < u;
 
         // The anglerfish's darkness: turrets see half as far, except in the lighthouse's light.
         public static bool Dark;
@@ -259,7 +265,20 @@ namespace HtfFortress
         }
         private bool _live; // past its entrance
         public bool IsLive => _live;
-        private IEnumerator Live() { _live = true; _liveAt = Time.time; while (true) { yield return Act(); yield return null; } }
+        private IEnumerator Live()
+        {
+            _live = true; _liveAt = Time.time;
+            while (true)
+            {
+                // CastNew (auto-test): the second form's new move next, so the run can check it without waiting on the dice.
+                if (CastNew && Phase2) { CastNew = false; yield return NewMove(); yield return Breath; }
+                else yield return Act();
+                yield return null;
+            }
+        }
+        internal bool CastNew;
+        // The move only its second form has (BOSS-FORMS.md §2, 新招); Act also picks it by weight once Phase2 is on.
+        protected virtual IEnumerator NewMove() => Act();
 
         // What its fight came to, from the end of its entrance: how long, and the players' and turrets' share of the damage
         // (Owen, on its health: 「說不定會覺得怎麼樣好調整」). In everyone's chat when it's down or gone, and in the host's log.
@@ -338,7 +357,8 @@ namespace HtfFortress
         public virtual void Tick()
         {
             if (_breakable && _breakDealt >= _breakAt) TryBreak(false);
-            if (!Phase2 && Hp01 <= 0.5f && !_stunned && _live)
+            // Bosses only: a summon worn to half (a glitch copy) would otherwise stop and announce a change it doesn't have.
+            if (IsBoss && !Phase2 && Hp01 <= 0.5f && !_stunned && _live)
             {
                 Phase2 = true;
                 AutoTest.Count("boss_phase2_" + Kind);
