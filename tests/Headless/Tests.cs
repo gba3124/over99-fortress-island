@@ -497,7 +497,15 @@ namespace HtfFortress.Headless
             for (int l = 1; l <= 30; l++) Check(BuildSystem.LampsLit(l) == Math.Min(BuildSystem.Lamps, Math.Max(0, l - 3)), $"Lv{l} lights {BuildSystem.LampsLit(l)} lamps");
             Check(BuildSystem.LampsLit(20) == BuildSystem.Lamps, "the ring of lamps isn't full at Lv20");
             var all = (PieceType[])Enum.GetValues(typeof(PieceType));
-            Check(Catalog.TypeCount == all.Length, $"Catalog.TypeCount {Catalog.TypeCount} but {all.Length} piece types (the build bar uses it)");
+            Check(BuildSystem.BarOrder.Length == all.Length && BuildSystem.BarOrder.Distinct().Count() == all.Length, "the build bar (and T) doesn't hold every piece once");
+            // The look card's and the detail panel's picture: the piece by level, or its class's head once it has picked a branch.
+            foreach (var t in all)
+                for (int b = 0; b <= (Catalog.HasSecondBranch(t) ? 6 : Catalog.HasBranches(t) ? 2 : 0); b++)
+                    for (int l = b > 2 ? Catalog.SecondBranchLevel : b > 0 ? Catalog.BranchLevel : 1; l <= 12; l++)
+                    {
+                        string pic = PieceMenu.PictureOf(new PieceState { Type = t, Level = l, Branch = b });
+                        Check(File.Exists(Path.Combine(Src, "Icons", pic + ".png")), $"{t} Lv{l} branch {b}: no picture Icons/{pic}.png");
+                    }
             foreach (var t in all)
             {
                 Check(Catalog.BuildCost(t) > 0, $"{t} costs nothing");

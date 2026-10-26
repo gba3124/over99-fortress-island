@@ -20,7 +20,6 @@ namespace HtfFortress
         public static string BranchName(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch));
         public static string BranchDesc(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch) + "_d");
         public const float BeyondDamage = 1.3f, BeyondHp = 1.25f, BeyondCost = 1.35f, BeyondRange = 0.4f, BeyondRangeMax = 4f;
-        public const int TypeCount = 13;
         public const float MendCore = 0.5f; // a repair tower gives the lighthouse this share of what it gives a building
 
         public static bool IsTurret(PieceType t) => (t >= PieceType.Gun && t <= PieceType.Tesla) || t >= PieceType.Flame;

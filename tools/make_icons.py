@@ -384,6 +384,9 @@ for t in ("Gun", "Cannon", "Harpoon", "Mortar", "Tesla", "Flame", "Sniper", "Bub
     head = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "layout5", t + ".json")))["head"]
     ICONS["Piece" + t] = ([(t + "Base", (0, 0, 0)), (t + "Body", (0, 0, head)), (t + "Default", (0, 0, head))], FRONT)
     FRAME["Piece" + t] = ([t + "Body", t + "Default"], 0.6)
+    for c in ("A", "B", "A1", "A2", "B1", "B2"):  # each class's head (PieceMenu: the branch cards, the header once chosen)
+        ICONS["Piece" + t + c] = ([(t + "Base", (0, 0, 0)), (t + "Body", (0, 0, head)), (t + c, (0, 0, head))], FRONT)
+        FRAME["Piece" + t + c] = ([t + "Body", t + c], 0.6)
 
 # ---------- the help panel's pictures (Tips.cs): the lighthouse and its pearl, the village, each kind of fish ----------
 # A part can carry a rotation and a scale too: (object, location, rotation, scale).

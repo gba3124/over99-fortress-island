@@ -63,9 +63,7 @@ namespace HtfFortress
         private GameObject _ghost;
         private PieceType _ghostType = (PieceType)255;
         private bool _ghostValid;
-        private string _lookInfo = "", _lookKeys = "";
-        private int _lookLevel, _lookHp, _lookMax;
-        private string _lookPicture;
+        private int _lookId; // the piece under the crosshair (0 = none): the look card shows it
         private string _blockReason = "";
         public int RoundBuilt;
 
@@ -136,9 +134,9 @@ namespace HtfFortress
             if (_waitRelease && (mouse == null || !mouse.leftButton.isPressed)) _waitRelease = false; // the click that put a moved piece down
             bool shift = kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed;
             if (kb.tKey.wasPressedThisFrame)
-                for (int n = 0; n < Catalog.TypeCount; n++) // skip turrets still waiting for a blueprint
+                for (int n = 0; n < BarOrder.Length; n++) // in the bar's order, skipping turrets still waiting for a blueprint
                 {
-                    _type = (PieceType)(((int)_type + (shift ? Catalog.TypeCount - 1 : 1)) % Catalog.TypeCount);
+                    _type = BarOrder[(System.Array.IndexOf(BarOrder, _type) + (shift ? BarOrder.Length - 1 : 1)) % BarOrder.Length];
                     _turns = 0;
                     if (Loot.Instance.ClientVault.CanBuild(_type)) break;
                 }
@@ -192,7 +190,7 @@ namespace HtfFortress
 
         private void UpdateMove(Keyboard kb, Mouse mouse)
         {
-            _lookInfo = "";
+            _lookId = 0;
             if (!_states.ContainsKey(_moveId) || !(Siege.Instance && Siege.Instance.ViewActive)) { EndMove(); return; }
             UpdateGhost();
             if (kb.mKey.wasPressedThisFrame || (mouse != null && mouse.rightButton.wasPressedThisFrame)) { EndMove(); return; }
@@ -214,7 +212,7 @@ namespace HtfFortress
         private void WalkUp(Keyboard kb)
         {
             _walkUp = false;
-            _lookInfo = "";
+            _lookId = 0;
             bool can = Siege.Instance && Siege.Instance.ViewActive && !Weapons.Drawn && InstanceFinder.IsClientStarted && GameInfo.CurCamera && Player.LocalPlayer
                        && Cursor.lockState == CursorLockMode.Locked && PlayerManager.AlivePlayers.Contains(Player.LocalPlayer);
             int id = 0;
@@ -328,8 +326,7 @@ namespace HtfFortress
             if (_ghost) { _ghost.SetActive(false); Object.Destroy(_ghost); _ghost = null; _ghostType = (PieceType)255; }
             HideCell();
             if (_cards) _cards.gameObject.SetActive(false);
-            if (_keysBox) _keysBox.gameObject.SetActive(false);
-            if (_descBox) _descBox.gameObject.SetActive(false);
+            if (_infoBox) _infoBox.gameObject.SetActive(false);
             if (_warnBox) _warnBox.gameObject.SetActive(false);
             if (_lookBox) _lookBox.gameObject.SetActive(false);
         }
@@ -859,7 +856,7 @@ namespace HtfFortress
         private void UpdateLookInfo(out int id, float reach)
         {
             id = 0;
-            _lookInfo = "";
+            _lookId = 0;
             Transform cam = GameInfo.CurCamera.transform;
             if (!Physics.Raycast(cam.position, cam.forward, out var rh, reach, 1 << PieceLayer, QueryTriggerInteraction.Ignore)) return;
             var root = rh.collider.attachedRigidbody ? rh.collider.attachedRigidbody.gameObject : rh.collider.gameObject;
@@ -870,20 +867,9 @@ namespace HtfFortress
                 foreach (var col in Physics.OverlapSphere(rh.point + Vector3.up * 0.9f, 1.1f, 1 << PieceLayer, QueryTriggerInteraction.Ignore))
                 {
                     var r2 = col.attachedRigidbody ? col.attachedRigidbody.gameObject : col.gameObject;
-                    if (_pieceIds.TryGetValue(r2, out int id2) && _states.TryGetValue(id2, out var s2) && s2.Type != PieceType.Floor && s2.Type != PieceType.Ramp) { id = id2; s = s2; break; }
+                    if (_pieceIds.TryGetValue(r2, out int id2) && _states.TryGetValue(id2, out var s2) && s2.Type != PieceType.Floor && s2.Type != PieceType.Ramp) { id = id2; break; }
                 }
-            string up;
-            if (s.Level == Catalog.BranchLevel - 1 && Catalog.HasBranches(s.Type))
-                up = L10n.T("branchHint", L10n.T(Catalog.BranchKey(s.Type, 1)), L10n.T(Catalog.BranchKey(s.Type, 2)), Perks.MyTowerUpgradeCost(Catalog.UpgradeCost(s.Type, s.Level)));
-            else up = L10n.T("upgradeHint", Perks.MyTowerUpgradeCost(Catalog.UpgradeCost(s.Type, s.Level)));
-            string repair = s.Hp < s.MaxHp ? "   " + L10n.T("repairHint", Perks.MyCost(Catalog.RepairCost(s.Hp, s.MaxHp))) : "";
-            string branch = s.Branch > 0 ? " · " + Catalog.BranchName(s.Type, s.Branch) : "";
-            _lookInfo = PieceName(s.Type, s.Level) + branch;
-            // Now → after U (into Lv3: branch A's; the menu shows both).
-            _lookStats = string.Join("　", PieceMenu.Deltas(s, s.Level + 1, s.Branch > 0 ? s.Branch : 1));
-            _lookLevel = s.Level; _lookHp = s.Hp; _lookMax = s.MaxHp;
-            _lookPicture = PieceMenu.PictureOf(s);
-            _lookKeys = up + "　" + repair.Trim() + (repair.Length > 0 ? "　" : "") + L10n.T("moveHint") + "　" + L10n.T("removeHint");
+            _lookId = id;
         }
 
         public static string PieceName(PieceType t, int level)
@@ -892,52 +878,90 @@ namespace HtfFortress
             return L10n.T(t.ToString());
         }
 
-        // ---------- build UI: piece cards above the game's hotbar, key hints, what you're looking at ----------
+        // ---------- build UI: piece cards above the game's hotbar, a card on the chosen piece, the look card ----------
+
+        // The bar's order (T steps through it the same way): the fort's own pieces, then the turrets.
+        public static readonly PieceType[] BarOrder =
+        {
+            PieceType.Wall, PieceType.Floor, PieceType.Ramp, PieceType.Spikes,
+            PieceType.Gun, PieceType.Cannon, PieceType.Harpoon, PieceType.Mortar, PieceType.Tesla, PieceType.Flame, PieceType.Sniper, PieceType.Bubble, PieceType.Mender,
+        };
 
         private RectTransform _cards;
         private readonly List<(UnityEngine.UI.Image box, UnityEngine.UI.Image ring, UnityEngine.UI.Image pic, TextMeshProUGUI name, TextMeshProUGUI cost)> _card =
             new List<(UnityEngine.UI.Image, UnityEngine.UI.Image, UnityEngine.UI.Image, TextMeshProUGUI, TextMeshProUGUI)>();
-        private UnityEngine.UI.Image _keysBox, _warnBox, _lookBox, _lookPic, _descBox;
-        private TextMeshProUGUI _descText; // what the chosen piece does (the playtest didn't know what a bubble shield was for)
-        private TextMeshProUGUI _keysText, _warnText, _lookName, _lookKeysText, _lookStatsText;
-        private string _lookStats = ""; // what it does now, and after the next upgrade (the playtest couldn't see a turret's damage)
+        private UnityEngine.UI.Image _warnBox, _infoBox, _infoPic, _infoLine, _lookBox, _lookPic;
+        private TextMeshProUGUI _warnText;
+        // The chosen piece: what it's for (the playtest didn't know what a bubble shield was for), its numbers, price, the keys.
+        private TextMeshProUGUI _infoName, _infoPrice, _infoDesc, _infoStats, _infoKeysA, _infoKeysB;
+        private (PieceType type, int moving, int coins) _infoDrawn;
+        // The piece under the crosshair: name, branch, level, health, what U does and costs (the playtest couldn't see a turret's damage).
+        private TextMeshProUGUI _lookName, _lookLv, _lookHp, _lookUp, _lookKeys;
         private Hud.Bar _lookBar;
+        private (int id, int level, int branch, int hp, int max, int coins) _lookDrawn;
+        private const float InfoH = 132f, LookH = 150f, LookText = 130f; // the two cards' heights; where the look card's text starts
 
         private bool EnsureBuildUi()
         {
             if (_cards) return true;
             if (!Hud.Font) return false;
             var root = Hud.Root;
-            Vector2 C = new Vector2(0.5f, 0.5f);
-            const float w = 98f, h = 116f, gap = 8f;
-            float total = Catalog.TypeCount * w + (Catalog.TypeCount - 1) * gap;
+            Vector2 C = new Vector2(0.5f, 0.5f), TL = new Vector2(0f, 1f);
+            const float w = 98f, h = 116f, gap = 8f, groupGap = 22f; // a wider gap between the fort's pieces and the turrets
+            float total = BarOrder.Length * w + (BarOrder.Length - 1) * gap + groupGap;
             var top = new Vector2(0.5f, 1f);
             _cards = Hud.Node(root, "BuildCards", new Vector2(0.5f, 0f), new Vector2(0f, 128f), new Vector2(total, h + 4f));
-            for (int i = 0; i < Catalog.TypeCount; i++)
+            for (int i = 0; i < BarOrder.Length; i++)
             {
                 // A card per piece: its picture, its name, its price.
-                var box = Hud.Box(_cards, new Vector2(0f, 0f), new Vector2(i * (w + gap), 0f), new Vector2(w, h), Hud.Panel, 14f);
+                var t = BarOrder[i];
+                var box = Hud.Box(_cards, new Vector2(0f, 0f), new Vector2(i * (w + gap) + (Catalog.IsTurret(t) ? groupGap : 0f), 0f), new Vector2(w, h), Hud.Panel, 14f);
                 var ring = Hud.Box(box.transform, C, Vector2.zero, new Vector2(w, h), Hud.Accent, 14f, "Ui_outline");
-                var pic = Hud.Picture(box.transform, "Piece" + (PieceType)i, top, new Vector2(0f, -5f), new Vector2(56f, 56f));
+                var pic = Hud.Picture(box.transform, "Piece" + t, top, new Vector2(0f, -5f), new Vector2(56f, 56f));
                 var name = Hud.Label(box.transform, "", 15f, top, new Vector2(0f, pic ? -62f : -8f), new Vector2(w - 8f, pic ? 20f : 44f), TextAlignmentOptions.Top);
                 name.enableWordWrapping = !pic;
                 name.enableAutoSizing = true; name.fontSizeMin = 11f; name.fontSizeMax = 15f;
                 var cost = Hud.Label(box.transform, "", 20f, new Vector2(0.5f, 0f), new Vector2(0f, 6f), new Vector2(w - 10f, 26f), TextAlignmentOptions.Bottom, Hud.Gold, bold: true);
                 _card.Add((box, ring, pic, name, cost));
             }
-            _keysBox = Hud.Box(root, new Vector2(0.5f, 0f), new Vector2(0f, 258f), new Vector2(600f, 42f), Hud.Panel, 21f);
-            _keysText = Hud.Label(_keysBox.transform, "", 21f, C, Vector2.zero, new Vector2(1600f, 42f), TextAlignmentOptions.Center);
-            _descBox = Hud.Box(root, new Vector2(0.5f, 0f), new Vector2(0f, 306f), new Vector2(600f, 40f), Hud.Panel, 20f);
-            _descText = Hud.Label(_descBox.transform, "", 19f, C, Vector2.zero, new Vector2(1600f, 40f), TextAlignmentOptions.Center, Hud.Muted);
-            _warnBox = Hud.Box(root, new Vector2(0.5f, 0f), new Vector2(0f, 354f), new Vector2(400f, 42f), new Color(0.45f, 0.08f, 0.06f, 0.85f), 21f);
+            int fort = System.Array.FindIndex(BarOrder, Catalog.IsTurret); // the line between the two groups
+            Hud.Box(_cards, Vector2.zero, new Vector2(fort * (w + gap) - gap + (gap + groupGap) / 2f, 14f), new Vector2(2f, 88f), new Color(1f, 1f, 1f, 0.22f), 0f, pivot: new Vector2(0.5f, 0f));
+
+            _infoBox = Hud.Box(root, new Vector2(0.5f, 0f), new Vector2(0f, 262f), new Vector2(940f, InfoH), Hud.Panel, 16f);
+            var ib = _infoBox.transform;
+            _infoPic = Hud.PictureSlot(ib, new Vector2(0f, 0.5f), new Vector2(14f, 0f), new Vector2(92f, 92f));
+            _infoName = Hud.Label(ib, "", 24f, TL, new Vector2(118f, -12f), new Vector2(330f, 30f), TextAlignmentOptions.Left, bold: true);
+            _infoPrice = Hud.Label(ib, "", 24f, TL, new Vector2(440f, -12f), new Vector2(160f, 30f), TextAlignmentOptions.Right, Hud.Gold, bold: true);
+            _infoDesc = Hud.Label(ib, "", 17f, TL, new Vector2(118f, -46f), new Vector2(482f, 52f), TextAlignmentOptions.TopLeft);
+            _infoDesc.enableAutoSizing = true; _infoDesc.fontSizeMin = 12f; _infoDesc.fontSizeMax = 17f;
+            _infoStats = Hud.Label(ib, "", 16f, TL, new Vector2(118f, -102f), new Vector2(482f, 22f), TextAlignmentOptions.Left, Hud.Muted);
+            _infoLine = Hud.Box(ib, TL, new Vector2(620f, -14f), new Vector2(1f, InfoH - 28f), new Color(1f, 1f, 1f, 0.12f), 0f, pivot: TL);
+            _infoKeysA = Hud.Label(ib, "", 15f, TL, new Vector2(640f, -12f), new Vector2(150f, InfoH - 24f), TextAlignmentOptions.Left, Hud.Muted);
+            _infoKeysB = Hud.Label(ib, "", 15f, TL, new Vector2(800f, -12f), new Vector2(130f, InfoH - 24f), TextAlignmentOptions.Left, Hud.Muted);
+            foreach (var k in new[] { _infoKeysA, _infoKeysB }) { k.enableWordWrapping = false; k.lineSpacing = 30f; }
+            _infoDrawn = ((PieceType)255, -1, -1);
+            _warnBox = Hud.Box(root, new Vector2(0.5f, 0f), new Vector2(0f, 404f), new Vector2(400f, 42f), new Color(0.45f, 0.08f, 0.06f, 0.85f), 21f);
             _warnText = Hud.Label(_warnBox.transform, "", 22f, C, Vector2.zero, new Vector2(1200f, 42f), TextAlignmentOptions.Center, bold: true);
-            _lookBox = Hud.Box(root, C, new Vector2(0f, -150f), new Vector2(560f, 136f), Hud.Panel, 16f);
-            _lookPic = Hud.PictureSlot(_lookBox.transform, new Vector2(0f, 0.5f), new Vector2(10f, 0f), new Vector2(86f, 86f));
-            _lookName = Hud.Label(_lookBox.transform, "", 24f, new Vector2(0.5f, 1f), new Vector2(LookPic / 2f, -8f), new Vector2(540f, 32f), TextAlignmentOptions.Top, bold: true);
-            _lookStatsText = Hud.Label(_lookBox.transform, "", 17f, new Vector2(0.5f, 1f), new Vector2(LookPic / 2f, -42f), new Vector2(1200f, 26f), TextAlignmentOptions.Top, Hud.Muted);
-            _lookBar = Hud.Bar.Make(_lookBox.transform, new Vector2(0.5f, 0.5f), new Vector2(LookPic / 2f, -14f), new Vector2(380f, 14f), Hud.Good);
-            _lookKeysText = Hud.Label(_lookBox.transform, "", 19f, new Vector2(0.5f, 0f), new Vector2(LookPic / 2f, 10f), new Vector2(1200f, 32f), TextAlignmentOptions.Bottom);
+
+            _lookBox = Hud.Box(root, C, new Vector2(0f, -151f), new Vector2(620f, LookH), Hud.Panel, 16f);
+            var lb = _lookBox.transform;
+            _lookPic = Hud.PictureSlot(lb, new Vector2(0f, 0.5f), new Vector2(12f, 0f), new Vector2(108f, 108f));
+            _lookName = Wide(Hud.Label(lb, "", 25f, TL, new Vector2(LookText, -11f), new Vector2(0f, 32f), TextAlignmentOptions.Left, bold: true), 120f);
+            _lookLv = Hud.Label(lb, "", 25f, new Vector2(1f, 1f), new Vector2(-18f, -11f), new Vector2(120f, 32f), TextAlignmentOptions.Right, Hud.Gold, bold: true);
+            _lookBar = Hud.Bar.Make(lb, TL, new Vector2(LookText, -55f), new Vector2(340f, 12f), Hud.Good, TL);
+            _lookHp = Hud.Label(lb, "", 16f, TL, new Vector2(LookText + 352f, -49f), new Vector2(200f, 22f), TextAlignmentOptions.Left, Hud.Muted);
+            _lookUp = Wide(Hud.Label(lb, "", 19f, TL, new Vector2(LookText, -80f), new Vector2(0f, 28f), TextAlignmentOptions.Left), 18f);
+            _lookKeys = Wide(Hud.Label(lb, "", 16f, TL, new Vector2(LookText, -114f), new Vector2(0f, 24f), TextAlignmentOptions.Left, Hud.Muted), 18f);
             return true;
+        }
+
+        // A look-card line from where it starts to `right` short of the card's right edge (the card's width follows its text).
+        private static TextMeshProUGUI Wide(TextMeshProUGUI t, float right)
+        {
+            var rt = t.rectTransform;
+            rt.anchorMax = new Vector2(1f, 1f);
+            rt.sizeDelta = new Vector2(-(rt.anchoredPosition.x + right), rt.sizeDelta.y);
+            return t;
         }
 
         private static void FitPill(UnityEngine.UI.Image box, TextMeshProUGUI t, string text, float pad = 48f)
@@ -951,63 +975,129 @@ namespace HtfFortress
         {
             bool on = _building && EnsureBuildUi();
             bool lookOnly = !_building && _walkUp && EnsureBuildUi(); // walked up to a piece
-            if (_cards) { _cards.gameObject.SetActive(on); _keysBox.gameObject.SetActive(on); if (!on) _descBox.gameObject.SetActive(false); }
+            if (_cards) { _cards.gameObject.SetActive(on); _infoBox.gameObject.SetActive(on); }
             if (!on && !lookOnly) { if (_warnBox) { _warnBox.gameObject.SetActive(false); _lookBox.gameObject.SetActive(false); } return; }
             if (lookOnly) _warnBox.gameObject.SetActive(false);
             else BuildCards();
-            LookPanel();
+            LookCard();
         }
 
         private void BuildCards()
         {
+            int coins = Siege.Instance.ViewCoins;
             for (int i = 0; i < _card.Count; i++)
             {
-                var t = (PieceType)i;
+                var t = BarOrder[i];
                 var (box, ring, pic, name, cost) = _card[i];
                 int c = Perks.MyCost(Catalog.BuildCost(t));
                 bool locked = !Loot.Instance.ClientVault.CanBuild(t);
-                bool sel = t == _type, afford = Siege.Instance.ViewCoins >= c && !locked;
+                bool sel = t == _type, afford = coins >= c && !locked;
                 ring.gameObject.SetActive(sel);
                 box.color = sel ? new Color(0.22f, 0.16f, 0.07f, 0.92f) : Hud.Panel;
                 box.rectTransform.anchoredPosition = new Vector2(box.rectTransform.anchoredPosition.x, sel ? 10f : 0f);
                 name.text = PieceName(t, 1);
                 name.color = afford ? Hud.Ink : Hud.Muted;
                 name.fontStyle = sel ? FontStyles.Bold : FontStyles.Normal;
-                cost.text = locked ? L10n.T("cardLocked") : c.ToString();
+                cost.text = locked ? L10n.T("cardLocked") : "$" + c;
                 cost.color = locked ? Hud.Muted : afford ? Hud.Gold : Hud.Bad;
                 box.color = locked ? new Color(0.05f, 0.06f, 0.08f, 0.55f) : box.color;
                 if (pic) pic.color = locked ? new Color(0.3f, 0.3f, 0.3f, 0.45f) : afford ? Color.white : new Color(1f, 1f, 1f, 0.55f);
             }
-            FitPill(_keysBox, _keysText, Hud.Keys(L10n.T(_moveId != 0 ? "moveKeys" : "buildKeys")));
-            _descBox.gameObject.SetActive(_moveId == 0);
-            if (_moveId == 0) FitPill(_descBox, _descText, $"<b><color={Hud.Hex(Hud.Ink)}>{PieceName(_type, 1)}</color></b>：{L10n.T("pieceDesc" + _type)}");
+            InfoCard(coins);
             bool warn = _blockReason.Length > 0;
             _warnBox.gameObject.SetActive(warn);
             if (warn) FitPill(_warnBox, _warnText, _blockReason);
         }
 
-        private const float LookPic = 96f; // room for the piece's picture
-
-        private void LookPanel()
+        // The chosen piece: what it's for, its Lv1 numbers and price, the build keys. Carrying a piece: which one, and how to put it down.
+        private void InfoCard(int coins)
         {
-            bool look = _lookInfo.Length > 0;
-            _lookBox.gameObject.SetActive(look);
-            if (look)
+            var key = (_type, _moveId, coins);
+            if (key == _infoDrawn) return;
+            _infoDrawn = key;
+            string keysA = "", keysB = "";
+            if (_moveId != 0 && _states.TryGetValue(_moveId, out var m))
             {
-                string pips = Catalog.Stars(_lookLevel, Hud.Hex(new Color(1f, 1f, 1f, 0.25f)));
-                _lookName.text = $"{_lookInfo}  <color={Hud.Hex(Hud.Gold)}>{pips}</color>";
-                float f = _lookMax > 0 ? (float)_lookHp / _lookMax : 1f;
-                _lookBar.Set(f, Hud.HealthColor(f));
-                Hud.ShowPicture(_lookPic, _lookPicture);
-                string keys = Hud.Keys(_lookKeys);
-                if (_lookKeysText.text != keys || _lookStatsText.text != _lookStats)
-                {
-                    _lookKeysText.text = keys;
-                    _lookStatsText.text = _lookStats;
-                    float w = Mathf.Max(_lookKeysText.GetPreferredValues(keys).x, _lookStatsText.GetPreferredValues(_lookStats).x);
-                    _lookBox.rectTransform.sizeDelta = new Vector2(Mathf.Max(460f, w + 48f) + LookPic, 136f);
-                }
+                Hud.ShowPicture(_infoPic, PieceMenu.PictureOf(m));
+                _infoName.text = PieceName(m.Type, m.Level) + "  " + PieceMenu.Paint(PieceMenu.Lv(m.Level), Hud.Gold);
+                _infoPrice.text = "";
+                _infoDesc.text = Hud.Keys(L10n.T("moveKeys"));
+                _infoStats.text = "";
             }
+            else
+            {
+                int cost = Perks.MyCost(Catalog.BuildCost(_type));
+                Hud.ShowPicture(_infoPic, "Piece" + _type);
+                _infoName.text = PieceName(_type, 1);
+                _infoPrice.text = "$" + cost;
+                _infoPrice.color = coins >= cost ? Hud.Gold : Hud.Bad;
+                _infoDesc.text = L10n.T("pieceDesc" + _type);
+                var lv1 = new PieceState { Type = _type, Level = 1, MaxHp = Perks.MaxHp(_type, 1) };
+                _infoStats.text = string.Join("　", PieceMenu.Rows(lv1, 1, 0).Select(r => r.label + " " + r.now));
+                keysA = Hud.Keys(L10n.T("buildKeysA"));
+                keysB = Hud.Keys(L10n.T("buildKeysB"));
+            }
+            _infoKeysA.text = keysA;
+            _infoKeysB.text = keysB;
+            bool keys = keysA.Length > 0;
+            _infoLine.gameObject.SetActive(keys);
+            float inf = float.PositiveInfinity;
+            float wa = keys ? _infoKeysA.GetPreferredValues(keysA, inf, inf).x : 0f, wb = keys ? _infoKeysB.GetPreferredValues(keysB, inf, inf).x : 0f;
+            _infoKeysA.rectTransform.sizeDelta = new Vector2(wa + 4f, InfoH - 24f);
+            _infoKeysB.rectTransform.anchoredPosition = new Vector2(640f + wa + 28f, -12f);
+            _infoKeysB.rectTransform.sizeDelta = new Vector2(wb + 4f, InfoH - 24f);
+            _infoBox.rectTransform.sizeDelta = new Vector2(keys ? 640f + wa + 28f + wb + 22f : 620f, InfoH);
+        }
+
+        // What's under the crosshair: picture, name and branch, level, health; what U does and costs; the other keys.
+        private void LookCard()
+        {
+            if (_lookId == 0 || !_states.TryGetValue(_lookId, out var s)) { _lookBox.gameObject.SetActive(false); _lookDrawn = default; return; }
+            _lookBox.gameObject.SetActive(true);
+            int coins = Siege.Instance ? Siege.Instance.ViewCoins : 0;
+            var key = (s.Id, s.Level, s.Branch, s.Hp, s.MaxHp, coins);
+            if (key == _lookDrawn) return;
+            _lookDrawn = key;
+            string name = PieceName(s.Type, s.Level) + (s.Branch > 0 ? "  " + PieceMenu.Chip(PieceMenu.Tag(s.Branch) + " " + Catalog.BranchName(s.Type, s.Branch), Hud.Accent, 68) : "");
+            string up = Hud.Keys(UpLine(s, coins)), keys = Hud.Keys(KeysLine(s));
+            _lookName.fontSize = 25f; _lookUp.fontSize = 19f; _lookKeys.fontSize = 16f; // full size again (Hud.OneLine shrinks a line that didn't fit)
+            _lookName.text = name; _lookUp.text = up; _lookKeys.text = keys;
+            _lookLv.text = PieceMenu.Lv(s.Level);
+            float f = s.MaxHp > 0 ? (float)s.Hp / s.MaxHp : 1f;
+            _lookBar.Set(f, Hud.HealthColor(f));
+            _lookHp.text = s.Hp + " / " + s.MaxHp;
+            Hud.ShowPicture(_lookPic, PieceMenu.PictureOf(s));
+            float inf = float.PositiveInfinity;
+            float w = Mathf.Max(_lookName.GetPreferredValues(name, inf, inf).x + 120f, _lookUp.GetPreferredValues(up, inf, inf).x, _lookKeys.GetPreferredValues(keys, inf, inf).x);
+            _lookBox.rectTransform.sizeDelta = new Vector2(Mathf.Max(560f, LookText + w + 22f), LookH);
+        }
+
+        // What U does next and what it costs: the branch or second split it opens, the perk it brings, or the main number it raises.
+        private static string UpLine(PieceState s, int coins)
+        {
+            int cost = Perks.MyTowerUpgradeCost(Catalog.UpgradeCost(s.Type, s.Level));
+            string price = coins >= cost ? PieceMenu.Paint("$" + cost, Hud.Gold) : PieceMenu.Paint(L10n.T("lookShort", cost, cost - coins), Hud.Bad);
+            if (Catalog.HasBranches(s.Type) && s.Level == Catalog.BranchLevel - 1)
+                return L10n.T("lookBranch", Catalog.BranchName(s.Type, 1), Catalog.BranchName(s.Type, 2)) + "　" + price;
+            if (Catalog.HasSecondBranch(s.Type) && s.Level == Catalog.SecondBranchLevel - 1 && s.Branch > 0) // U opens the split there (Upgrade)
+            {
+                int first = Catalog.FirstOf(s.Branch);
+                return L10n.T("lookSplit", Catalog.BranchName(s.Type, Catalog.BranchCode(first, 1)), Catalog.BranchName(s.Type, Catalog.BranchCode(first, 2))) + "　" + price;
+            }
+            string line = L10n.T("lookUpgrade", PieceMenu.Lv(s.Level + 1)) + "　" + price + "　";
+            if (Catalog.IsTurret(s.Type) && Catalog.Milestones(s.Level + 1) > Catalog.Milestones(s.Level))
+                return line + PieceMenu.Paint("· ★ " + L10n.T("lookPerk", PieceMenu.Perk(s.Type)), Hud.Gold);
+            var rows = PieceMenu.Rows(s, s.Level + 1, s.Branch);
+            var r = rows.Find(x => x.label == L10n.T("statDamage")); // damage where there is any, else the first number
+            if (r.label == null) r = rows[0];
+            return line + PieceMenu.Paint($"· {r.label} {r.now} →", Hud.Muted) + " <b>" + PieceMenu.Paint(r.next, Hud.Good) + "</b>";
+        }
+
+        private static string KeysLine(PieceState s)
+        {
+            string keys = L10n.T("lookDetails");
+            if (s.Hp < s.MaxHp) keys += "　" + L10n.T("repairHint", Perks.MyCost(Catalog.RepairCost(s.Hp, s.MaxHp)));
+            return keys + "　" + L10n.T("moveHint") + "　" + L10n.T("removeHint");
         }
 
         // ---------- networking ----------
