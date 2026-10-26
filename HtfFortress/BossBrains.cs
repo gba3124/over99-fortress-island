@@ -139,9 +139,9 @@ namespace HtfFortress
             float hold = 6f + Tier * 0.3f;
             foreach (var t in turrets)
             {
-                Bosses.Instance.Silence(t.Id, hold);
+                bool held = Bosses.Instance.Silence(t.Id, hold); // not: the chain locks and snaps straight off
                 BuildSystem.Instance.ServerDamagePiece(t.Id, ScaledPiece(35f));
-                Send("warden.chain", Pos, t.Pos, Mathf.RoundToInt(hold * 1000f), t.Id);
+                Send("warden.chain", Pos, t.Pos, held ? Mathf.RoundToInt(hold * 1000f) : 400, t.Id);
             }
             Shout("wardenChains");
             AutoTest.Count("warden_shackles", turrets.Count);
@@ -813,8 +813,8 @@ namespace HtfFortress
             float hold = 7f + Tier * 0.3f;
             foreach (var t in Pieces.Where(p => Catalog.IsTurret(p.Type) && cone(p.Pos)).ToList())
             {
-                Bosses.Instance.Silence(t.Id, hold);
-                Send("stone.petrify", t.Pos, Pos, Mathf.RoundToInt(hold * 1000f), t.Id);
+                bool held = Bosses.Instance.Silence(t.Id, hold); // not: the stone closes on it and bursts straight off
+                Send("stone.petrify", t.Pos, Pos, held ? Mathf.RoundToInt(hold * 1000f) : 1000, t.Id);
                 AutoTest.Count("stone_petrified");
             }
             HurtPlayers(cone, Mathf.Min(80, Scaled(24f)), Pos, 5f);

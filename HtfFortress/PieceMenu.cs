@@ -111,7 +111,8 @@ namespace HtfFortress
             Hud.Picture(p, PictureOf(s), TL, new Vector2(22f, -14f), new Vector2(124f, 124f), TL);
             string branch = s.Branch > 0 ? "  " + Chip(Tag(s.Branch) + " " + Catalog.BranchName(s.Type, s.Branch), Hud.Accent, 60) : "";
             Hud.Label(p, BuildSystem.PieceName(s.Type, s.Level) + branch, 34f, TL, new Vector2(158f, -22f), new Vector2(520f, 42f), TextAlignmentOptions.Left, bold: true);
-            Hud.Label(p, s.Branch > 0 ? Catalog.BranchDesc(s.Type, s.Branch) : L10n.T("pieceDesc" + s.Type), 18f, TL, new Vector2(158f, -72f), new Vector2(700f, 26f), TextAlignmentOptions.Left, Hud.Muted);
+            var desc = Hud.Label(p, s.Branch > 0 ? Catalog.BranchDesc(s.Type, s.Branch) : L10n.T("pieceDesc" + s.Type), 18f, TL, new Vector2(158f, -70f), new Vector2(700f, 36f), TextAlignmentOptions.TopLeft, Hud.Muted);
+            desc.enableAutoSizing = true; desc.fontSizeMin = 12f; desc.fontSizeMax = 18f; // two lines for the long ones (on one line they ran off the panel)
             float hp = s.MaxHp > 0 ? (float)s.Hp / s.MaxHp : 1f;
             Hud.Bar.Make(p, TL, new Vector2(158f, -108f), new Vector2(420f, 14f), Hud.HealthColor(hp), TL).Set(hp);
             Hud.Label(p, s.Hp + " / " + s.MaxHp, 18f, TL, new Vector2(592f, -103f), new Vector2(220f, 24f), TextAlignmentOptions.Left, Hud.Muted);

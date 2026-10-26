@@ -351,6 +351,11 @@ namespace HtfFortress
             return root;
         }
 
+        // Turrets a cleansing repair tower freed (Fx, a Mend "free"), and when: their chains and stone break there and then.
+        private static readonly Dictionary<int, float> Freed = new Dictionary<int, float>();
+        public static void Free(int pieceId) => Freed[pieceId] = Time.time;
+        private static bool FreedSince(int pieceId, float since) => Freed.TryGetValue(pieceId, out float t) && t >= since;
+
         // ---------- the warden ----------
 
         // A chain whips out from its claw to the turret, link by link; a glowing lock snaps shut on it; when the hold is up
@@ -366,7 +371,8 @@ namespace HtfFortress
             lockRing.localScale = Vector3.zero;
             Vector3 top = to + Vector3.up * 1.3f;
             bool locked = false;
-            for (float t = 0f; t < seconds; t += Time.deltaTime)
+            float began = Time.time;
+            for (float t = 0f; t < seconds && !FreedSince(pieceId, began); t += Time.deltaTime)
             {
                 Vector3 from = body ? body.position + Vector3.up * 1.2f : to;
                 float shown = Mathf.Clamp01(t / 0.3f) * n;
@@ -758,6 +764,7 @@ namespace HtfFortress
         {
             var piece = BuildSystem.Instance ? BuildSystem.Instance.PieceObject(pieceId) : null;
             var bounds = piece ? BossLooks.WorldBounds(piece.transform) : new Bounds(at + Vector3.up, new Vector3(1.6f, 2f, 1.6f));
+            float began = Time.time;
             H.StartCoroutine(Beam(boss + Vector3.up * 2f, bounds.center, Venom, 0.3f, 0.5f));
             yield return new WaitForSeconds(0.12f);
             BossVfx.Flash(bounds.center, 2.6f, Venom, 0.3f);
@@ -807,7 +814,7 @@ namespace HtfFortress
             }
             Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, at, 0.7f);
             BossVfx.Dust(at, w * 1.2f, 8);
-            for (float t = 0.8f; t < seconds - 0.3f; t += 0.25f)
+            for (float t = 0.8f; t < seconds - 0.3f && !FreedSince(pieceId, began); t += 0.25f)
             {
                 if (Random.value < 0.4f) BossVfx.Debris(bounds.center + Vector3.up * h * 0.3f, 1, Stone, 1.5f, 0.12f);
                 if (Random.value < 0.3f) BossFx.Burst(bounds.center + Random.insideUnitSphere * w, "Green", 1, 0.06f);

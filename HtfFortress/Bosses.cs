@@ -26,7 +26,8 @@ namespace HtfFortress
         internal static readonly HashSet<Creature> Puppets = new HashSet<Creature>();
         private readonly Dictionary<Creature, BossBrain> _brains = new Dictionary<Creature, BossBrain>();
         private readonly List<KeyValuePair<Creature, BossBrain>> _brainsScratch = new List<KeyValuePair<Creature, BossBrain>>(); // reused in Update: no per-frame garbage
-        private readonly Dictionary<int, float> _silenced = new Dictionary<int, float>(); // turret piece id -> until
+        private readonly Dictionary<int, (float since, float until)> _silenced = new Dictionary<int, (float, float)>(); // turret piece id -> when shut down, until
+        private readonly Dictionary<int, float> _freed = new Dictionary<int, float>(); // turret piece id -> when a cleansing repair tower last freed it
         private readonly Dictionary<int, float> _scrambled = new Dictionary<int, float>(); // turret piece id -> until
         private float _nextAura;
         private bool _musicOn;
@@ -67,6 +68,7 @@ namespace HtfFortress
             foreach (var b in _brains.Values) b.Stop();
             _brains.Clear();
             _silenced.Clear();
+            _freed.Clear();
             _scrambled.Clear();
             Dark = false;
             BossFx.Send("dark", null, Vector3.zero, Vector3.zero, 0);
@@ -78,9 +80,19 @@ namespace HtfFortress
         // The conch: a blast of sound breaks the move a boss is winding up.
         public void Interrupt(Creature c) { if (Of(c) is BossBrain b && b.TryBreak(true)) AutoTest.Count("boss_interrupted"); }
 
-        // Turrets a boss has shut down (chained, turned to stone, inked over).
-        public void Silence(int pieceId, float seconds) => _silenced[pieceId] = Mathf.Max(_silenced.TryGetValue(pieceId, out float u) ? u : 0f, Time.time + seconds);
-        public bool IsSilenced(int pieceId) => _silenced.TryGetValue(pieceId, out float u) && Time.time < u;
+        // Turrets a boss has shut down (chained, turned to stone, inked over). Not one a cleansing repair tower (Turrets.Mend)
+        // has just freed: false.
+        public bool Silence(int pieceId, float seconds)
+        {
+            if (Time.time < FreedAt(pieceId) + Catalog.CleanseImmune) return false;
+            (float since, float until) was = _silenced.TryGetValue(pieceId, out var s) && Time.time < s.until ? s : (Time.time, 0f);
+            _silenced[pieceId] = (was.since, Mathf.Max(was.until, Time.time + seconds));
+            return true;
+        }
+        public bool IsSilenced(int pieceId) => _silenced.TryGetValue(pieceId, out var s) && Time.time < s.until;
+        public float SilencedFor(int pieceId) => IsSilenced(pieceId) ? Time.time - _silenced[pieceId].since : 0f;
+        public float FreedAt(int pieceId) => _freed.TryGetValue(pieceId, out float t) ? t : float.NegativeInfinity;
+        public void Free(int pieceId) { _silenced.Remove(pieceId); _freed[pieceId] = Time.time; }
 
         // Turrets standing on the voxel fish's glitch tiles: they still fire, at whatever in range comes up (Turrets.Fire).
         public void Scramble(int pieceId, float seconds) => _scrambled[pieceId] = Mathf.Max(_scrambled.TryGetValue(pieceId, out float u) ? u : 0f, Time.time + seconds);

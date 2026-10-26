@@ -21,7 +21,7 @@ namespace HtfFortress
     // link) raise it one level and pay once.
     public struct PieceUpgradeRequest : IBroadcast { public int Id; public int Branch; public bool Repair; public int FromLevel; public bool BranchOnly; }
     public struct PieceMoveRequest : IBroadcast { public int Id; public Vector3 Pos; public float RotY; }
-    public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; public int Hp; public int MaxHp; public int Level; public int Branch; }
+    public struct PieceState : IBroadcast { public int Id; public PieceType Type; public Vector3 Pos; public float RotY; public bool Removed; public int Hp; public int MaxHp; public int Level; public int Branch; public int Guard; } // Guard: an overheal repair tower's, taking hits first
 
     // Fortnite-style building on a fixed world grid.
     // G toggles build mode, T cycles pieces, hold LMB to keep placing, Y flips, U upgrades, M picks up the piece you look at
@@ -90,12 +90,12 @@ namespace HtfFortress
             GenericWriter<PieceState>.SetWrite((w, v) =>
             {
                 w.WriteInt32(v.Id); w.WriteByte((byte)v.Type); w.WriteVector3(v.Pos); w.WriteSingle(v.RotY); w.WriteBoolean(v.Removed);
-                w.WriteInt32(v.Hp); w.WriteInt32(v.MaxHp); w.WriteInt32(v.Level); w.WriteInt32(v.Branch);
+                w.WriteInt32(v.Hp); w.WriteInt32(v.MaxHp); w.WriteInt32(v.Level); w.WriteInt32(v.Branch); w.WriteInt32(v.Guard);
             });
             GenericReader<PieceState>.SetRead(r => new PieceState
             {
                 Id = r.ReadInt32(), Type = (PieceType)r.ReadByte(), Pos = r.ReadVector3(), RotY = r.ReadSingle(), Removed = r.ReadBoolean(),
-                Hp = r.ReadInt32(), MaxHp = r.ReadInt32(), Level = r.ReadInt32(), Branch = r.ReadInt32()
+                Hp = r.ReadInt32(), MaxHp = r.ReadInt32(), Level = r.ReadInt32(), Branch = r.ReadInt32(), Guard = r.ReadInt32()
             });
         }
 
@@ -1120,7 +1120,7 @@ namespace HtfFortress
 
         // A tag over each damaged turret in sight, so a wave shows at a glance which one to repair (Owen's list, 5). Not over
         // the one whose look card is up: the card says it all.
-        private class HpTag { public RectTransform Root; public CanvasGroup Group; public UnityEngine.UI.Image Back; public TextMeshProUGUI Lv; public Hud.Bar Bar; public int Level; }
+        private class HpTag { public RectTransform Root; public CanvasGroup Group; public UnityEngine.UI.Image Back; public TextMeshProUGUI Lv; public Hud.Bar Bar, Guard; public int Level; }
         private readonly List<HpTag> _hpTags = new List<HpTag>();
         private const float TagFar = 55f, TagFull = 35f; // gone past TagFar metres, faded in from there to TagFull
 
@@ -1135,7 +1135,7 @@ namespace HtfFortress
                 foreach (var kv in _states)
                 {
                     var s = kv.Value;
-                    if (s.Hp >= s.MaxHp || s.Id == carded || !Catalog.IsTurret(s.Type)) continue;
+                    if (s.Hp >= s.MaxHp && s.Guard <= 0 || s.Id == carded || !Catalog.IsTurret(s.Type)) continue; // (a guard shows too)
                     Vector3 at = s.Pos + Vector3.up * (Catalog.MuzzleHeight(s.Type, s.Level) + 0.8f);
                     float dist = Vector3.Distance(eye, at);
                     if (dist > TagFar) continue;
@@ -1157,6 +1157,8 @@ namespace HtfFortress
                     }
                     float f = s.MaxHp > 0 ? (float)s.Hp / s.MaxHp : 1f;
                     tag.Bar.Set(f, Hud.HealthColor(f));
+                    if (tag.Guard.Back.gameObject.activeSelf != s.Guard > 0) tag.Guard.Back.gameObject.SetActive(s.Guard > 0);
+                    if (s.Guard > 0) tag.Guard.Set((float)s.Guard / Mathf.Max(1, Catalog.GuardCap(s.MaxHp)));
                 }
             }
             for (int i = n; i < _hpTags.Count; i++) if (_hpTags[i].Root.gameObject.activeSelf) _hpTags[i].Root.gameObject.SetActive(false);
@@ -1172,6 +1174,8 @@ namespace HtfFortress
             t.Back = Hud.Box(t.Root, mid, Vector2.zero, new Vector2(100f, 22f), new Color(0.07f, 0.09f, 0.12f, 0.8f), 11f);
             t.Lv = Hud.Label(t.Back.transform, "", 13f, new Vector2(0f, 0.5f), new Vector2(8f, 0f), new Vector2(40f, 20f), TextAlignmentOptions.Left, Hud.Gold, bold: true, pivot: new Vector2(0f, 0.5f));
             t.Bar = Hud.Bar.Make(t.Back.transform, new Vector2(1f, 0.5f), new Vector2(-8f, 0f), new Vector2(40f, 7f), Hud.Good, new Vector2(1f, 0.5f));
+            t.Guard = Hud.Bar.Make(t.Back.transform, new Vector2(1f, 0.5f), new Vector2(-8f, -6.5f), new Vector2(40f, 3f), Hud.GuardColor, new Vector2(1f, 0.5f)); // an overheal guard, under it
+            t.Guard.Back.gameObject.SetActive(false);
             _hpTags.Add(t);
             return t;
         }
@@ -1385,8 +1389,7 @@ namespace HtfFortress
         public bool ServerDamage(Collider col, int dmg)
         {
             if (!col || !_pieceIds.TryGetValue(col.gameObject, out int id) || !_serverPieces.TryGetValue(id, out var state)) return false;
-            dmg = Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Turrets.ShieldAt(state.Pos))));
-            state.Hp -= dmg;
+            Hit(ref state, Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Turrets.ShieldAt(state.Pos)))));
             if (state.Hp <= 0) { Lost(state); AutoTest.Count("pieces_destroyed"); return true; }
             _serverPieces[id] = state;
             InstanceFinder.ServerManager.Broadcast(state);
@@ -1397,7 +1400,7 @@ namespace HtfFortress
         public void ServerDamagePiece(int id, int dmg)
         {
             if (!_serverPieces.TryGetValue(id, out var s)) return;
-            s.Hp -= Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Turrets.ShieldAt(s.Pos))));
+            Hit(ref s, Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Turrets.ShieldAt(s.Pos)))));
             if (s.Hp <= 0) { Lost(s); AutoTest.Count("pieces_destroyed"); return; }
             _serverPieces[id] = s;
             InstanceFinder.ServerManager.Broadcast(s);
@@ -1410,7 +1413,7 @@ namespace HtfFortress
             foreach (var p in _serverPieces.Values.Where(p => (p.Pos - at).sqrMagnitude <= radius * radius).ToList())
             {
                 var s = p;
-                s.Hp -= Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Turrets.ShieldAt(s.Pos))));
+                Hit(ref s, Mathf.Max(1, Mathf.RoundToInt(dmg * (1f - Turrets.ShieldAt(s.Pos)))));
                 if (s.Hp <= 0) { Lost(s); AutoTest.Count("pieces_destroyed"); continue; }
                 _serverPieces[s.Id] = s;
                 InstanceFinder.ServerManager.Broadcast(s);
@@ -1432,17 +1435,47 @@ namespace HtfFortress
             return hit;
         }
 
-        // Host: a repair tower's pulse: every damaged piece within `radius` but itself gets `hp` back. Returns where they are.
-        // A repair tower's tick on one building: `share` of its own health back (Turrets.Mend picks the strongest tower).
-        public bool ServerMend(int id, float share, out Vector3 at)
+        // A hit on a piece: its guard takes it first.
+        public static void Hit(ref PieceState s, int dmg)
+        {
+            int g = Mathf.Min(Mathf.Max(0, s.Guard), dmg);
+            s.Guard -= g;
+            s.Hp -= dmg - g;
+        }
+
+        // `add` health mended on a piece: what goes past full health tops up its guard, up to `cap` (0: no guard from this).
+        public static void Mend(ref PieceState s, int add, int cap)
+        {
+            int over = Mathf.Max(0, s.Hp + add - s.MaxHp);
+            s.Hp = Mathf.Min(s.MaxHp, s.Hp + add);
+            if (s.Guard < cap) s.Guard = Mathf.Min(cap, s.Guard + over);
+        }
+
+        // Host: the repair towers' tick on one building (Turrets.Mend): `share` of its own health back, past full health
+        // into its guard if an overheal tower reaches it. False if it changed nothing.
+        public bool ServerMend(int id, float share, bool guard, out Vector3 at)
         {
             at = default;
-            if (!_serverPieces.TryGetValue(id, out var s) || s.Hp >= s.MaxHp) return false;
-            s.Hp = Mathf.Min(s.MaxHp, s.Hp + Mathf.Max(1, Mathf.CeilToInt(s.MaxHp * share)));
+            if (!_serverPieces.TryGetValue(id, out var s)) return false;
+            int hp = s.Hp, g = s.Guard;
+            Mend(ref s, Mathf.Max(1, Mathf.CeilToInt(s.MaxHp * share)), guard ? Catalog.GuardCap(s.MaxHp) : 0);
+            if (s.Hp == hp && s.Guard == g) return false;
             _serverPieces[id] = s;
             InstanceFinder.ServerManager.Broadcast(s);
             at = s.Pos;
             return true;
+        }
+
+        // Host, once a second: guards no overheal tower reaches any more fade.
+        public void ServerFadeGuards(HashSet<int> kept)
+        {
+            foreach (var p in _serverPieces.Values.Where(p => p.Guard > 0 && !kept.Contains(p.Id)).ToList())
+            {
+                var s = p;
+                s.Guard = Mathf.Max(0, s.Guard - Mathf.CeilToInt(s.MaxHp * Catalog.GuardFade));
+                _serverPieces[s.Id] = s;
+                InstanceFinder.ServerManager.Broadcast(s);
+            }
         }
 
         // Pieces a walker has to break through (it walks over floors and ramps).
@@ -1515,6 +1548,24 @@ namespace HtfFortress
             }
             _states[s.Id] = s;
             Models.Tint(go, s.MaxHp > 0 ? Mathf.Clamp01((float)s.Hp / s.MaxHp) : 1f);
+            GuardFilm.Set(go, s.Guard > 0 ? (float)s.Guard / Mathf.Max(1, Catalog.GuardCap(s.MaxHp)) : 0f);
+        }
+
+        // A piece's look in the world: its own meshes, not the reach shown round it (BubbleRing) or a guard's film.
+        public static Bounds LookBounds(GameObject go)
+        {
+            Bounds b = default; bool any = false;
+            foreach (var r in go.GetComponentsInChildren<Renderer>())
+            {
+                if (!r.enabled || r is ParticleSystemRenderer || r is LineRenderer || Around(r.transform, go.transform)) continue;
+                if (any) b.Encapsulate(r.bounds); else { b = r.bounds; any = true; }
+            }
+            return any ? b : new Bounds(go.transform.position + Vector3.up, Vector3.one * 2f);
+        }
+        private static bool Around(Transform t, Transform piece)
+        {
+            for (; t && t != piece; t = t.parent) if (t.name == "BubbleRing" || t.name == "GuardFilm") return true;
+            return false;
         }
 
         private float _nextHitSound;

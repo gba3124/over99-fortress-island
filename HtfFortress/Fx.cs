@@ -41,7 +41,7 @@ namespace HtfFortress
     {
         private static Fx _instance;
         private NetworkManager _registeredOn;
-        private Material _tracer, _ball, _blast, _spit, _bolt, _zap, _fire, _heal, _mendGlow, _dust, _water, _stone, _shell, _sniperTracer, _flameCore;
+        private Material _tracer, _ball, _blast, _spit, _bolt, _zap, _fire, _heal, _mendGlow, _surgeCore, _dust, _water, _stone, _shell, _sniperTracer, _flameCore;
         private static Mesh _flameMesh;
 
         static Fx()
@@ -325,6 +325,7 @@ namespace HtfFortress
                 _fire = BossVfx.Glow(new Color(1f, 0.42f, 0.08f), 5f);
                 _heal = BossVfx.Glow(new Color(0.45f, 1f, 0.5f), 5f);
                 _mendGlow = BossVfx.Glow(new Color(0.3f, 0.9f, 0.4f), 2.5f);
+                _surgeCore = BossVfx.Glow(new Color(0.85f, 1f, 0.8f), 9f);
                 _dust = Models.Make(new Color(0.62f, 0.5f, 0.36f));
                 _water = Models.Make(new Color(0.55f, 0.8f, 1f), new Color(0.4f, 0.7f, 1f));
                 _stone = Models.Make(new Color(0.32f, 0.32f, 0.34f));
@@ -359,7 +360,7 @@ namespace HtfFortress
                 case FxKind.Sell: SoundRandom("Sell_0", 1, 3, e.To, 1f); StartCoroutine(Blast(e.To + Vector3.up, 1.6f, _tracer)); break;
                 case FxKind.Burn: if (!ClientSettings.Reduced) StartCoroutine(Blast(e.To + Random.insideUnitSphere * 1.5f, 1.4f, _fire)); break; // every burning fish, twice a second
                 case FxKind.Heal: StartCoroutine(Zap(e.From, e.To, _heal)); if (!ClientSettings.Reduced) StartCoroutine(Blast(e.To, 0.9f, _heal)); Sound("QuestReceived", e.To, 0.25f, AudioDistance.Short); break;
-                case FxKind.Mend: Mending(e.PieceId, e.Who, e.From, e.To); break;
+                case FxKind.Mend: if (e.Key == "free") Freeing(e.PieceId, e.Who, e.From, e.To); else Mending(e.PieceId, e.Who, e.From, e.To, e.Key == "surge"); break;
                 case FxKind.Dust: StartCoroutine(Blast(e.To, 2.2f, _dust)); SoundRandom("ItemImpactHeavy_V", 1, 3, e.To, 0.8f); break;
                 case FxKind.Wave: Splash(e.To, 3f); SoundRandom("WhaleLanding_0", 1, 3, e.To, 1f, AudioDistance.Long); break;
                 case FxKind.Decoy: StartCoroutine(Duck(e.To, e.Arg)); break;
@@ -595,8 +596,9 @@ namespace HtfFortress
         // Repair towers (Owen: 「修補都沒有光線還是什麼連結綠綠的修復效果 每次修復也可以綠綠的有很多＋符號」; a 0.09 s spark every
         // other second went unseen): every second a green arc from the tower to each building it mends, held while it keeps
         // mending, two beads of light running down it, and green pluses bursting off the building where they land.
-        // PieceId the tower, Who the building (0: the lighthouse).
-        private sealed class Tether { public LineRenderer Glow, Core; public Vector3 From, To; public float Until; }
+        // PieceId the tower, Who the building (0: the lighthouse). Key "surge": a surge tower's double mending on something
+        // nearly down, a thicker, brighter arc; "free": a cleansing tower freeing a turret a boss shut down (Freeing).
+        private sealed class Tether { public LineRenderer Glow, Core; public Vector3 From, To; public float Until; public bool Surge; }
         private readonly Dictionary<long, Tether> _tethers = new Dictionary<long, Tether>();
         private const int MaxTethers = 30, ArcPoints = 14;
         private const float TetherHold = 1.25f, TetherFade = 0.3f, BeadFlight = 0.45f, LighthouseRadius = 2.6f;
@@ -607,41 +609,52 @@ namespace HtfFortress
             return Vector3.Lerp(Vector3.Lerp(a, c, k), Vector3.Lerp(c, b, k), k);
         }
 
-        private void Mending(int tower, int building, Vector3 from, Vector3 to)
+        private void Mending(int tower, int building, Vector3 from, Vector3 to, bool surge)
         {
             var body = MendBounds(building, to);
             if (building != 0) to = body.center + Vector3.up * body.extents.y * 0.25f; // into the building, a little over its middle
             long key = ((long)tower << 32) | (uint)building;
-            if (_tethers.TryGetValue(key, out var t) && t.Core) { t.From = from; t.To = to; t.Until = Time.time + TetherHold; }
-            else if (_tethers.Count < MaxTethers) StartCoroutine(TetherRun(key, from, to));
-            StartCoroutine(Beads(from, to, body, building == 0));
+            if (_tethers.TryGetValue(key, out var t) && t.Core) { t.From = from; t.To = to; t.Until = Time.time + TetherHold; t.Surge = surge; }
+            else if (_tethers.Count < MaxTethers) StartCoroutine(TetherRun(key, from, to, surge));
+            StartCoroutine(Beads(from, to, body, building == 0, surge));
+        }
+
+        // A cleansing tower frees a turret: a bright arc to it, its chains or stone break off (BossMoves.Free), a white-green
+        // flash, a ring along the ground, a shower of green sparks and a chime.
+        private void Freeing(int tower, int turret, Vector3 from, Vector3 to)
+        {
+            BossMoves.Free(turret);
+            Mending(tower, turret, from, to, true);
+            var b = MendBounds(turret, to);
+            BossVfx.Flash(b.center, 2.6f, new Color(0.85f, 1f, 0.85f), 0.3f);
+            BossVfx.Shock(new Vector3(b.center.x, b.min.y + 0.1f, b.center.z), 3f, new Color(0.55f, 1f, 0.6f), 0.45f);
+            WeaponFx.Emit(WeaponFx.Sparks("Green"), b.center, ClientSettings.Reduced ? 6 : 16, Vector3.up);
+            Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), b.center, 0.8f, AudioDistance.Long);
         }
 
         // What the pluses spread over: the building's look, or round the lighthouse's lower floors.
         private static Bounds MendBounds(int building, Vector3 at)
         {
             var go = building != 0 && BuildSystem.Instance ? BuildSystem.Instance.PieceObject(building) : null;
-            if (go)
-            {
-                Bounds b = default; bool any = false;
-                foreach (var r in go.GetComponentsInChildren<Renderer>())
-                    if (r.enabled && !(r is ParticleSystemRenderer) && !(r is LineRenderer)) { if (any) b.Encapsulate(r.bounds); else { b = r.bounds; any = true; } }
-                if (any) return b;
-            }
+            if (go) return BuildSystem.LookBounds(go); // (not a bubble tower's dome, or a repair tower's reach while building)
             return building == 0 ? new Bounds(at + Vector3.up * 0.5f, new Vector3(2f, 3f, 2f) * LighthouseRadius) : new Bounds(at, Vector3.one * 1.4f);
         }
 
-        private IEnumerator TetherRun(long key, Vector3 from, Vector3 to)
+        private IEnumerator TetherRun(long key, Vector3 from, Vector3 to, bool surge)
         {
-            var t = new Tether { From = from, To = to, Until = Time.time + TetherHold, Glow = WeaponFx.Line("MendGlow", _mendGlow, 0f), Core = WeaponFx.Line("MendCore", _heal, 0f) };
+            var t = new Tether { From = from, To = to, Until = Time.time + TetherHold, Surge = surge, Glow = WeaponFx.Line("MendGlow", _mendGlow, 0f), Core = WeaponFx.Line("MendCore", _heal, 0f) };
             t.Glow.positionCount = t.Core.positionCount = ArcPoints;
             _tethers[key] = t;
             var pts = new Vector3[ArcPoints];
-            float born = Time.time;
+            float born = Time.time, sk = surge ? 1f : 0f;
             while (t.Core && t.Glow && Time.time < t.Until + TetherFade)
             {
                 float w = Mathf.Clamp01((Time.time - born) / 0.15f) * Mathf.Clamp01((t.Until + TetherFade - Time.time) / TetherFade)
                           * (0.85f + 0.15f * Mathf.Sin((Time.time - born) * 8f)); // grows in, breathes, thins away when the mending stops
+                sk = Mathf.MoveTowards(sk, t.Surge ? 1f : 0f, Time.deltaTime * 4f); // a surge swells it, brighter at its heart
+                w *= 1f + 0.7f * sk;
+                var core = sk > 0.5f ? _surgeCore : _heal;
+                if (t.Core.sharedMaterial != core) t.Core.sharedMaterial = core;
                 for (int i = 0; i < ArcPoints; i++) pts[i] = MendArc(t.From, t.To, i / (ArcPoints - 1f));
                 t.Glow.SetPositions(pts); t.Core.SetPositions(pts);
                 t.Glow.widthMultiplier = 0.24f * w; t.Core.widthMultiplier = 0.06f * w;
@@ -652,9 +665,9 @@ namespace HtfFortress
             if (t.Core) Destroy(t.Core.gameObject);
         }
 
-        private IEnumerator Beads(Vector3 from, Vector3 to, Bounds body, bool lighthouse)
+        private IEnumerator Beads(Vector3 from, Vector3 to, Bounds body, bool lighthouse, bool surge)
         {
-            int n = ClientSettings.Reduced ? 1 : 2;
+            int n = ClientSettings.Reduced ? 1 : surge ? 3 : 2;
             const float gap = 0.15f;
             var beads = new GameObject[n];
             for (int i = 0; i < n; i++) beads[i] = Shape(PrimitiveType.Sphere, _heal);

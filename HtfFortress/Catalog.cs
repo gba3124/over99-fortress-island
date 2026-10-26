@@ -22,10 +22,26 @@ namespace HtfFortress
         public static string BranchName(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch));
         public static string BranchDesc(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch) + "_d");
         public const float BeyondDamage = 1.3f, BeyondHp = 1.25f, BeyondCost = 1.35f, BeyondRange = 0.4f, BeyondRangeMax = 4f;
-        // A repair tower gives a building a share of the building's own health a second (two over one building: only the stronger,
-        // Turrets.Mend), and the lighthouse a quarter of that share (Owen 2026-10-26: two repair towers and he never had to
-        // look at a tower's health; it used to be a flat amount growing ×1.3 a level, stacking, the lighthouse half of it).
-        public const float MendCore = 0.25f, BeyondHeal = 1.03f;
+        // A repair tower gives a building a share of the building's own health a second, and the lighthouse a quarter of that
+        // share (Owen 2026-10-26: two repair towers and he never had to look at a tower's health; it used to be a flat amount
+        // growing ×1.3 a level, stacking in full, the lighthouse half of it). Towers over the same building stack, strongest
+        // first, each worth MendFalloff of the one before (Owen 2026-10-27, on only the strongest counting: 「不會疊加也太爛」).
+        public const float MendCore = 0.25f, BeyondHeal = 1.03f, MendFalloff = 0.6f;
+        // Surge (B side): ×SurgeMult on a building under SurgeBelow of its health. Overheal (B1): mending past full health
+        // becomes a guard of up to GuardMax of it, taking hits first, fading GuardFade of it a second out of an overheal
+        // tower's reach. Cleanse (B2): frees a turret a boss has shut down (once it's been CleanseAfter s), each turret once
+        // every CleanseEvery s, and it can't be shut down again for CleanseImmune s.
+        public const float SurgeMult = 2f, SurgeBelow = 0.3f, GuardMax = 0.25f, GuardFade = 0.05f, CleanseAfter = 1f, CleanseEvery = 10f, CleanseImmune = 3f;
+        public static int GuardCap(int maxHp) => Mathf.RoundToInt(maxHp * GuardMax);
+
+        // Several repair towers over one building: strongest first, each worth MendFalloff of the one before.
+        public static float MendStack(List<float> shares)
+        {
+            shares.Sort((a, b) => b.CompareTo(a));
+            float sum = 0f, k = 1f;
+            foreach (float x in shares) { sum += x * k; k *= MendFalloff; }
+            return sum;
+        }
 
         public static bool IsTurret(PieceType t) => (t >= PieceType.Gun && t <= PieceType.Tesla) || t >= PieceType.Flame;
         public static bool NeedsBlueprint(PieceType t) => t >= PieceType.Flame && t != PieceType.Mender;
@@ -215,6 +231,7 @@ namespace HtfFortress
             public float BossMult, WaterMult;
             public float Cone, Shield; // flamethrower half-angle; bubble damage reduction
             public float Heal, CoreMend; // repair tower: share of a building's health a second; the lighthouse's share of that
+            public bool Surge, Overheal, Cleanse; // repair tower: its B side, B1, B2 (see SurgeMult)
         }
 
         // Branch 1 = A, 2 = B (chosen when upgrading to Lv3).
@@ -295,7 +312,7 @@ namespace HtfFortress
                     s.Damage = 0; s.Interval = 1f; s.Range = new[] { 7f, 8f, 9f }[i];
                     s.Heal = new[] { 0.008f, 0.01f, 0.012f }[i]; s.CoreMend = MendCore;
                     if (first == 1) s.Range += 4f;                         // Wide
-                    if (first == 2) s.Heal *= 1.6f;                        // Surge
+                    if (first == 2) { s.Heal *= 1.6f; s.Surge = true; }    // Surge: and twice that on what's nearly down
                     break;
                 case PieceType.Tesla:
                     s.Damage = new[] { 14, 22, 33 }[i]; s.Interval = new[] { 1.2f, 1f, 0.85f }[i]; s.Range = new[] { 11f, 13f, 15f }[i];
@@ -347,7 +364,7 @@ namespace HtfFortress
                     break;
                 case PieceType.Mender:
                     if (first == 1) { if (second == 1) { s.Range += 4f; s.Heal *= 1.3f; } else { s.Range += 2f; s.Heal *= 1.5f; s.CoreMend *= 3f; } } // grand / core mender
-                    else { if (second == 1) { s.Heal *= 1.4f; } else { s.Range += 2f; s.Interval *= 0.8f; } }                                   // overheal / cleanse
+                    else { if (second == 1) { s.Heal *= 1.4f; s.Overheal = true; } else { s.Range += 2f; s.Interval *= 0.8f; s.Cleanse = true; } } // overheal / cleanse
                     break;
             }
         }

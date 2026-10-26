@@ -370,39 +370,70 @@ namespace HtfFortress
         }
 
         // Repair towers: once a second every damaged building in reach gets a share of its own health back (not the tower
-        // itself: two look after each other), from the strongest tower reaching it only, like bubbles; the lighthouse a part
-        // of that share (Catalog.MendCore). Each one mended shows it, every second (Fx.Mending: an arc, beads, pluses), up
-        // to MendShown a tower.
+        // itself: two look after each other). Towers over the same building stack, strongest first, each worth less
+        // (Catalog.MendStack); the lighthouse gets a part of each one's share (Catalog.MendCore). Surge towers give twice as
+        // much to what's nearly down, overheal towers mend past full health into a guard, cleansing towers free turrets a
+        // boss has shut down. Each tower shows what it mends, every second (Fx.Mending: an arc, beads, pluses), up to
+        // MendShown.
         private float _nextMend;
         private const int MendShown = 10;
-        private readonly Dictionary<int, (float share, int by)> _mendBest = new Dictionary<int, (float, int)>();
+        private readonly HashSet<int> _guarded = new HashSet<int>(); // buildings an overheal tower reaches
+        private readonly List<float> _stack = new List<float>();
         private void Mend()
         {
             var menders = BuildSystem.Instance.ServerPieces.Where(x => x.Type == PieceType.Mender && !Bosses.Instance.IsSilenced(x.Id)).ToList();
-            if (menders.Count == 0) return;
-            _mendBest.Clear();
+            var pieces = BuildSystem.Instance.ServerPieces.ToList(); // ServerMend writes into it
+            var reached = new Dictionary<int, List<(float share, int by, bool surge)>>(); // building (0: the lighthouse) -> the towers reaching it
+            void Reach(int id, float share, int by, bool surge)
+            {
+                if (!reached.TryGetValue(id, out var l)) reached[id] = l = new List<(float, int, bool)>();
+                l.Add((surge ? share * Catalog.SurgeMult : share, by, surge));
+            }
+            _guarded.Clear();
             Vector3 core = Siege.Instance.CorePos;
-            float coreShare = 0f; int coreBy = 0;
+            bool coreLow = Siege.Instance.CoreHp < Siege.Instance.CoreMax * Catalog.SurgeBelow;
             foreach (var m in menders)
             {
                 var s = Catalog.Turret(m.Type, m.Level, m.Branch);
                 float share = s.Heal / s.Interval, r2 = s.Range * s.Range;
-                foreach (var p in BuildSystem.Instance.ServerPieces)
-                    if (p.Id != m.Id && p.Hp < p.MaxHp && (p.Pos - m.Pos).Flat().sqrMagnitude <= r2 && (!_mendBest.TryGetValue(p.Id, out var b) || share > b.share))
-                        _mendBest[p.Id] = (share, m.Id);
-                if ((core - m.Pos).Flat().sqrMagnitude <= r2 && share * s.CoreMend > coreShare) { coreShare = share * s.CoreMend; coreBy = m.Id; }
+                foreach (var p in pieces)
+                {
+                    if (p.Id == m.Id || (p.Pos - m.Pos).Flat().sqrMagnitude > r2) continue;
+                    Reach(p.Id, share, m.Id, s.Surge && p.Hp < p.MaxHp * Catalog.SurgeBelow);
+                    if (s.Overheal) _guarded.Add(p.Id);
+                    if (s.Cleanse && Catalog.IsTurret(p.Type) && Bosses.Instance.SilencedFor(p.Id) >= Catalog.CleanseAfter
+                        && Time.time >= Bosses.Instance.FreedAt(p.Id) + Catalog.CleanseEvery)
+                    {
+                        Bosses.Instance.Free(p.Id);
+                        Fx.Send(FxKind.Mend, Muzzle(m), p.Pos + Vector3.up * 0.6f, m.Id, who: p.Id, key: "free");
+                        AutoTest.Count("cleansed");
+                    }
+                }
+                if ((core - m.Pos).Flat().sqrMagnitude <= r2) Reach(0, share * s.CoreMend, m.Id, s.Surge && coreLow);
             }
-            var healed = new Dictionary<int, List<(Vector3 at, int id)>>();
-            void Mark(int by, Vector3 at, int id) { if (!healed.TryGetValue(by, out var l)) healed[by] = l = new List<(Vector3, int)>(); l.Add((at, id)); }
-            foreach (var kv in _mendBest) if (BuildSystem.Instance.ServerMend(kv.Key, kv.Value.share, out var at)) Mark(kv.Value.by, at, kv.Key);
-            if (coreShare > 0f && Siege.Instance.ServerHealCore(coreShare) > 0) Mark(coreBy, core + Vector3.up * 2f, 0);
+            BuildSystem.Instance.ServerFadeGuards(_guarded);
+            var healed = new Dictionary<int, List<(Vector3 at, int id, bool surge)>>();
+            foreach (var kv in reached)
+            {
+                _stack.Clear();
+                foreach (var t in kv.Value) _stack.Add(t.share);
+                float total = Catalog.MendStack(_stack);
+                Vector3 at = core + Vector3.up * 2f;
+                if (kv.Key == 0 ? Siege.Instance.ServerHealCore(total) <= 0 : !BuildSystem.Instance.ServerMend(kv.Key, total, _guarded.Contains(kv.Key), out at)) continue;
+                foreach (var t in kv.Value)
+                {
+                    if (!healed.TryGetValue(t.by, out var l)) healed[t.by] = l = new List<(Vector3, int, bool)>();
+                    l.Add((at, kv.Key, t.surge));
+                }
+            }
             foreach (var m in menders)
             {
                 if (!healed.TryGetValue(m.Id, out var list)) continue;
                 AutoTest.Count("mended");
-                foreach (var h in list.Take(MendShown)) Fx.Send(FxKind.Mend, m.Pos + Vector3.up * Catalog.MuzzleHeight(m.Type, m.Level), h.at + Vector3.up * 0.6f, m.Id, who: h.id);
+                foreach (var h in list.Take(MendShown)) Fx.Send(FxKind.Mend, Muzzle(m), h.at + Vector3.up * 0.6f, m.Id, who: h.id, key: h.surge ? "surge" : null);
             }
         }
+        private static Vector3 Muzzle(PieceState m) => m.Pos + Vector3.up * Catalog.MuzzleHeight(m.Type, m.Level);
 
         // Bubble shields: the strongest one covering `pos` (0 = none). Used by every piece-damage path on the host.
         public static float ShieldAt(Vector3 pos)

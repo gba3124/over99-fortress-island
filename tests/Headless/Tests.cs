@@ -567,6 +567,29 @@ namespace HtfFortress.Headless
             }
             Check(Catalog.Turret(PieceType.Mender, 9, 4).CoreMend > Catalog.Turret(PieceType.Mender, 9, 3).CoreMend * 2.5f, "the core mender mends the lighthouse three times as much");
             Check(Catalog.Turret(PieceType.Mender, 9, 6).Interval < Catalog.Turret(PieceType.Mender, 9, 5).Interval, "cleanse mends more often");
+            // Owen 2026-10-27 「不會疊加也太爛」: towers over one building stack, strongest first, each worth 60% of the one before.
+            Func<float[], float> stack = x => Catalog.MendStack(x.ToList());
+            Check(Math.Abs(stack(new[] { 0.01f }) - 0.01f) < 1e-6f && Math.Abs(stack(new[] { 0.01f, 0.01f }) - 0.016f) < 1e-6f
+                  && Math.Abs(stack(new[] { 0.01f, 0.01f, 0.01f }) - 0.0196f) < 1e-6f && Math.Abs(stack(new[] { 0.005f, 0.01f }) - 0.013f) < 1e-6f
+                  && stack(Enumerable.Repeat(0.01f, 30).ToArray()) < 0.025f && stack(new float[0]) == 0f,
+                  $"repair towers stack 100/60/36%, strongest first, never past 2.5x (two: {stack(new[] { 0.01f, 0.01f }) * 100:0.00}%)");
+            Check(Catalog.Turret(PieceType.Mender, 3, 2).Surge && !Catalog.Turret(PieceType.Mender, 3, 1).Surge
+                  && Catalog.Turret(PieceType.Mender, 9, 5) is var b1 && b1.Surge && b1.Overheal && !b1.Cleanse
+                  && Catalog.Turret(PieceType.Mender, 9, 6) is var b2 && b2.Surge && b2.Cleanse && !b2.Overheal
+                  && !Catalog.Turret(PieceType.Mender, 9, 3).Overheal && !Catalog.Turret(PieceType.Mender, 9, 4).Cleanse,
+                  "surge on the repair tower's B side (and both its splits), overheal on B1, cleanse on B2");
+            var ps = new PieceState { Hp = 100, MaxHp = 100, Guard = 30 };
+            BuildSystem.Hit(ref ps, 10); bool soaked = ps.Hp == 100 && ps.Guard == 20;
+            BuildSystem.Hit(ref ps, 50); bool through = ps.Hp == 70 && ps.Guard == 0;
+            BuildSystem.Hit(ref ps, 5); bool bare = ps.Hp == 65 && ps.Guard == 0;
+            Check(soaked && through && bare, $"a guard takes hits first, the rest goes through (ended {ps.Hp} hp, {ps.Guard} guard)");
+            ps = new PieceState { Hp = 95, MaxHp = 100 };
+            BuildSystem.Mend(ref ps, 10, 0); bool plain = ps.Hp == 100 && ps.Guard == 0;
+            BuildSystem.Mend(ref ps, 10, Catalog.GuardCap(100)); bool over = ps.Guard == 10;
+            BuildSystem.Mend(ref ps, 30, Catalog.GuardCap(100)); bool capped = ps.Guard == 25 && Catalog.GuardCap(100) == 25;
+            ps = new PieceState { Hp = 90, MaxHp = 100, Guard = 40 };
+            BuildSystem.Mend(ref ps, 20, 25); bool kept = ps.Hp == 100 && ps.Guard == 40;
+            Check(plain && over && capped && kept, "mending past full health: nothing without overheal, a guard up to 25% with it, never cut down");
             // The Lv9 split must change something (from 0.2.9 to 0.3.0 it was applied to a copy and dropped: every split did nothing).
             foreach (var t in all.Where(Catalog.HasSecondBranch))
                 for (int b = 3; b <= 6; b++)

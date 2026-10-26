@@ -260,6 +260,7 @@ namespace HtfFortress
         }
 
         public static Color HealthColor(float f) => f > 0.6f ? Good : f > 0.3f ? Gold : Bad;
+        public static readonly Color GuardColor = new Color(0.82f, 1f, 0.86f); // an overheal guard: white-green
 
         // "[U] upgrade" -> the key drawn as a little key cap. Only for hint strings (rarity labels use brackets too).
         private static readonly Regex KeyRx = new Regex(@"\[([^\]\[]{1,14})\]");
