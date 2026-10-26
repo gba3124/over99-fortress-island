@@ -8,6 +8,8 @@ from mathutils import Matrix, Vector
 
 OUT = os.path.dirname(bpy.data.filepath)
 EXISTING = {m.name for m in bpy.data.materials}
+# ONLY=Name,Name...: rebuild and export just these (the scripts also hold models later scripts replaced, e.g. MenderHead).
+ONLY = set(filter(None, os.environ.get("ONLY", "").split(",")))
 
 
 def mat(name, kd, ke=(0.0, 0.0, 0.0), force=False):
@@ -81,6 +83,9 @@ class Builder:
         self._tag({f for v in res["verts"] for f in v.link_faces}, self.mats.index(m))
 
     def finish(self):
+        if ONLY and self.name not in ONLY:
+            self.bm.free()
+            return bpy.data.objects.get(self.name)
         old = bpy.data.objects.get(self.name)
         if old:
             bpy.data.objects.remove(old, do_unlink=True)
@@ -101,6 +106,7 @@ class Builder:
 
 
 def export(objs):
+    objs = [o for o in objs if o and (not ONLY or o.name in ONLY)]
     bpy.ops.wm.save_mainfile()
     for ob in objs:
         for o in bpy.context.scene.objects:

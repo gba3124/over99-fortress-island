@@ -244,7 +244,8 @@ namespace HtfFortress
         };
 
         // Every fortress weapon. The muzzles are the bore's centre on the front face of each OBJ (tools/make_weapon_models*.py
-        // put the barrel axis at x 0, y 0.09-0.115); the hook's is its seat, behind the hook's tip.
+        // put the barrel axis at x 0, y 0.09-0.13); the hook's is its seat, behind the grapple; the claw's the gap between its
+        // fingers' tips; the whirlpool's the front of its turbine duct.
         public static Grip Spec(Gear g)
         {
             switch (g)
@@ -255,12 +256,12 @@ namespace HtfFortress
                 case Gear.Hook: return G(Display.Pistol, 0.32f, new Vector3(0f, 0.09f, 0.29f));
                 case Gear.JellyGun: return G(Display.Pistol, 0.30f, new Vector3(0f, 0.095f, 0.305f));
                 case Gear.StarThrower: return G(Display.Pistol, 0.26f, new Vector3(0f, 0.09f, 0.205f));
-                case Gear.LobsterClaw: return G(Display.Pistol, 0.32f, new Vector3(0f, 0.087f, 0.36f));
+                case Gear.LobsterClaw: return G(Display.Pistol, 0.32f, new Vector3(0f, 0.11f, 0.36f));
                 case Gear.Absorber: return G(Display.Long, 0.36f, new Vector3(0f, 0.11f, 0.262f));
-                case Gear.Whirlpool: return G(Display.Long, 0.40f, new Vector3(0f, 0.10f, 0.38f));
+                case Gear.Whirlpool: return G(Display.Long, 0.40f, new Vector3(0f, 0.10f, 0.315f));
                 case Gear.NetLauncher: return G(Display.Long, 0.42f, new Vector3(0f, 0.10f, 0.313f));
                 case Gear.WaterCannon: return G(Display.Long, 0.40f, new Vector3(0f, 0.09f, 0.398f));
-                case Gear.Rocket: return G(Display.Heavy, 0.60f, new Vector3(0f, 0.115f, 0.38f));
+                case Gear.Rocket: return G(Display.Heavy, 0.60f, new Vector3(0f, 0.13f, 0.41f));
                 case Gear.Gatling: return G(Display.Heavy, 0.55f, new Vector3(0f, 0.11f, 0.443f)); // Owen: "加特林好小把，我以為會很大"
                 // Not guns: the boomerang stood up by its elbow, the puffer in the palm, the conch tipped up like a horn, the
                 // whistle raised toward the mouth. They leave from where the hand lets go / the air comes out.

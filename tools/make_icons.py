@@ -358,7 +358,7 @@ for g, m in (("Laser", "LaserGun"), ("PoisonGas", "GasGun"), ("Boomerang", "Boom
              ("BubbleGun", "BubbleGun"), ("Hook", "HookGun"), ("Whirlpool", "WhirlCannon"), ("Conch", "Conch"),
              ("NetLauncher", "NetLauncher"), ("JellyGun", "JellyGun"), ("WaterCannon", "WaterCannon"), ("PufferBomb", "PufferBomb"),
              ("StarThrower", "StarThrower"), ("LobsterClaw", "LobsterClaw"), ("Rocket", "Rocket"), ("Absorber", "Absorber"), ("Gatling", "Gatling")):
-    ICONS["Gear" + g] = ([(m, (0, 0, 0))], SIDE if g != "Boomerang" else HIGH)
+    ICONS["Gear" + g] = ([(m, (0, 0, 0))], SIDE if g != "Boomerang" else (-0.25, -0.45, 1.0))  # the wooden V from above, tilted to show its edge
 for p in ("Wall", "WallStone", "WallMetal", "Floor", "Ramp", "Spikes"):
     ICONS["Piece" + p] = ([(p, (0, 0, 0))], FRONT)
 FRAME = {}  # icon: (objects the frame is fitted to, how much lower the frame reaches, in parts of its height)
@@ -513,7 +513,7 @@ for name, (parts, view) in ICONS.items():
         oname, loc = part[0], part[1]
         o = obj(oname)
         o.location = loc
-        o.rotation_euler = part[2] if len(part) > 2 else (math.radians(70), 0, 0) if oname == "Boomerang" else (math.radians(45), 0, 0) if oname == "Ramp" else (0, 0, 0)  # the V stood up; the ramp tilted as the game lays it
+        o.rotation_euler = part[2] if len(part) > 2 else (math.radians(45), 0, 0) if oname == "Ramp" else (0, 0, 0)  # the ramp tilted as the game lays it
         o.scale = part[3] if len(part) > 3 else (1, 1, 1)
         o.hide_render = False
         objs.append(o)

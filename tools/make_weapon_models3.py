@@ -9,7 +9,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bkit import Builder, M, export, mat, torus, tube
+from bkit import Builder, M, export, loft, mat, torus, tube
 
 iron, steel, brass, black, white = (M(n) for n in ("Iron", "Steel", "Brass", "BombBlack", "White"))
 olive = mat("WpnOlive", (0.36, 0.42, 0.22), force=True)
@@ -42,22 +42,36 @@ def rocket(b, y0, length, r, body, nose, fins):
         b.beam((d[0] * r, y0 + length * 0.5, d[2] * r), (d[0] * r * 2.1, y0 + length * 0.62, d[2] * r * 2.1), r * 0.25, fins, segs=4)
 
 
-# ---------- Rocket: a fat olive launch tube on the shoulder, flared at the back, a red warhead peeking out the front ----------
-g = Builder("Rocket", [olive, olive_dark, warhead, brass, iron, black, white])
+# ---------- Rocket: a long olive launch tube over the shoulder (rear exhaust bell, a shoulder pad), a pistol grip and a front
+# grip under it, flip-up iron sights on top, a red warhead seated in the muzzle. Tube axis at z = Z; the muzzle ring's centre is
+# WeaponItems.Spec(Rocket).Muzzle ----------
+g = Builder("Rocket", [olive, olive_dark, warhead, iron, black, white])
 grip(g, iron, olive_dark)
-trigger(g, brass, iron)
-Z = 0.115
-g.cyl(0.055, 0.44, (0, -0.06, Z), olive, segs=14, axis="Y")                  # the tube
-g.cone(0.075, 0.055, 0.07, (0, 0.195, Z), olive_dark, segs=14, axis="Y")     # flared back end (wide end toward +Y)
-g.cyl(0.04, 0.02, (0, 0.23, Z), black, segs=14, axis="Y")                   # its dark mouth
-for y in (-0.24, -0.02, 0.12):                                                # bands
-    g.cyl(0.059, 0.018, (0, y, Z), olive_dark, segs=14, axis="Y")
-g.cone(0.05, 0.0, 0.1, (0, -0.33, Z), warhead, segs=12, axis="Y")            # the warhead out of the front
-g.cyl(0.05, 0.02, (0, -0.28, Z), white, segs=12, axis="Y")                   # a white stripe behind it
-g.box((0.018, 0.05, 0.05), (0, -0.2, Z + 0.065), iron)                       # front sight
-g.box((0.05, 0.03, 0.035), (0, 0.06, Z + 0.07), iron)                        # rear sight
-g.box((0.012, 0.012, 0.03), (0, 0.06, Z + 0.1), brass)
-g.box((0.03, 0.09, 0.03), (0, -0.12, Z - 0.07), olive_dark)                  # front handle under the tube
+trigger(g, iron, iron)
+Z, R, FRONT, BACK = 0.13, 0.064, -0.41, 0.26
+g.cyl(R, BACK - FRONT - 0.06, (0, (FRONT + BACK - 0.06) / 2, Z), olive, segs=16, axis="Y")      # the tube
+g.cyl(R + 0.008, 0.035, (0, FRONT + 0.0175, Z), olive_dark, segs=16, axis="Y")                 # muzzle ring
+g.cyl(R - 0.006, 0.004, (0, FRONT - 0.001, Z), black, segs=16, axis="Y")                       # the bore round the warhead
+loft(g, [[(r * math.cos(k * math.tau / 16), y, Z + r * math.sin(k * math.tau / 16)) for k in range(16)] for y, r in
+         ((BACK - 0.08, R), (BACK - 0.04, R + 0.008), (BACK, R + 0.036), (BACK + 0.014, R + 0.038))], olive_dark, caps=(olive_dark, black))  # exhaust bell
+g.cyl(R + 0.024, 0.004, (0, BACK + 0.01, Z), black, segs=16, axis="Y")                         # its dark throat
+for y in (-0.3, -0.06, 0.12):                                                                  # straps
+    g.cyl(R + 0.004, 0.022, (0, y, Z), olive_dark, segs=16, axis="Y")
+g.cyl(R + 0.0045, 0.012, (0, -0.2, Z), white, segs=16, axis="Y")                               # a stencil stripe
+g.cyl(R - 0.008, 0.05, (0, FRONT - 0.02, Z), warhead, segs=12, axis="Y")                       # the warhead seated in the muzzle
+g.cone(R - 0.008, 0.012, 0.085, (0, FRONT - 0.087, Z), warhead, segs=12, axis="Y")
+g.cyl(R - 0.0075, 0.01, (0, FRONT - 0.04, Z), white, segs=12, axis="Y")
+g.box((0.05, 0.13, 0.03), (0, 0.17, Z - R - 0.008), black)                                     # shoulder pad
+g.box((0.04, 0.06, 0.02), (0, 0.0, Z - R - 0.005), iron)                                       # the grip's mount
+g.box((0.03, 0.04, 0.11), (0, -0.2, Z - R - 0.05), olive_dark, rot=(-0.18, 0, 0))              # front grip
+g.box((0.036, 0.046, 0.012), (0, -0.21, Z - R - 0.106), iron, rot=(-0.18, 0, 0))
+g.box((0.012, 0.012, 0.04), (0, -0.36, Z + R + 0.016), iron)                                   # front post on its block
+g.box((0.024, 0.03, 0.012), (0, -0.36, Z + R + 0.002), iron)
+g.box((0.024, 0.03, 0.012), (0, 0.04, Z + R + 0.002), iron)                                     # rear aperture, flipped up
+torus(g, (0, 0.04, Z + R + 0.036), (0, 1, 0), 0.014, 0.0045, iron, segs=10, tsegs=4)
+g.box((0.006, 0.006, 0.02), (0, 0.04, Z + R + 0.014), iron)
+g.box((0.03, 0.05, 0.03), (-R - 0.012, 0.08, Z), olive_dark)                                    # the firing box at the side
+g.box((0.008, 0.02, 0.008), (-R - 0.03, 0.08, Z + 0.005), white)
 out.append(g.finish())
 
 # ---------- RocketShell (flying): a red-nosed rocket with fins and a glowing flame at the back ----------
@@ -96,32 +110,34 @@ for k, (x, y, z, yaw) in enumerate(((-0.06, -0.04, 0.22, 0.3), (0.07, 0.03, 0.23
 tube(g, [(-0.19, 0, 0.2), (-0.14, 0, 0.42), (0.14, 0, 0.42), (0.19, 0, 0.2)], 0.012, wicker, segs=5)
 out.append(g.finish())
 
-# ---------- Absorber: a fat pink body, a wide gold-rimmed intake at the front, a chamber on top (two gold hoops on a collar:
+# ---------- Absorber: a fat slate body, a wide steel-rimmed intake round a glowing void at the front, a chamber on top (two steel hoops on a collar:
 # the glass and what's in it are added in the game, at Absorber.cs DomeAt = (0, DOME_Z, -DOME_Y), DomeR = DOME_R), a hose
 # from the mouth up into it ----------
-pink = mat("WpnAbsorbPink", (0.96, 0.46, 0.7), force=True)
-pink_dark = mat("WpnAbsorbPinkDark", (0.66, 0.22, 0.46), force=True)
-gullet = mat("WpnAbsorbMouth", (0.12, 0.04, 0.1), force=True)
+shell = mat("WpnAbsorbShell", (0.22, 0.24, 0.3), force=True)
+shell_dark = mat("WpnAbsorbShellDark", (0.12, 0.12, 0.17), force=True)
+void = mat("WpnAbsorbVoid", (0.1, 0.02, 0.16), (0.32, 0.08, 0.55), force=True)
+ring = mat("WpnAbsorbRing", (0.7, 0.74, 0.8), force=True)
 DOME_Y, DOME_Z, DOME_R = -0.02, 0.21, 0.055
-g = Builder("Absorber", [pink, pink_dark, brass, iron, white, gullet])
-grip(g, iron, pink_dark)
-trigger(g, brass, iron)
+g = Builder("Absorber", [shell, shell_dark, ring, iron, void])
+grip(g, iron, shell_dark)
+trigger(g, ring, iron)
 Z = 0.11
-g.cyl(0.052, 0.27, (0, -0.005, Z), pink, segs=14, axis="Y")                   # the body
-g.ico(0.052, (0, 0.13, Z), pink, subdiv=2)                                    # its round back
-g.cone(0.052, 0.1, 0.11, (0, -0.195, Z), pink_dark, segs=16, axis="Y")       # the intake, widening to the front
-g.cyl(0.088, 0.006, (0, -0.247, Z), gullet, segs=16, axis="Y")                # dark inside it
-torus(g, (0, -0.25, Z), (0, 1, 0), 0.1, 0.012, brass, segs=18, tsegs=4)       # its gold rim
-for y in (-0.09, 0.07):                                                       # white bands
-    g.cyl(0.055, 0.016, (0, y, Z), white, segs=14, axis="Y")
-g.cyl(0.05, 0.03, (0, DOME_Y, 0.165), brass, segs=14)                         # the chamber's collar
-torus(g, (0, DOME_Y, 0.18), (0, 0, 1), DOME_R, 0.008, brass, segs=16, tsegs=4)
+g.cyl(0.052, 0.27, (0, -0.005, Z), shell, segs=14, axis="Y")                   # the body
+g.ico(0.052, (0, 0.13, Z), shell, subdiv=2)                                    # its round back
+g.cone(0.052, 0.1, 0.11, (0, -0.195, Z), shell_dark, segs=16, axis="Y")       # the intake, widening to the front
+g.cyl(0.088, 0.006, (0, -0.247, Z), void, segs=16, axis="Y")                # the void inside it
+g.ico(0.05, (0, -0.225, Z), void, subdiv=2)                                   # its core, bulging out of the dark
+torus(g, (0, -0.25, Z), (0, 1, 0), 0.1, 0.012, ring, segs=18, tsegs=4)       # its steel rim
+for y in (-0.09, 0.07):                                                       # steel bands
+    g.cyl(0.055, 0.016, (0, y, Z), ring, segs=14, axis="Y")
+g.cyl(0.05, 0.03, (0, DOME_Y, 0.165), ring, segs=14)                         # the chamber's collar
+torus(g, (0, DOME_Y, 0.18), (0, 0, 1), DOME_R, 0.008, ring, segs=16, tsegs=4)
 for ax in ((1, 0), (0, 1)):                                                   # two hoops over the glass
     arc = [(ax[0] * DOME_R * math.cos(t), DOME_Y + ax[1] * DOME_R * math.cos(t), DOME_Z + DOME_R * math.sin(t)) for t in (math.pi * k / 8 for k in range(9))]
-    tube(g, arc, 0.004, brass, segs=4)
-g.ico(0.012, (0, DOME_Y, DOME_Z + DOME_R + 0.008), brass, subdiv=1)           # a knob on top
-tube(g, [(0.07, -0.2, Z), (0.08, -0.15, Z + 0.035), (0.06, -0.08, 0.175), (0.035, DOME_Y - 0.03, 0.19)], 0.01, pink_dark, segs=5)  # the hose
-g.box((0.03, 0.08, 0.035), (0, -0.12, Z - 0.068), pink_dark)                  # front handle under the body
+    tube(g, arc, 0.004, ring, segs=4)
+g.ico(0.012, (0, DOME_Y, DOME_Z + DOME_R + 0.008), ring, subdiv=1)           # a knob on top
+tube(g, [(0.07, -0.2, Z), (0.08, -0.15, Z + 0.035), (0.06, -0.08, 0.175), (0.035, DOME_Y - 0.03, 0.19)], 0.01, shell_dark, segs=5)  # the hose
+g.box((0.03, 0.08, 0.035), (0, -0.12, Z - 0.068), shell_dark)                  # front handle under the body
 out.append(g.finish())
 
 export(out)

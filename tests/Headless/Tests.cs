@@ -871,6 +871,10 @@ namespace HtfFortress.Headless
                 var spec = WeaponItems.Spec(g);
                 var (lo, hi) = Box(Weapons.ModelName(g));
                 var size = hi - lo;
+                // The art budget (CURRENT-DESIGN, GUN-UPGRADE-ROUND2): at most 1500 triangles and 6 materials a weapon.
+                var lines = File.ReadLines(Path.Combine(Src, "Models", Weapons.ModelName(g) + ".obj")).ToList();
+                int tris = lines.Where(l => l.StartsWith("f ")).Sum(l => l.Split(' ').Length - 3), mats = lines.Where(l => l.StartsWith("usemtl ")).Distinct().Count();
+                Check(tris <= 1500 && mats <= 6, $"{g}: {tris} triangles, {mats} materials (budget 1500 / 6)");
                 Check(spec.HasMuzzle && spec.Longest > 0.1f && spec.Longest <= Math.Max(size.x, Math.Max(size.y, size.z)) + 1e-3f, $"{g}: no spec, or held bigger than its model ({spec.Longest} m)");
                 var m = spec.Muzzle;
                 Check(m.x >= lo.x - 0.01f && m.x <= hi.x + 0.01f && m.y >= lo.y - 0.01f && m.y <= hi.y + 0.01f && m.z >= lo.z - 0.01f && m.z <= hi.z + 0.01f, $"{g}: muzzle {m} outside its model {lo}..{hi}");
