@@ -380,7 +380,7 @@ namespace HtfFortress
             // 比做一個功能重複的漁網箱子好 可以直接拔掉漁網箱子".)
             var market = Station("MarketStall", MarketLocal, MarketYaw, out var mp);
             MarketPos = mp;
-            Lamp(market.transform, new Vector3(0f, 2.15f, 0.6f), new Color(1f, 0.9f, 0.75f), 4.5f, 0.9f, false); // under the awning, over the counter
+            Lamp(market.transform, new Vector3(0f, 2.115f, 0.1f), new Color(1f, 0.9f, 0.75f), 4.5f, 0.9f, false); // in the lantern under the awning, over the counter
             CounterPos = Ground(market.transform.TransformPoint(new Vector3(0f, 0f, 1.6f)));
             var counter = new GameObject("StallCounter"); // over the counter top (tools/make_station_models.py: ~1 m up, 3 m wide)
             counter.layer = BuildSystem.PieceLayer;
