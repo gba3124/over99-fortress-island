@@ -64,6 +64,8 @@ namespace HtfFortress
             Put(Stand(Home), r);
         }
 
+        protected override bool Grounded => true;
+
         protected override IEnumerator Act()
         {
             yield return WalkTo(TowerPoint(34f), 5.0f, 2.8f, Phase2 ? 3.2f : 5f); // a melee boss: get right up to the tower
@@ -74,7 +76,7 @@ namespace HtfFortress
                 case 2: yield return Shell(Phase2 ? 5f : 4f); break;
                 default: yield return Anvil(); break;
             }
-            yield return Breath;
+            yield return Prowl(Breath); // (a lobster: it scuttles sideways round the tower it's after)
         }
         protected override IEnumerator NewMove() => Anvil();
 
@@ -84,18 +86,16 @@ namespace HtfFortress
         {
             float r = Reach + 5.5f, inner = Reach * 0.6f; // the hole is its own footprint (the warning rings its body)
             Vector3 g = new Vector3(Pos.x, GroundY(Pos), Pos.z);
-            Quaternion rot = T.rotation;
+            var claws = Lean(Pos + Forward, 28f);
             Shout("wardenAnvil");
             Send("warden.heat", Pos, Pos, 1400);
-            yield return Warn("ring", g, g, r, 1.4f, breakable: true, extra: Mathf.RoundToInt(inner * 100f),
-                              during: k => Put(Pos, rot * Quaternion.Euler(-28f * Mathf.Sin(Mathf.Min(1f, k * 1.3f) * Mathf.PI * 0.5f), 0f, 0f)));
-            Put(Pos, rot * Quaternion.Euler(8f, 0f, 0f));
+            yield return Warn("ring", g, g, r, 1.4f, breakable: true, extra: Mathf.RoundToInt(inner * 100f), during: Coil(claws, 1.4f));
+            claws(-Over, 1f);
             var disc = Circle(g, r);
             Hit(p => disc(p) && (p - g).Flat().sqrMagnitude >= inner * inner, 90f, 28f, 40f, g, 11f);
             Send("warden.anvil", g, Pos + Forward * Reach * 0.8f, 0, Mathf.RoundToInt(r * 100f));
             AutoTest.Count("warden_anvil");
-            yield return 0.5f;
-            Put(Pos, rot);
+            yield return Recoil(claws, 0.5f);
         }
 
         private IEnumerator Guillotine(int times)
@@ -104,15 +104,14 @@ namespace HtfFortress
             {
                 Vector3 at = Target();
                 yield return Turn(at, 0.35f);
-                Quaternion r = Facing(at - Pos);
+                var claws = Lean(at, 22f);
                 Shout("wardenGuillotine");
-                yield return Warn("circle", at, at, 2.6f, 1.3f, breakable: true, during: k => Put(Pos, r * Quaternion.Euler(-22f * Mathf.Sin(k * Mathf.PI * 0.5f), 0f, 0f)));
-                Put(Pos, r * Quaternion.Euler(6f, 0f, 0f));
+                yield return Warn("circle", at, at, 2.6f, 1.3f, breakable: true, during: Coil(claws, 1.3f));
+                claws(-Over, 1f);
                 Hit(Circle(at, 2.6f), 170f, 30f, 45f, at, 9f);
                 Send("warden.snap", at, Pos);
                 AutoTest.Count("warden_guillotine");
-                yield return 0.45f;
-                Put(Pos, r);
+                yield return Recoil(claws, 0.45f);
             }
         }
 
@@ -134,7 +133,9 @@ namespace HtfFortress
             if (turrets.Count == 0) { yield return Guillotine(1); yield break; }
             foreach (var t in turrets) WarnOnly("lane", Pos, t.Pos, 0.9f, 0.9f);
             Send("warden.swing", Pos, Pos, 900);
-            yield return 0.9f;
+            var throwing = Lean(turrets.Aggregate(Vector3.zero, (s, t) => s + t.Pos) / turrets.Count, 16f, back: 0.4f);
+            yield return Posed(0.9f, Coil(throwing, 0.9f));
+            throwing(-Over, 1f);
             float hold = 6f + Tier * 0.3f;
             foreach (var t in turrets)
             {
@@ -144,7 +145,7 @@ namespace HtfFortress
             }
             Shout("wardenChains");
             AutoTest.Count("warden_shackles", turrets.Count);
-            yield return 0.5f;
+            yield return Recoil(throwing, 0.5f);
         }
 
         private IEnumerator Shell(float seconds)
@@ -163,12 +164,11 @@ namespace HtfFortress
             Shout("wardenPhase2");
             Send("phase2", Pos, Pos);
             Send("warden.heat", Pos, Pos, 1300);
-            Quaternion r = T.rotation;
-            for (float t = 0f; t < 1.3f && Alive; t += Time.deltaTime) { Put(Pos, r * Quaternion.Euler(-30f * Mathf.Sin(Mathf.Min(1f, t / 1.3f * 1.4f) * Mathf.PI * 0.5f), 0f, 0f)); yield return null; }
-            Put(Pos, r * Quaternion.Euler(6f, 0f, 0f));
+            var claws = Lean(Pos + Forward, 30f);
+            yield return Posed(1.3f, Coil(claws, 1.3f));
+            claws(-Over, 1f);
             Send("warden.snap", Pos + Forward * Reach * 0.8f, Pos);
-            yield return 0.5f;
-            Put(Pos, r);
+            yield return Recoil(claws, 0.5f);
         }
     }
 
@@ -202,15 +202,29 @@ namespace HtfFortress
             Send("urchin.land", Home, Home, 0, Mathf.RoundToInt(Reach * 80f));
         }
 
+        protected override bool Grounded => true;
+        protected override IEnumerator Prowl(float seconds) => Sidestep(seconds, TowerPoint(30f), 1.6f, 4f, put: (p, r) => RollTo(p));
+        protected override IEnumerator Sag(float seconds) { yield return seconds; } // a ball: nothing to sag
+
+        // Its spikes pressed into the ground (x 1, `depth` m down) and sprung up off it (below 0): a squat as it gathers
+        // itself, a hop as it lets go.
+        private System.Action<float, float> Squat(float depth)
+        {
+            Vector3 p0 = Pos;
+            return (x, _) => Put(p0 - Vector3.up * depth * x, _spin);
+        }
+
         protected override IEnumerator Act()
         {
             Vector3 goal = TowerPoint(30f);
+            float v = Vel.Flat().magnitude;
             for (float t = 0f; t < (Phase2 ? 2.5f : 3.5f) && Alive && (goal - Pos).Flat().magnitude > 4.5f; t += Time.deltaTime)
             {
                 Vector3 dir = (goal - Pos).Flat().normalized;
                 var wall = WallAhead(dir);
-                if (wall != null) { BuildSystem.Instance.ServerDamagePiece(wall.Value.Id, Scaled(40f)); Send("stomp", wall.Value.Pos, wall.Value.Pos); yield return 0.5f; continue; }
-                RollTo(Stand(Pos + dir * 4.5f * SlowFactor * Time.deltaTime));
+                if (wall != null) { BuildSystem.Instance.ServerDamagePiece(wall.Value.Id, Scaled(40f)); Send("stomp", wall.Value.Pos, wall.Value.Pos); v = 0f; yield return 0.5f; continue; }
+                v = Mathf.MoveTowards(v, 4.5f, 8f * Time.deltaTime); // it gets rolling
+                RollTo(Stand(Pos + dir * v * SlowFactor * Time.deltaTime));
                 yield return null;
             }
             switch (Pick(4f, 3.5f, 2.5f, Phase2 ? 3f : 0f))
@@ -220,7 +234,7 @@ namespace HtfFortress
                 case 2: yield return Bloom(Phase2 ? 4 : 3); break;
                 default: yield return Nova(); break;
             }
-            yield return Breath;
+            yield return Prowl(Breath);
         }
         protected override IEnumerator NewMove() => Nova();
 
@@ -233,7 +247,9 @@ namespace HtfFortress
                 dir = (b - a).Flat().normalized;
                 Shout("urchinCrush");
                 Vector3 d0 = dir;
-                yield return Warn("lane", new Vector3(a.x, GroundY(a), a.z), b, Radius * 2f + 1.2f, 1.4f, breakable: true, during: k => Spin(d0, 200f + 900f * k));
+                // It revs up spinning, rocking back off its mark, and is let go down the lane from it.
+                yield return Warn("lane", new Vector3(a.x, GroundY(a), a.z), b, Radius * 2f + 1.2f, 1.4f, breakable: true,
+                                  during: k => { Spin(d0, 200f + 900f * k); Put(Stand(a - d0 * 1.1f * Mathf.Max(0f, Windup(k, 1.4f))), _spin); });
                 var hit = new HashSet<int>();
                 var hurt = new HashSet<Player>();
                 float len = (b - a).Flat().magnitude;
@@ -256,10 +272,12 @@ namespace HtfFortress
             var spots = BossBrains.Spots(Pos, n, 20f);
             Send("urchin.bristle", Pos, Pos, 1100);
             foreach (var s in spots) WarnOnly("circle", s, s, 1.3f, 1.1f);
-            yield return 1.1f;
+            var squat = Squat(0.5f);
+            yield return Posed(1.1f, Coil(squat, 1.1f));
+            squat(-Over, 1f);
             Vector3 top = Pos + Vector3.up * Radius;
             foreach (var s in spots) Send("urchin.spike", top, s);
-            yield return 0.45f;
+            yield return Recoil(squat, 0.45f);
             foreach (var s in spots)
             {
                 Hit(Circle(s, 1.3f), 45f, 16f, 20f, s, 5f);
@@ -274,8 +292,10 @@ namespace HtfFortress
             Shout("urchinBloom");
             for (int i = 0; i < pulses && Alive; i++)
             {
-                float r = Radius + 4f + i * 0.9f;
-                yield return Warn("ring", Pos, Pos, r, i == 0 ? 1.1f : 0.65f, breakable: i == 0, extra: Mathf.RoundToInt(Radius * 100f));
+                float r = Radius + 4f + i * 0.9f, s = i == 0 ? 1.1f : 0.65f;
+                var squat = Squat(0.4f);
+                yield return Warn("ring", Pos, Pos, r, s, breakable: i == 0, extra: Mathf.RoundToInt(Radius * 100f), during: Coil(squat, s));
+                squat(-Over, 1f);
                 var inside = Circle(Pos, r);
                 Hit(p => inside(p) && (p - Pos).Flat().magnitude >= Radius * 0.8f, 50f, 22f, 25f, Pos, 10f);
                 Send("urchin.bloom", Pos, Pos, 0, Mathf.RoundToInt(r * 100f));
@@ -302,7 +322,9 @@ namespace HtfFortress
             Shout("urchinNova");
             Send("urchin.bristle", Pos, Pos, 1200);
             Vector3 d0 = (Core - Pos).Flat().normalized;
-            yield return Warn("ring", g, g, r, 1.2f, breakable: true, extra: Mathf.RoundToInt(Radius * 100f), during: k => Spin(d0, 60f + 300f * k));
+            var squat = Squat(0.6f);
+            yield return Warn("ring", g, g, r, 1.2f, breakable: true, extra: Mathf.RoundToInt(Radius * 100f), during: k => { Spin(d0, 60f + 300f * k); squat(Windup(k, 1.2f), 1f); });
+            squat(-Over, 1f);
             var inside = Circle(g, r);
             Hit(p => inside(p) && (p - g).Flat().magnitude >= Radius * 0.8f, 65f, 24f, 30f, g, 11f);
             Send("urchin.nova", g, g, 0, Mathf.RoundToInt(r * 100f));
@@ -313,7 +335,7 @@ namespace HtfFortress
                 Hazard(s, 1.1f, 6f, Scaled(4f), 0);
             }
             AutoTest.Count("urchin_nova");
-            yield return 0.4f;
+            yield return Recoil(squat, 0.4f);
         }
 
         // A thousand needles at once: it spins up on the spot, faster and faster, and every spike flares out (1.9 s, no harm).
@@ -323,9 +345,11 @@ namespace HtfFortress
             Send("phase2", Pos, Pos);
             Send("urchin.bristle", Pos, Pos, 1400);
             Vector3 d = (Core - Pos).Flat().normalized;
-            for (float t = 0f; t < 1.4f && Alive; t += Time.deltaTime) { Spin(d, 200f + 1200f * t / 1.4f); yield return null; }
+            var squat = Squat(0.7f);
+            for (float t = 0f; t < 1.4f && Alive; t += Time.deltaTime) { Spin(d, 200f + 1200f * t / 1.4f); squat(Windup(t / 1.4f, 1.4f), 1f); yield return null; }
+            squat(-Over, 1f);
             Send("urchin.bloom", Pos, Pos, 0, Mathf.RoundToInt((Radius + 5f) * 100f));
-            yield return 0.5f;
+            yield return Recoil(squat, 0.5f);
         }
     }
 
@@ -369,14 +393,15 @@ namespace HtfFortress
                 case 2: yield return Devour(Phase2 ? 2 : 1); break;
                 default: yield return Blackout(); break;
             }
-            yield return Breath;
+            yield return Prowl(Breath);
         }
         protected override IEnumerator NewMove() => Blackout();
+        protected override IEnumerator Prowl(float seconds) => Sidestep(seconds, Core, 1.2f, 3.5f); // drifting along the shore
 
         private IEnumerator Veil()
         {
             Send("angler.lure", Pos, Pos, 1200);
-            yield return 1.2f;
+            yield return Posed(1.2f, Coil(Lean(Core, 12f, back: 0.8f, rise: 0.4f), 1.2f));
             Lights(false);
             _veilUntil = Time.time + 15f;
             Shout("anglerVeil");
@@ -387,7 +412,9 @@ namespace HtfFortress
         {
             Shout("anglerLure", true);
             Send("angler.lure", Pos, Pos, 1700);
-            yield return Warn("circle", new Vector3(Pos.x, GroundY(Pos), Pos.z), Pos, Reach + 1f, 1.7f, breakable: true);
+            var rear = Lean(Core, 14f, back: 1f);
+            yield return Warn("circle", new Vector3(Pos.x, GroundY(Pos), Pos.z), Pos, Reach + 1f, 1.7f, breakable: true, during: Coil(rear, 1.7f));
+            rear(-Over, 1f);
             Vector3 lantern = Lantern;
             Send("angler.flash", lantern, Pos);
             int n = 0;
@@ -402,8 +429,11 @@ namespace HtfFortress
             }
             AutoTest.Count("angler_lure");
             AutoTest.Count("angler_charmed", n);
-            yield return 0.6f;
+            yield return Recoil(rear, 0.6f);
         }
+
+        // Its lunges: shot off fast from drawn back, slowing as its jaws close on the end of the lane.
+        private static float Lunge(float k) => 1f - (1f - k) * (1f - k);
 
         private IEnumerator Devour(int times)
         {
@@ -413,14 +443,14 @@ namespace HtfFortress
                 Vector3 a = new Vector3(Pos.x, GroundY(Pos), Pos.z), b = a + dir * Mathf.Min(26f, (target - Pos).Flat().magnitude + 6f);
                 b.y = GroundY(b);
                 yield return Turn(target, 0.4f);
-                yield return Warn("lane", a, b, 5f, 1.3f, breakable: true);
+                yield return Warn("lane", a, b, 5f, 1.3f, breakable: true, during: Coil(Lean(target, 12f, back: 1.6f), 1.3f));
                 var hit = new HashSet<int>();
                 var hurt = new HashSet<Player>();
                 Vector3 from = Pos, to = new Vector3(b.x, GroundY(b) + Foot + 0.8f, b.z);
                 Send("angler.lunge", from, to, 700);
                 for (float t = 0f; t < 0.7f && Alive; t += Time.deltaTime)
                 {
-                    Vector3 p = Vector3.Lerp(from, to, t / 0.7f);
+                    Vector3 p = Vector3.Lerp(from, to, Lunge(t / 0.7f));
                     Put(p, Facing(dir));
                     HitOnce(hit, hurt, Circle(p, 3f), 110f, 32f, 50f, p, 10f);
                     foreach (var f in FortressPlugin.Alive.Where(c => c && c != Body && c._hp.Value > 0 && !EnemyCatalog.IsPuppet(KindOf(c)) && (c.transform.position - p).Flat().magnitude < 3.2f).ToList())
@@ -449,14 +479,14 @@ namespace HtfFortress
             yield return Turn(target, 0.4f);
             Shout("anglerBlackout");
             Send("angler.blackout", Pos, Pos, 2000);
-            yield return Warn("lane", a, b, 4.5f, 2f);
+            yield return Warn("lane", a, b, 4.5f, 2f, during: Coil(Lean(target, 12f, back: 1.6f), 2f));
             var hit = new HashSet<int>();
             var hurt = new HashSet<Player>();
             Vector3 from = Pos, to = new Vector3(b.x, GroundY(b) + Foot + 0.8f, b.z);
             Send("angler.lunge", from, to, 600);
             for (float t = 0f; t < 0.6f && Alive; t += Time.deltaTime)
             {
-                Vector3 p = Vector3.Lerp(from, to, t / 0.6f);
+                Vector3 p = Vector3.Lerp(from, to, Lunge(t / 0.6f));
                 Put(p, Facing(dir));
                 HitOnce(hit, hurt, Circle(p, 3f), 90f, 28f, 40f, p, 10f);
                 yield return null;
@@ -470,7 +500,7 @@ namespace HtfFortress
             Shout("anglerPhase2");
             Send("phase2", Pos, Pos);
             Send("angler.lure", Pos, Pos, 1500);
-            yield return 1.5f;
+            yield return Posed(1.5f, Coil(Lean(Core, 16f, back: 1f, rise: 0.6f), 1.5f));
             Lights(false);
             _veilUntil = 0f;
         }
@@ -499,13 +529,40 @@ namespace HtfFortress
             yield return Rear(1.1f, 38f);
         }
 
-        // On its hind legs (turned about its back hooves).
+        protected override bool Grounded => true;
+
+        // On its hind legs (turned about its back hooves): up onto them fast, pawing the air there (BossSteed), and its
+        // forehooves brought down hard in the last fifth.
         private IEnumerator Rear(float seconds, float deg)
         {
             Vector3 p0 = Pos;
             Quaternion r = T.rotation;
-            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime) { Pose(p0, r, deg * Mathf.Sin(t / seconds * Mathf.PI)); yield return null; }
+            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime)
+            {
+                float k = t / seconds, up = k < 0.3f ? 1f - (1f - k / 0.3f) * (1f - k / 0.3f) : k < 0.8f ? 1f : 1f - (k - 0.8f) * (k - 0.8f) * 25f;
+                Pose(p0, r, deg * up);
+                yield return null;
+            }
             Put(p0, r);
+        }
+
+        // Between moves it prances: a light hop aside, and round to face the fort again.
+        protected override IEnumerator Prowl(float seconds)
+        {
+            Vector3 at = TowerPoint(30f), off = (Pos - at).Flat();
+            float t0 = Time.time;
+            if (seconds >= 1f && off.sqrMagnitude > 1f)
+            {
+                Vector3 side = Vector3.Cross(Vector3.up, off.normalized) * (Random.value < 0.5f ? 3.5f : -3.5f);
+                foreach (var to in new[] { Pos + side, Pos - side })
+                {
+                    float y = LandY(to);
+                    if ((to - Center).Flat().magnitude > 28f || y < WaterManager.GetWaterHeight(to) + 0.2f || Mathf.Abs(y - LandY(Pos)) > 2f) continue;
+                    yield return Leap(Stand(to), 1.6f, 0.55f);
+                    break;
+                }
+            }
+            yield return Turn(at, Mathf.Max(0.1f, seconds - (Time.time - t0)));
         }
         private void Pose(Vector3 p0, Quaternion r, float deg)
         {
@@ -527,7 +584,7 @@ namespace HtfFortress
                 case 1: yield return Stomp(); break;
                 default: yield return Cavalry(Phase2 ? 5 : 3); break;
             }
-            yield return Breath;
+            yield return Prowl(Breath);
         }
 
         private IEnumerator Charge(int times)
@@ -541,8 +598,9 @@ namespace HtfFortress
                 Vector3 p0 = Pos;
                 Quaternion r = T.rotation;
                 Shout("steedCharge");
-                yield return Warn("lane", new Vector3(a.x, GroundY(a), a.z), b, Mathf.Max(3.4f, 2f * (Reach * 0.6f + 1f)), i == 0 ? 1.2f : 0.8f, breakable: true, // as wide as what it hits
-                                  during: k => Pose(p0, r, 24f * Mathf.Sin(Mathf.Min(1f, k * 1.4f) * Mathf.PI)));
+                float s = i == 0 ? 1.2f : 0.8f; // reared, then its forehooves slammed down to set off as the warning runs out
+                yield return Warn("lane", new Vector3(a.x, GroundY(a), a.z), b, Mathf.Max(3.4f, 2f * (Reach * 0.6f + 1f)), s, breakable: true, // as wide as what it hits
+                                  during: k => Pose(p0, r, 24f * Mathf.Max(0f, Windup(k, s))));
                 Put(p0, r);
                 float len = (b - a).Flat().magnitude;
                 Send("steed.charge", a, b, Mathf.RoundToInt(len / 24f * 1000f));
@@ -583,7 +641,7 @@ namespace HtfFortress
                 Shout("steedFissure");
             }
             Send("steed.rear", Pos, Pos);
-            yield return Warn("circle", g, p0, r, 1.4f, breakable: true, during: k => Pose(p0, rot, 42f * Mathf.Sin(Mathf.Min(1f, k * 1.1f) * Mathf.PI * 0.5f)));
+            yield return Warn("circle", g, p0, r, 1.4f, breakable: true, during: k => Pose(p0, rot, 42f * Mathf.Max(0f, Windup(k, 1.4f))));
             Put(p0, rot);
             Hit(Circle(p0, r), 80f, 30f, 40f, p0, 12f);
             Send("steed.stomp", p0, p0, 0, Mathf.RoundToInt(r * 100f));
@@ -646,11 +704,15 @@ namespace HtfFortress
             yield return Surface(Home, 0.7f);
         }
 
+        protected override bool Grounded => true;
+        protected override IEnumerator Prowl(float seconds) => Sidestep(seconds, TowerPoint(30f), 0.9f, 2.5f); // a slow, low shuffle
+
+        // Bursting up out of the sand (fast, slowing as it tops out) and dropping back onto it.
         private IEnumerator Surface(Vector3 to, float seconds)
         {
             Vector3 from = Pos, over = to + Vector3.up * 1.5f;
-            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime) { Put(Vector3.Lerp(from, over, t / seconds)); yield return null; }
-            for (float t = 0f; t < 0.3f && Alive; t += Time.deltaTime) { Put(Vector3.Lerp(over, to, t / 0.3f)); yield return null; }
+            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime) { float k = t / seconds; Put(Vector3.Lerp(from, over, 1f - (1f - k) * (1f - k))); yield return null; }
+            for (float t = 0f; t < 0.3f && Alive; t += Time.deltaTime) { float k = t / 0.3f; Put(Vector3.Lerp(over, to, k * k)); yield return null; }
             Put(to);
         }
 
@@ -664,7 +726,7 @@ namespace HtfFortress
                 case 2: yield return Gaze(); break;
                 default: yield return Geyser(); break;
             }
-            yield return Breath;
+            yield return Prowl(Breath);
         }
         protected override IEnumerator NewMove() => Geyser();
 
@@ -676,7 +738,7 @@ namespace HtfFortress
             Vector3 from = Pos, below = Pos + Vector3.down * (Height + 1.5f), under = to + Vector3.down * (Height + 1.5f);
             _hole = new Vector3(from.x, GroundY(from), from.z);
             Send("stone.dig", _hole, from);
-            for (float t = 0f; t < 0.6f && Alive; t += Time.deltaTime) { Put(Vector3.Lerp(from, below, t / 0.6f)); yield return null; }
+            for (float t = 0f; t < 0.6f && Alive; t += Time.deltaTime) { float k = t / 0.6f; Put(Vector3.Lerp(from, below, k * k)); yield return null; } // digging in, then down
             Siege.Instance.Hide(Body, true);
             float time = Mathf.Max(0.6f, (to - from).Flat().magnitude / 9f);
             Send("stone.tunnel", from, to, Mathf.RoundToInt(time * 1000f));
@@ -704,14 +766,16 @@ namespace HtfFortress
             }
             Shout("stoneSpires");
             Send("stone.rumble", at, at, 1300);
-            yield return Warn("circle", at, at, Reach + 0.5f, 1.3f, breakable: true);
+            var slam = Lean(at + main, 16f); // reared up facing the lines, then down on the ground they burst from
+            yield return Warn("circle", at, at, Reach + 0.5f, 1.3f, breakable: true, during: Coil(slam, 1.3f));
+            slam(-Over, 1f);
             foreach (var e in ends)
             {
                 Send("stone.spires", at, e);
                 Hit(Lane(at, e, 2.4f), 85f, 30f, 40f, at, 10f);
             }
             AutoTest.Count("stone_spires");
-            yield return 0.6f;
+            yield return Recoil(slam, 0.6f);
         }
 
         private IEnumerator Venom(int n)
@@ -720,10 +784,12 @@ namespace HtfFortress
             float r = Phase2 ? 3.2f : 2.4f;
             Send("stone.spines", Pos, Pos, 1000);
             foreach (var s in spots) WarnOnly("circle", s, s, r, 1.0f);
-            yield return 1.0f;
+            var spit = Lean(spots.Count > 0 ? spots.Aggregate(Vector3.zero, (a, s) => a + s) / spots.Count : Pos + Forward, 12f, back: 0.4f);
+            yield return Posed(1.0f, Coil(spit, 1.0f));
+            spit(-Over, 1f);
             Vector3 mouth = Pos + Vector3.up * Height * 0.4f + Forward * Reach * 0.5f;
             foreach (var s in spots) Send("stone.spit", mouth, s);
-            yield return 0.5f;
+            yield return Recoil(spit, 0.5f);
             foreach (var s in spots)
             {
                 Hit(Circle(s, r), 40f, 14f, 18f, s, 4f);
@@ -739,7 +805,9 @@ namespace HtfFortress
             yield return Turn(Pos + dir, 0.4f);
             Shout("stoneGaze");
             Send("stone.eyes", Pos, Pos, 1500);
-            yield return Warn("cone", at, at + dir * 22f, 0f, 1.5f, breakable: true, extra: 35);
+            var glare = Lean(Pos + dir, 10f, back: 0.3f);
+            yield return Warn("cone", at, at + dir * 22f, 0f, 1.5f, breakable: true, extra: 35, during: Coil(glare, 1.5f));
+            glare(-Over, 1f);
             Send("stone.gaze", Pos + Vector3.up * Height * 0.5f, at + dir * 22f, 0, 35);
             var cone = Cone(at, dir, 22f, 35f);
             float hold = 7f + Tier * 0.3f;
@@ -751,7 +819,7 @@ namespace HtfFortress
             }
             HurtPlayers(cone, Mathf.Min(80, Scaled(24f)), Pos, 5f);
             AutoTest.Count("stone_gaze");
-            yield return 0.5f;
+            yield return Recoil(glare, 0.5f);
         }
 
         // Geyser (second form): three venom springs well up in the hole it dug down through and burst every 1.5 s, three
@@ -775,7 +843,9 @@ namespace HtfFortress
                 foreach (var s in springs) Send("stone.vent", s, s, 1500);
                 Send("stone.spines", Pos, Pos, 1200); // over before the next burst's: two throbs at once would leave it swollen
                 for (int i = 1; i < springs.Count; i++) WarnOnly("circle", springs[i], springs[i], 2.2f, 1.5f);
-                yield return Warn("circle", springs[0], springs[0], 2.2f, 1.5f, breakable: true, breakShare: 0.03f); // three short windows: a smaller share each
+                var pump = Lean(hole, 9f); // it heaves, and the springs burst as it bears down
+                yield return Warn("circle", springs[0], springs[0], 2.2f, 1.5f, breakable: true, breakShare: 0.03f, during: Coil(pump, 1.5f)); // three short windows: a smaller share each
+                pump(-Over, 1f);
                 foreach (var s in springs)
                 {
                     Hit(Circle(s, 2.2f), 55f, 20f, 25f, s, 9f);
@@ -793,9 +863,11 @@ namespace HtfFortress
             Send("stone.eyes", Pos, Pos, 1900);
             Send("stone.rumble", Pos, Pos, 1000);
             Send("stone.spines", Pos, Pos, 1000);
-            yield return 1.0f;
+            var heave = Lean(Pos + Forward, 18f, rise: 0.5f);
+            yield return Posed(1.0f, Coil(heave, 1.0f));
+            heave(-Over, 1f);
             Send("stone.rise", Pos, Pos, 0, Mathf.RoundToInt((Reach + 1.5f) * 100f));
-            yield return 0.9f;
+            yield return Recoil(heave, 0.9f);
         }
     }
 
@@ -832,31 +904,64 @@ namespace HtfFortress
                 case 2: yield return Boom(); break;
                 default: yield return DoubleBoom(); break;
             }
-            yield return Breath * 0.6f;
+            yield return Prowl(Breath * 0.6f);
         }
         protected override IEnumerator NewMove() => DoubleBoom();
+        protected override IEnumerator Sag(float seconds) { yield return seconds; } // it lies where it fell
 
+        // Between moves it never hangs in the air: it swings out of its run onto its ring, a little ahead along it (in as
+        // long as gliding back to it took before, or 0.8 s at least), and carries on round for its breath.
+        protected override IEnumerator Prowl(float seconds)
+        {
+            float a = Mathf.Atan2(Pos.z - Center.z, Pos.x - Center.x);
+            float glide = (OrbitPoint(a) - Pos).magnitude / 16f, fly = Mathf.Max(0.8f, glide);
+            yield return FlyOnto(OrbitPoint(a + 0.3f), fly, Tangent(a + 0.3f) * 14f, 28f);
+            _a = a + 0.3f;
+            _bob = 0f;
+            yield return Round(Mathf.Max(0f, seconds - (fly - glide)));
+        }
+
+        private float _bob, _rounded = -9f;
         private IEnumerator Orbit(float seconds)
         {
-            _a = Mathf.Atan2(Pos.z - Center.z, Pos.x - Center.x);
-            yield return Glide(OrbitPoint(_a), 16f);
+            if (Time.time - _rounded > 0.2f) // not still going round from its breath: back onto its ring first
+            {
+                _a = Mathf.Atan2(Pos.z - Center.z, Pos.x - Center.x);
+                yield return Glide(OrbitPoint(_a), 16f);
+                _bob = 0f;
+            }
+            yield return Round(seconds);
+        }
+        private IEnumerator Round(float seconds)
+        {
             for (float t = 0f; t < seconds && Alive; t += Time.deltaTime)
             {
                 _a += 14f / Ring * Time.deltaTime * SlowFactor;
-                Vector3 tangent = new Vector3(-Mathf.Sin(_a), 0f, Mathf.Cos(_a));
-                Put(OrbitPoint(_a) + Vector3.up * Mathf.Sin(t * 1.3f) * 1.2f, Facing(tangent) * Quaternion.Euler(0f, 0f, 28f));
+                _bob += Time.deltaTime;
+                Put(OrbitPoint(_a) + Vector3.up * Mathf.Sin(_bob * 1.3f) * 1.2f, Facing(Tangent(_a)) * Quaternion.Euler(0f, 0f, 28f));
+                _rounded = Time.time;
                 yield return null;
             }
         }
+        private static Vector3 Tangent(float a) => new Vector3(-Mathf.Sin(a), 0f, Mathf.Cos(a));
 
         private IEnumerator Torpedo()
         {
             Vector3 target = TowerPoint(32f), run = Quaternion.Euler(0f, Random.Range(-35f, 35f), 0f) * (target - Pos).Flat().normalized;
             Vector3 a = target - run * 20f, b = target + run * 20f;
             a.y = GroundY(a); b.y = GroundY(b);
-            yield return Glide(a - run * 10f + Vector3.up * 14f, 24f);
+            Vector3 s0 = a - run * 10f;
+            s0.y = GroundY(s0) + Foot + 14f; // where its run sets off
+            yield return Glide(s0, 24f);
             Shout("skyfishDive");
-            yield return Warn("lane", a, b, 4.5f, 1.4f, breakable: true, during: k => Put(Pos, Facing(run) * Quaternion.Euler(18f * k, 0f, 0f)));
+            // It pulls up, nose high, hangs there coiled, and tips over into its dive as the warning runs out (25° nose down,
+            // the way its run sets off).
+            Quaternion r0 = T.rotation, r1 = Facing(run);
+            yield return Warn("lane", a, b, 4.5f, 1.4f, breakable: true, during: k =>
+            {
+                float x = Windup(k, 1.4f, 0.2f);
+                Put(s0 + Vector3.up * 1.2f * Mathf.Max(0f, x), Quaternion.Slerp(r0, r1, Ease(Mathf.Min(1f, k * 4f))) * Quaternion.Euler(x > 0f ? -14f * x : -25f * x / Over, 0f, 0f));
+            });
             float len = (b - a).Flat().magnitude;
             Vector3 last = a - run * 99f;
             for (float d = -10f; d < len + 10f && Alive; d += 28f * SlowFactor * Time.deltaTime)
@@ -894,9 +999,29 @@ namespace HtfFortress
             Vector3 aim = TowerPoint(28f);
             Vector3 a = aim - dir * 30f, b = aim + dir * 30f;
             a.y = GroundY(a); b.y = GroundY(b);
-            yield return Glide(a - dir * 12f + Vector3.up * 24f, 26f);
+            Vector3 s0 = a - dir * 8f;
+            s0.y = GroundY(s0) + Foot + 7f; // where its pass sets off
+            Vector3 high = s0 - dir * 12f + Vector3.up * 15f, top = high + Vector3.up * 1.5f, m1 = dir * 50f * 0.6f;
+            yield return Glide(high, 26f);
             Shout("skyfishBoom");
-            yield return Warn("lane", a, b, 7f, 1.8f, breakable: true);
+            // It climbs a little, nose up, coiled; then in the last 0.6 s it tips over and stoops, swooping out of the dive
+            // onto the start of its pass at the pass's own speed (a Hermite curve into 50 m/s along it).
+            Quaternion r0 = T.rotation;
+            yield return Warn("lane", a, b, 7f, 1.8f, breakable: true, during: k =>
+            {
+                const float stoop = 0.6f / 1.8f;
+                if (k < 1f - stoop)
+                {
+                    float x = Windup(k / (1f - stoop), 1.2f, 0f);
+                    Put(high + Vector3.up * 1.5f * x, Quaternion.Slerp(r0, Facing(dir), Ease(Mathf.Min(1f, k * 4f))) * Quaternion.Euler(-15f * x, 0f, 0f));
+                    return;
+                }
+                float v = (k - (1f - stoop)) / stoop, v2 = v * v, v3 = v2 * v;
+                Vector3 p = (2f * v3 - 3f * v2 + 1f) * top + (3f * v2 - 2f * v3) * s0 + (v3 - v2) * m1;
+                Vector3 d = 6f * (v - v2) * (s0 - top) + (3f * v2 - 2f * v) * m1;
+                Quaternion along = d.sqrMagnitude > 1e-4f ? Quaternion.LookRotation(d) * BossLooks.Turn(Kind) : Facing(dir);
+                Put(p, Quaternion.Slerp(Facing(dir) * Quaternion.Euler(-15f, 0f, 0f), along, Ease(Mathf.Min(1f, v * 3f))));
+            });
             float len = (b - a).Flat().magnitude;
             Send("sky.boom", a + Vector3.up * 7f, b + Vector3.up * 7f, Mathf.RoundToInt(len / 50f * 1000f));
             var hit = new HashSet<int>();
@@ -919,14 +1044,14 @@ namespace HtfFortress
             c.y = GroundY(c);
             float r = 6f + Tier * 0.1f;
             yield return Glide(c + Vector3.up * (Foot + 10f), 24f);
-            Quaternion face = T.rotation;
             Shout("skyfishBoom2");
             WarnOnly("ring", c, c, r * 2f, 2.4f, Mathf.RoundToInt(r * 100f)); // its fill-in runs 0.8 s behind the disc's
-            yield return Warn("circle", c, c, r, 1.6f, during: k => Put(Pos, face * Quaternion.Euler(-25f * k, 0f, 0f)));
-            Put(Pos, face);
+            var stoop = Lean(c + Forward, 25f, rise: 1f); // nose up, climbing, then pitched over at the spot as the air breaks
+            yield return Warn("circle", c, c, r, 1.6f, during: Coil(stoop, 1.6f));
+            stoop(-Over, 1f);
             Hit(Circle(c, r), 90f, 26f, 40f, c, 12f);
             Send("sky.ring", c, c, 0, Mathf.RoundToInt(r * 100f));
-            yield return 0.8f;
+            yield return Recoil(stoop, 0.8f);
             var outer = Circle(c, r * 2f);
             Hit(p => outer(p) && (p - c).Flat().sqrMagnitude > r * r, 90f, 26f, 40f, c, 12f);
             Send("sky.ring", c, c, Mathf.RoundToInt(r * 100f), Mathf.RoundToInt(r * 200f));
@@ -967,8 +1092,8 @@ namespace HtfFortress
     {
         protected override IEnumerator Act()
         {
-            Vector3 c = Pos;
             float a = Random.value * 6.28f;
+            Vector3 c = Pos - new Vector3(Mathf.Cos(a) * 3f, 0f, Mathf.Sin(a) * 3f); // wheeling round from where it is
             for (float t = 0f, end = Random.Range(1.2f, 2.4f); t < end && Alive; t += Time.deltaTime)
             {
                 a += 2.4f * Time.deltaTime;
@@ -977,8 +1102,8 @@ namespace HtfFortress
             }
             var turret = Best(p => Catalog.IsTurret(p.Type), p => -(p.Pos - Pos).Flat().magnitude + Random.value * 12f);
             Vector3 at = turret.HasValue ? turret.Value.Pos : Core;
-            yield return Warn("circle", at, at, 2.2f, 1.0f);
-            yield return Glide(at + Vector3.up * 0.6f, 24f);
+            yield return Warn("circle", at, at, 2.2f, 1.0f, during: Coil(Lean(at, 20f, back: 1f, rise: 0.5f), 1.0f)); // turned on it, drawn back
+            yield return Glide(at + Vector3.up * 0.6f, 24f, dive: true);
             Hit(Circle(at, 2.2f), 80f, 20f, 25f, at, 8f);
             Send("sky.bomb", at, at);
             AutoTest.Count("squadron_hit");
@@ -1020,15 +1145,30 @@ namespace HtfFortress
                 case 3: yield return Whirl(); break;
                 default: yield return TwoArm(); break;
             }
-            yield return Breath;
+            yield return Prowl(Breath);
         }
         protected override IEnumerator NewMove() => TwoArm();
+
+        // Between moves it sways in the surf: out to one side and back across, bobbing, still facing the island.
+        private float _sway = 1f;
+        protected override IEnumerator Prowl(float seconds)
+        {
+            Vector3 p0 = Pos, side = Vector3.Cross(Vector3.up, (Center - p0).Flat().normalized) * ((_sway = -_sway) * 1.6f * Mathf.Min(1f, seconds / 2.5f));
+            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime)
+            {
+                float k = t / seconds, env = Mathf.Sin(Mathf.PI * k);
+                Vector3 p = p0 + side * (Mathf.Sin(2f * Mathf.PI * k) * env) + Vector3.up * (0.35f * env * Mathf.Sin(t * 2.6f));
+                Put(p, Quaternion.Slerp(T.rotation, Facing(Center - p), 1f - Mathf.Exp(-5f * Time.deltaTime)));
+                yield return null;
+            }
+            if (Alive) Put(p0, Facing(Center - p0));
+        }
 
         private IEnumerator Move(int gap)
         {
             Vector3 from = Pos, down = Pos + Vector3.down * (Height + 2f);
             Send("kraken.dive", from, from);
-            for (float t = 0f; t < 0.8f && Alive; t += Time.deltaTime) { Put(Vector3.Lerp(from, down, t / 0.8f)); yield return null; }
+            for (float t = 0f; t < 0.8f && Alive; t += Time.deltaTime) { float k = t / 0.8f; Put(Vector3.Lerp(from, down, k * k)); yield return null; }
             Siege.Instance.Hide(Body, true);
             _gap = gap;
             Vector3 to = SeaSpot(gap), under = to + Vector3.down * (Height + 2f);
@@ -1047,15 +1187,17 @@ namespace HtfFortress
 
         private IEnumerator Sweep()
         {
-            Vector3 dir = (Center - Pos).Flat().normalized;
+            Vector3 dir = (Center - Pos).Flat().normalized, s = Shore;
             float range = 21f, half = Phase2 ? 50f : 38f;
             Shout("krakenSweep");
-            Send("kraken.tentacles", Shore, Shore + dir * range, 1400, Phase2 ? 5 : 3);
-            yield return Warn("cone", Shore, Shore + dir * range, 0f, 1.4f, breakable: true, extra: Mathf.RoundToInt(half));
-            Hit(Cone(Shore, dir, range, half), 95f, 30f, 45f, Shore, 12f);
-            Send("kraken.sweep", Shore, Shore + dir * range, 0, Mathf.RoundToInt(half));
+            Send("kraken.tentacles", s, s + dir * range, 1400, Phase2 ? 5 : 3);
+            var rear = Lean(Center, 14f, back: 0.8f, rise: 1.2f); // reared up and back out of the surf, then thrown at the beach
+            yield return Warn("cone", s, s + dir * range, 0f, 1.4f, breakable: true, extra: Mathf.RoundToInt(half), during: Coil(rear, 1.4f));
+            rear(-Over, 1f);
+            Hit(Cone(s, dir, range, half), 95f, 30f, 45f, s, 12f);
+            Send("kraken.sweep", s, s + dir * range, 0, Mathf.RoundToInt(half));
             AutoTest.Count("kraken_sweep");
-            yield return 0.6f;
+            yield return Recoil(rear, 0.6f);
         }
 
         private IEnumerator Grab(int n)
@@ -1063,18 +1205,21 @@ namespace HtfFortress
             var turrets = Pieces.Where(p => Catalog.IsTurret(p.Type) && (p.Pos - Pos).Flat().magnitude < 26f).OrderBy(p => (p.Pos - Pos).sqrMagnitude).Take(n).ToList();
             if (turrets.Count == 0) { yield return Sweep(); yield break; }
             Shout("krakenGrab", true);
-            foreach (var t in turrets) Send("kraken.reach", t.Pos, Shore, 2000, t.Id);
+            Vector3 s = Shore;
+            foreach (var t in turrets) Send("kraken.reach", t.Pos, s, 2000, t.Id);
             foreach (var t in turrets.Skip(1)) WarnOnly("circle", t.Pos, t.Pos, 2.2f, 2f);
-            yield return Warn("circle", turrets[0].Pos, turrets[0].Pos, 2.2f, 2.0f, breakable: true, breakShare: 0.05f);
+            var haul = Lean(turrets[0].Pos, 10f, back: 0.5f, rise: 1f); // leaning back on its arm as it takes hold, then a heave
+            yield return Warn("circle", turrets[0].Pos, turrets[0].Pos, 2.2f, 2.0f, breakable: true, breakShare: 0.05f, during: Coil(haul, 2.0f));
+            haul(-Over, 1f);
             var ids = new HashSet<int>(Pieces.Select(p => p.Id));
             foreach (var t in turrets)
             {
                 if (!ids.Contains(t.Id)) continue; // gone already
-                Send("kraken.grab", t.Pos, Shore, 0, t.Id); // (before it goes: every screen takes a copy of it to drag under)
+                Send("kraken.grab", t.Pos, s, 0, t.Id); // (before it goes: every screen takes a copy of it to drag under)
                 BuildSystem.Instance.ServerTakePiece(t.Id);
                 AutoTest.Count("kraken_grab");
             }
-            yield return 0.8f;
+            yield return Recoil(haul, 0.8f);
         }
 
         private IEnumerator Ink()
@@ -1082,8 +1227,9 @@ namespace HtfFortress
             Vector3 at = Pos + (Center - Pos).Flat().normalized * 14f;
             at.y = GroundY(at);
             float r = 7f + Tier * 0.1f;
-            yield return Warn("circle", at, at, r, 1.0f);
-            Send("kraken.ink", at, Shore, 6000, Mathf.RoundToInt(r * 100f));
+            Vector3 s = Shore;
+            yield return Warn("circle", at, at, r, 1.0f, during: Coil(Lean(at, 10f, back: 0.5f, rise: 0.6f), 1.0f)); // a squirt
+            Send("kraken.ink", at, s, 6000, Mathf.RoundToInt(r * 100f));
             foreach (var t in Pieces.Where(p => Catalog.IsTurret(p.Type) && (p.Pos - at).Flat().magnitude <= r).ToList()) Bosses.Instance.Silence(t.Id, 6f);
             Hazard(at, r, 6f, Scaled(2f), 0);
             Shout("krakenInk");
@@ -1122,17 +1268,20 @@ namespace HtfFortress
                 picks.Add((t.Pos, t.Id, t.Id));
             if (picks.Count == 0) { yield return Sweep(); yield break; }
             Shout("krakenTwoArm", true);
-            foreach (var g in picks) Send("kraken.reach", g.at, Shore, 2000, g.key);
+            Vector3 s = Shore;
+            foreach (var g in picks) Send("kraken.reach", g.at, s, 2000, g.key);
             for (int i = 1; i < picks.Count; i++) WarnOnly("circle", picks[i].at, picks[i].at, 2.2f, 2f);
-            yield return Warn("circle", picks[0].at, picks[0].at, 2.2f, 2.0f, breakable: true, breakShare: 0.05f);
+            var haul = Lean(picks[0].at, 10f, back: 0.5f, rise: 1f);
+            yield return Warn("circle", picks[0].at, picks[0].at, 2.2f, 2.0f, breakable: true, breakShare: 0.05f, during: Coil(haul, 2.0f));
+            haul(-Over, 1f);
             foreach (var g in picks)
             {
-                Send("kraken.squeeze", g.at, Shore, 0, g.key);
+                Send("kraken.squeeze", g.at, s, 0, g.key);
                 if (g.piece != 0 && Pieces.Any(p => p.Id == g.piece)) BuildSystem.Instance.ServerDamagePiece(g.piece, Scaled(150f));
-                HurtPlayers(Circle(g.at, 2.2f), Scaled(26f), g.at + (g.at - Shore).Flat().normalized * 3f, 12f); // thrown from the land side: toward the sea
+                HurtPlayers(Circle(g.at, 2.2f), Scaled(26f), g.at + (g.at - s).Flat().normalized * 3f, 12f); // thrown from the land side: toward the sea
                 AutoTest.Count("kraken_twoarm");
             }
-            yield return 0.8f;
+            yield return Recoil(haul, 0.8f);
         }
 
         // The blood tide: the sea boils red round it, four tentacles rear out of the surf behind it, and it heaves itself
@@ -1195,15 +1344,16 @@ namespace HtfFortress
                 case 3: yield return Bolts(Phase2 ? 14 : 9); break;
                 default: yield return Tiles(); break;
             }
-            yield return Breath;
+            yield return Prowl(Breath);
         }
         protected override IEnumerator NewMove() => Tiles();
+        protected override IEnumerator Prowl(float seconds) => Sidestep(seconds, Center, 1.2f, 3f, stutter: 0.09f); // in glitchy jumps
 
         private IEnumerator Copy(int n)
         {
             Shout("voxelCopy");
             Send("voxel.copy", Pos + Vector3.up * (Height + 1f), Pos, 900);
-            yield return 0.9f;
+            yield return Posed(0.9f, Coil(Lean(Core, 6f, rise: 0.6f), 0.9f));
             for (int i = 0; i < n; i++)
             {
                 Vector3 at = HoverSpot();
@@ -1229,7 +1379,9 @@ namespace HtfFortress
                 Send("voxel.select", c, to, 1600, Mathf.RoundToInt(half * 100f));
             }
             Shout("voxelDelete", true);
-            yield return Warn("circle", new Vector3(Pos.x, GroundY(Pos), Pos.z), Pos, 2f, 1.6f, breakable: true);
+            var select = Lean(centres[0].c, 10f, rise: 0.8f);
+            yield return Warn("circle", new Vector3(Pos.x, GroundY(Pos), Pos.z), Pos, 2f, 1.6f, breakable: true, during: Coil(select, 1.6f));
+            select(-Over, 1f);
             foreach (var (c, to) in centres)
             {
                 Vector3 f = (to - c).Flat().normalized;
@@ -1240,7 +1392,7 @@ namespace HtfFortress
                 Send("voxel.delete", c, to, 0, Mathf.RoundToInt(half * 100f));
             }
             AutoTest.Count("voxel_delete");
-            yield return 0.5f;
+            yield return Recoil(select, 0.5f);
         }
 
         private IEnumerator Undo()
@@ -1249,7 +1401,9 @@ namespace HtfFortress
             Shout("voxelUndo", true);
             Send("voxel.undo", Pos, Pos, 3000);
             Vector3 g = new Vector3(Pos.x, GroundY(Pos), Pos.z);
-            yield return Warn("ring", g, g, Reach + 3f, 3f, breakable: true, breakShare: 0.03f, extra: Mathf.RoundToInt((Reach + 1f) * 100f));
+            Quaternion r0 = T.rotation; // turning once round backwards: rewinding
+            yield return Warn("ring", g, g, Reach + 3f, 3f, breakable: true, breakShare: 0.03f, extra: Mathf.RoundToInt((Reach + 1f) * 100f), during: k => Put(Pos, r0 * Quaternion.Euler(0f, -360f * Ease(k), 0f)));
+            Put(Pos, r0);
             Body.ServerChangeHp(-Mathf.RoundToInt(MaxHp * 0.12f));
             Send("voxel.restored", Pos, Pos);
             AutoTest.Count("voxel_undo");
@@ -1259,9 +1413,11 @@ namespace HtfFortress
         {
             var spots = BossBrains.Spots(Pos, n, 24f);
             foreach (var s in spots) WarnOnly("circle", s, s, 1.3f, 0.8f);
-            yield return 0.8f;
+            var aim = Lean(spots.Count > 0 ? spots.Aggregate(Vector3.zero, (sum, q) => sum + q) / spots.Count : Pos + Forward, 10f, back: 0.6f);
+            yield return Posed(0.8f, Coil(aim, 0.8f));
+            aim(-Over, 1f);
             foreach (var s in spots) Send("voxel.bolt", Pos + Forward * Reach * 0.7f, s);
-            yield return 0.35f;
+            yield return Recoil(aim, 0.35f);
             foreach (var s in spots) Hit(Circle(s, 1.3f), 35f, 14f, 18f, s, 4f);
             AutoTest.Count("voxel_bolts");
         }
@@ -1276,7 +1432,9 @@ namespace HtfFortress
             var turns = spots.Select(c => c + Quaternion.Euler(0f, Random.Range(0f, 90f), 0f) * Vector3.forward).ToList();
             for (int i = 1; i < spots.Count; i++) WarnOnly("box", spots[i], turns[i], half, 1.2f);
             Shout("voxelTiles");
-            yield return Warn("box", spots[0], turns[0], half, 1.2f);
+            var cast = Lean(spots[0], 8f, rise: 0.6f);
+            yield return Warn("box", spots[0], turns[0], half, 1.2f, during: Coil(cast, 1.2f));
+            cast(-Over, 1f);
             int n = 0;
             for (int i = 0; i < spots.Count; i++)
             {
@@ -1287,14 +1445,27 @@ namespace HtfFortress
             }
             AutoTest.Count("voxel_tiles");
             AutoTest.Count("voxel_scrambled", n);
-            yield return 0.3f;
+            yield return Recoil(cast, 0.3f);
         }
 
         protected override IEnumerator SecondForm()
         {
             Shout("voxelPhase2");
             Send("voxel.fatal", Pos, Pos, 2500);
-            yield return 2.5f;
+            // FATAL ERROR: it jumps about where it hangs, a frame here and a frame there, worse and worse, then snaps back.
+            Vector3 p0 = Pos;
+            Quaternion r0 = T.rotation;
+            for (float t = 0f, next = 0f; t < 2.5f && Alive; t += Time.deltaTime)
+            {
+                if (t >= next)
+                {
+                    float m = Mathf.Lerp(0.15f, 0.7f, t / 2.5f);
+                    Put(p0 + Random.insideUnitSphere * m, r0 * Quaternion.Euler(0f, Random.Range(-25f, 25f) * m, 0f));
+                    next = t + Random.Range(0.06f, 0.14f);
+                }
+                yield return null;
+            }
+            if (Alive) Put(p0, r0);
         }
     }
 
@@ -1358,20 +1529,43 @@ namespace HtfFortress
                     case 2: yield return GateLeap(); break;
                     default: yield return DragonBreath(); break;
                 }
-            yield return Breath;
+            yield return Prowl(Breath);
         }
         protected override IEnumerator NewMove() => DragonBreath();
 
+        // Between moves it swims on: out of its move along a curve into its round, a little ahead (in as long as gliding
+        // back took before, or 0.8 s at least), and round for its breath.
+        protected override IEnumerator Prowl(float seconds)
+        {
+            float a = Mathf.Atan2(Pos.z - Center.z, Pos.x - Center.x);
+            float glide = (SwimPoint(a, _t) - Pos).magnitude / 12f, fly = Mathf.Max(0.8f, glide);
+            _a = a + 0.25f;
+            _t += fly;
+            Vector3 to = SwimPoint(_a, _t);
+            yield return FlyOnto(to, fly, (SwimPoint(_a + 9f / 23f * 0.05f, _t + 0.05f) - to) / 0.05f);
+            yield return Paddle(Mathf.Max(0f, seconds - (fly - glide)));
+        }
+
+        private float _paddled = -9f;
         private IEnumerator Swim(float seconds)
         {
-            _a = Mathf.Atan2(Pos.z - Center.z, Pos.x - Center.x);
-            yield return Glide(SwimPoint(_a, _t), 12f);
+            if (Time.time - _paddled > 0.2f) // not still swimming round from its breath: back into its round first
+            {
+                _a = Mathf.Atan2(Pos.z - Center.z, Pos.x - Center.x);
+                yield return Glide(SwimPoint(_a, _t), 12f);
+            }
+            yield return Paddle(seconds);
+        }
+        private IEnumerator Paddle(float seconds)
+        {
+            Quaternion r0 = T.rotation;
             for (float t = 0f; t < seconds && Alive; t += Time.deltaTime)
             {
                 _a += 9f / 23f * Time.deltaTime * SlowFactor;
                 _t += Time.deltaTime;
                 Vector3 p = SwimPoint(_a, _t), d = SwimPoint(_a + 0.05f, _t + 0.05f) - p;
-                Put(p, Quaternion.LookRotation(d.normalized) * Quaternion.Euler(0f, 0f, Mathf.Sin(_t * 2f) * 12f) * BossLooks.Turn(Kind));
+                Put(p, Quaternion.Slerp(r0, Quaternion.LookRotation(d.normalized) * Quaternion.Euler(0f, 0f, Mathf.Sin(_t * 2f) * 12f) * BossLooks.Turn(Kind), Ease(Mathf.Min(1f, t / 0.3f))));
+                _paddled = Time.time;
                 yield return null;
             }
         }
@@ -1383,11 +1577,14 @@ namespace HtfFortress
             Vector3 dir = (aim - Pos).Flat().normalized, g = new Vector3(Pos.x, GroundY(Pos), Pos.z);
             const float len = 24f, sweep = 28f;
             Shout("koiJet");
-            yield return Warn("cone", g, g + dir * len, 0f, 1.2f, breakable: true, extra: Mathf.RoundToInt(sweep));
+            Vector3 p0 = Pos;
+            yield return Warn("cone", g, g + dir * len, 0f, 1.2f, breakable: true, extra: Mathf.RoundToInt(sweep), during: Coil(Lean(aim, 15f, back: 1f), 1.2f));
             Send("koi.jet", Mouth, g + dir * len, 1300, Mathf.RoundToInt(sweep));
             float next = 0f;
             for (float t = 0f; t < 1.3f && Alive; t += Time.deltaTime)
             {
+                float x = Spring(-Over, t / 1.3f); // kicked back by its own jet, and turned along with it
+                Put(p0 - dir * (1f * x), Facing(Quaternion.Euler(0f, Mathf.Lerp(-sweep, sweep, t / 1.3f), 0f) * dir) * Quaternion.Euler(-15f * x, 0f, 0f));
                 if (t >= next)
                 {
                     next = t + 0.15f;
@@ -1407,9 +1604,18 @@ namespace HtfFortress
             float r = Phase2 ? 6.5f : 5.5f;
             yield return Glide(Vector3.Lerp(Pos, at, 0.4f) + Vector3.up * 18f, 16f);
             if (Phase2) Shout("koiDragonDive"); else Shout("koiLeap");
-            yield return Warn("circle", at, at, r, 1.5f, breakable: true, during: k => Put(Pos, Quaternion.LookRotation((at - Pos).normalized) * BossLooks.Turn(Kind)));
+            // It rears up 2 m, turning head down onto the spot as it goes, hangs there coiled, and drops: already moving as
+            // the warning runs out, and faster all the way down.
+            Vector3 top = Pos;
+            Quaternion r0 = T.rotation;
+            yield return Warn("circle", at, at, r, 1.5f, breakable: true, during: k =>
+            {
+                Vector3 p = top + Vector3.up * (2f * Mathf.Max(0f, Windup(k, 1.5f)));
+                Put(p, Quaternion.Slerp(r0, Quaternion.LookRotation((at - p).normalized) * BossLooks.Turn(Kind), Ease(Mathf.Min(1f, k * 3f))));
+            });
             Vector3 from = Pos, to = at + Vector3.up * Foot * 0.4f;
-            for (float t = 0f; t < 0.45f && Alive; t += Time.deltaTime) { float k = t / 0.45f; Put(Vector3.Lerp(from, to, k * k)); yield return null; }
+            Quaternion down = Quaternion.LookRotation((to - from).normalized) * BossLooks.Turn(Kind);
+            for (float t = 0f; t < 0.45f && Alive; t += Time.deltaTime) { float k = t / 0.45f; Put(Vector3.Lerp(from, to, 0.3f * k + 0.7f * k * k), down); yield return null; }
             Hit(Circle(at, r), 120f, 35f, 55f, at, 14f);
             Send("koi.splash", at, at, 0, Mathf.RoundToInt(r * 100f));
             AutoTest.Count("koi_leap");
@@ -1422,7 +1628,7 @@ namespace HtfFortress
             var spots = BossBrains.Spots(Core, n, 24f, 20f);
             foreach (var s in spots) WarnOnly("circle", s, s, 1.8f, 1.4f);
             Send("koi.call", Pos, Pos, 1400);
-            yield return 1.4f;
+            yield return Posed(1.4f, Coil(Lean(Core, 12f, rise: 1f), 1.4f));
             foreach (var s in spots) { Send("koi.drop", s, s); Hit(Circle(s, 1.8f), 40f, 14f, 18f, s, 5f); }
             AutoTest.Count("koi_rain");
         }
@@ -1434,13 +1640,15 @@ namespace HtfFortress
             Vector3 dir = (aim - Pos).Flat().normalized, g = new Vector3(Pos.x, GroundY(Pos), Pos.z);
             const float range = 21f, half = 30f;
             Shout("koiFire");
-            yield return Warn("cone", g, g + dir * range, 0f, 1.4f, breakable: true, extra: Mathf.RoundToInt(half));
+            var blow = Lean(aim, 18f, back: 1.2f);
+            yield return Warn("cone", g, g + dir * range, 0f, 1.4f, breakable: true, extra: Mathf.RoundToInt(half), during: Coil(blow, 1.4f));
+            blow(-Over, 1f);
             Send("koi.breath", Mouth, g + dir * range, 1200, Mathf.RoundToInt(half));
             var cone = Cone(g, dir, range, half);
             Hit(cone, 110f, 35f, 50f, g, 8f);
             foreach (var p in Pieces.Where(x => cone(x.Pos)).ToList()) { Hazard(p.Pos, 1.2f, 4f, Scaled(4f), Scaled(10f)); Send("koi.burn", p.Pos, p.Pos, 4000); }
             AutoTest.Count("koi_fire");
-            yield return 0.5f;
+            yield return Recoil(blow, 0.5f);
         }
 
         private IEnumerator Thunder(int n)
@@ -1449,10 +1657,12 @@ namespace HtfFortress
             foreach (var s in spots) WarnOnly("circle", s, s, 2.6f, 1.5f);
             Shout("koiThunder");
             Send("koi.charge", Pos, Pos, 1500);
-            yield return 1.5f;
+            var call = Lean(Core, 10f, rise: 1.5f); // rising, head thrown back, calling it down
+            yield return Posed(1.5f, Coil(call, 1.5f));
+            call(-Over, 1f);
             foreach (var s in spots) { Send("koi.thunder", s, s); Hit(Circle(s, 2.6f), 90f, 30f, 40f, s, 8f); }
             AutoTest.Count("koi_thunder");
-            yield return 0.4f;
+            yield return Recoil(call, 0.4f);
         }
 
         // Dragon Breath (second form): dragonfire down one straight line for 1.2 s, its front running out from the mouth,
@@ -1466,13 +1676,15 @@ namespace HtfFortress
             Vector3 end = g + dir * len;
             end.y = GroundY(end);
             Shout("koiLine");
-            yield return Warn("lane", g, end, 3.4f, 1.3f, breakable: true);
+            var blow = Lean(aim, 16f, back: 1f);
+            yield return Warn("lane", g, end, 3.4f, 1.3f, breakable: true, during: Coil(blow, 1.3f));
             Send("koi.flame", Mouth, end, 1200);
             var hit = new HashSet<int>();
             var hurt = new HashSet<Player>();
             float next = 0f;
             for (float t = 0f; t < 1.2f && Alive; t += Time.deltaTime)
             {
+                blow(-Over * (1f + 0.15f * Mathf.Sin(t * 40f)), 1f); // held thrown at it, shaking with the blast
                 if (t >= next) { next = t + 0.1f; HitOnce(hit, hurt, Lane(g, g + dir * Mathf.Max(1f, len * Mathf.Clamp01(t / 0.35f)), 3.4f), 115f, 35f, 50f, g, 8f); }
                 yield return null;
             }
@@ -1484,7 +1696,7 @@ namespace HtfFortress
                 Send("koi.burn", p, p, 4000);
             }
             AutoTest.Count("koi_line");
-            yield return 0.5f;
+            yield return Recoil(blow, 0.5f);
         }
 
         protected override IEnumerator SecondForm()
@@ -1493,7 +1705,7 @@ namespace HtfFortress
             yield return Glide(Center + (Pos - Center).Flat().normalized * 16f + Vector3.up * (Sea + 20f - Center.y), 12f);
             Shout("koiDragon"); // ...a dragon at the top
             Send("koi.dragon", Pos, Pos, 2600);
-            yield return 2.6f;
+            yield return Posed(2.6f, Coil(Lean(Core, 20f, rise: 1.5f), 2.6f, 0.3f)); // rearing back as it changes, then a lunge
         }
     }
 
@@ -1533,9 +1745,10 @@ namespace HtfFortress
                 case 2: yield return Echoes(Phase2 ? 3 : 2); break;
                 default: yield return SecondPupil(); break;
             }
-            yield return Breath;
+            yield return Prowl(Breath);
         }
         protected override IEnumerator NewMove() => SecondPupil();
+        protected override IEnumerator Prowl(float seconds) => Sidestep(seconds, Core, 0.8f, 2.5f); // drifting round, its eye on the lighthouse
 
         private Vector3 Under => new Vector3(Pos.x, GroundY(Pos), Pos.z);
 
@@ -1545,11 +1758,14 @@ namespace HtfFortress
             const float range = 36f, sweep = 32f;
             Shout("eyeGaze");
             Send("eye.open", Pos, Pos, 1600);
-            yield return Warn("cone", g, g + dir * range, 0f, 1.6f, breakable: true, breakShare: 0.035f, extra: Mathf.RoundToInt(sweep));
+            Vector3 p0 = Pos;
+            yield return Warn("cone", g, g + dir * range, 0f, 1.6f, breakable: true, breakShare: 0.035f, extra: Mathf.RoundToInt(sweep), during: Coil(Lean(Core, 10f, back: 1.2f), 1.6f));
             Send("eye.beam", Pos, g + dir * range, 2400, Mathf.RoundToInt(sweep));
             float next = 0f;
             for (float t = 0f; t < 2.4f && Alive; t += Time.deltaTime)
             {
+                float x = Spring(-Over, t / 2.4f); // kicked back as it fires, its shell turning half the way its beam does
+                Put(p0 - dir * (1.2f * x), Facing(Quaternion.Euler(0f, 0.5f * Mathf.Lerp(-sweep, sweep, t / 2.4f), 0f) * dir) * Quaternion.Euler(-10f * x, 0f, 0f));
                 if (t >= next)
                 {
                     next = t + 0.15f;
@@ -1569,11 +1785,13 @@ namespace HtfFortress
             const float range = 36f, sweep = 48f;
             Shout("eyePupil");
             Send("eye.pupil", Pos, Pos, 2000);
-            yield return Warn("cone", g, g + dir * range, 0f, 2f, breakable: true, breakShare: 0.035f, extra: Mathf.RoundToInt(sweep));
+            var glare = Lean(Core, 10f, back: 1.2f);
+            yield return Warn("cone", g, g + dir * range, 0f, 2f, breakable: true, breakShare: 0.035f, extra: Mathf.RoundToInt(sweep), during: Coil(glare, 2f));
             Send("eye.twin", Pos, g + dir * range, 2800, Mathf.RoundToInt(sweep));
             float next = 0f;
             for (float t = 0f; t < 2.8f && Alive; t += Time.deltaTime)
             {
+                glare(Spring(-Over, t / 2.8f), 1f);
                 if (t >= next)
                 {
                     next = t + 0.15f;
@@ -1595,10 +1813,12 @@ namespace HtfFortress
                 var spots = BossBrains.Spots(Core, 33, 30f, 26f);
                 foreach (var s in spots) WarnOnly("circle", s, s, 1.5f, 1.6f);
                 Send("eye.spears", Pos, Pos, 1600);
-                yield return 1.6f;
+                var lift = Lean(Core, 6f, rise: 1.5f); // drawn up, then it drops a little as they fall
+                yield return Posed(1.6f, Coil(lift, 1.6f));
+                lift(-Over, 1f);
                 foreach (var s in spots) { Send("eye.spear", s, s); Hit(Circle(s, 1.5f), 50f, 18f, 25f, s, 5f); }
                 AutoTest.Count("eye_spears");
-                yield return 0.5f;
+                yield return Recoil(lift, 0.5f);
             }
         }
 
@@ -1669,10 +1889,12 @@ namespace HtfFortress
                 }
             }
             Send("eye.open", Pos, Pos, 1600);
-            yield return 1.6f;
+            var call = Lean(Core, 8f, back: 1f);
+            yield return Posed(1.6f, Coil(call, 1.6f));
+            call(-Over, 1f);
             foreach (var h in hits) h();
             AutoTest.Count("eye_echoes");
-            yield return 0.6f;
+            yield return Recoil(call, 0.6f);
         }
 
         // Its one Judgment covers the whole island (BOSS-FORMS §2.10): the ring round the lighthouse is struck as before,
@@ -1685,7 +1907,9 @@ namespace HtfFortress
             yield return Glide(Core + Vector3.up * (Alt + 4f), 10f);
             Send("eye.judgment", Pos, Core, 8000, Mathf.RoundToInt(Field * 100f));
             WarnOnly("circle", Center, Center, Field, 8f);
-            yield return Warn("circle", Core, Core, 12f, 8f, breakable: true, breakShare: 0.06f);
+            var verdict = Lean(Core, 0f, rise: 3f); // rising slowly all eight seconds, shaking, then down on it
+            yield return Warn("circle", Core, Core, 12f, 8f, breakable: true, breakShare: 0.06f, during: Coil(verdict, 8f, 0.25f));
+            verdict(-Over, 1f);
             Siege.Instance.DamageCore(Mathf.RoundToInt(Siege.Instance.CoreMax * 0.3f));
             var ring = Circle(Core, 12f);
             var field = Circle(Center, Field);
@@ -1693,13 +1917,13 @@ namespace HtfFortress
             Hit(p => field(p) && !ring(p), 60f, 20f, 0f, Core, 10f);
             Send("eye.verdict", Core, Core, 0, Mathf.RoundToInt(Field * 100f));
             AutoTest.Count("eye_judgment");
-            yield return 1f;
+            yield return Recoil(verdict, 1f);
         }
 
         protected override IEnumerator Fall()
         {
             Vector3 from = Pos, to = Pos - Vector3.up * 6f;
-            for (float t = 0f; t < 0.5f && Body; t += Time.deltaTime) { Put(Vector3.Lerp(from, to, t / 0.5f)); yield return null; }
+            for (float t = 0f; t < 0.5f && Body; t += Time.deltaTime) { float k = t / 0.5f; Put(Vector3.Lerp(from, to, k * k)); yield return null; }
         }
         protected override IEnumerator Recover() { yield return Glide(Pos + Vector3.up * 6f, 6f); }
 

@@ -273,7 +273,7 @@ namespace HtfFortress
             while (true)
             {
                 // CastNew (auto-test): the second form's new move next, so the run can check it without waiting on the dice.
-                if (CastNew && Phase2) { CastNew = false; yield return NewMove(); yield return Breath; }
+                if (CastNew && Phase2) { CastNew = false; yield return NewMove(); yield return Prowl(Breath); }
                 else yield return Act();
                 yield return null;
             }
@@ -399,18 +399,39 @@ namespace HtfFortress
             Send("broken", Pos + Vector3.up * (Reach + 0.5f), Pos, 3000);
             TakeMult = 1.5f;
             yield return Fall();
-            yield return 3f;
+            yield return Sag(3f);
             TakeMult = 1f;
             _stunned = false;
             yield return Recover();
         }
         protected virtual IEnumerator Fall() { yield break; }
         protected virtual IEnumerator Recover() { yield break; }
+        // The reel itself: broken mid wind-up (reared, coiled, drawn back), it sags in its first moment, upright again and
+        // a walker back on its feet, and stays so. (The urchin rolls on; flyers that fell lie as they fell.)
+        protected virtual IEnumerator Sag(float seconds)
+        {
+            Vector3 p0 = Pos, p1 = Grounded ? new Vector3(p0.x, GroundY(p0) + Foot, p0.z) : p0;
+            Quaternion r0 = T.rotation, r1 = Facing(Forward);
+            float t = 0f;
+            for (; t < 0.3f && Body; t += Time.deltaTime) { float k = t / 0.3f; Put(Vector3.Lerp(p0, p1, k * k), Quaternion.Slerp(r0, r1, Ease(k))); yield return null; }
+            if (Body) Put(p1, r1);
+            yield return Mathf.Max(0f, seconds - t);
+        }
+        // It stands on the ground (sags onto its feet, sidesteps on them), rather than hanging in the air or the sea.
+        protected virtual bool Grounded => false;
 
         // ---------- moving (kinematic; the network carries it to everyone) ----------
 
+        // How fast it was last put moving (from where it was put, not where the physics has it yet); still if it hasn't
+        // been put anywhere for a moment.
+        protected Vector3 Vel => Time.time - _putTime < 0.2f ? _vel : Vector3.zero;
+        private Vector3 _vel, _putAt;
+        private float _putTime = -1f;
         protected void Put(Vector3 p, Quaternion r)
         {
+            float dt = Time.time - _putTime;
+            if (dt > 0f) { _vel = dt < 0.2f ? Vector3.ClampMagnitude((p - _putAt) / dt, 40f) : Vector3.zero; _putTime = Time.time; }
+            _putAt = p;
             if (!Rig) { T.SetPositionAndRotation(p, r); return; }
             Rig.MovePosition(p);
             Rig.MoveRotation(r);
@@ -425,11 +446,14 @@ namespace HtfFortress
             return y;
         }
         protected static float LandY(Vector3 p) => Physics.Raycast(new Vector3(p.x, p.y + 30f, p.z), Vector3.down, out var h, 80f, GameInfo.LevelLayer) ? h.point.y : WaterManager.GetWaterHeight(p);
+        private BossBody _look;
         protected Vector3 Stand(Vector3 p)
         {
             // Measure the current mesh's bottom, not the one cached at spawn: a boss whose legs/claws animate (the Warden)
             // would otherwise stand on the cached box and float. Translation does not change the origin-to-bottom offset.
             var ground = new Vector3(p.x, GroundY(p), p.z);
+            // (Without the squash and lean every screen gives its body (BossBody): measured on that, it would bob.)
+            if (_look || (_look = Body.GetComponent<BossBody>())) _look.Unpose();
             var b = BossLooks.WorldBounds(T);
             float bottom = b.min.y - T.position.y;
             return ground + Vector3.up * (0f - bottom);
@@ -462,13 +486,16 @@ namespace HtfFortress
             return false;
         }
 
+        // It gets going and slows into its stop (9 m/s² either way) rather than starting and stopping dead.
         protected IEnumerator WalkTo(Vector3 goal, float speed, float stopAt, float seconds)
         {
+            float v = Mathf.Min(speed, Vel.Flat().magnitude);
             for (float t = 0f; t < seconds && Alive; t += Time.deltaTime)
             {
                 Vector3 to = (goal - Pos).Flat();
                 if (to.magnitude <= stopAt) yield break;
                 Vector3 dir = to.normalized;
+                v = Mathf.MoveTowards(v, Mathf.Min(speed, 1f + 2.5f * (to.magnitude - stopAt)), 9f * Time.deltaTime);
                 Quaternion face = Quaternion.RotateTowards(T.rotation, Facing(dir), 220f * Time.deltaTime);
                 var wall = WallAhead(dir);
                 if (wall != null)
@@ -476,16 +503,17 @@ namespace HtfFortress
                     // A turret or a short wall in the way: step around it if there is a way; otherwise break through it.
                     if (TryDetour(dir, out var side))
                     {
-                        Vector3 step = Pos + side * speed * SlowFactor * Time.deltaTime;
+                        Vector3 step = Pos + side * v * SlowFactor * Time.deltaTime;
                         Put(Stand(step), Quaternion.RotateTowards(T.rotation, Facing(side), 260f * Time.deltaTime));
                         yield return null;
                         continue;
                     }
                     Put(Pos, face);
+                    v = 0f;
                     yield return Trample(wall.Value);
                     continue;
                 }
-                Vector3 next = Pos + dir * speed * SlowFactor * Time.deltaTime;
+                Vector3 next = Pos + dir * v * SlowFactor * Time.deltaTime;
                 if (Mathf.Abs(LandY(next) - LandY(Pos)) > 2.5f) yield break; // a cliff
                 Put(Stand(next), face);
                 yield return null;
@@ -526,25 +554,151 @@ namespace HtfFortress
             Put(to, r1);
         }
 
-        // Glide to `to` (in the air or on the water) at `speed`, turning to face the way it goes.
-        protected IEnumerator Glide(Vector3 to, float speed, float bank = 0f)
+        // Glide to `to` (in the air or on the water), `speed` on average and as long as that ever took, turning to face the
+        // way it goes: out of the way it was already going and slowing into its stop, not setting off and stopping dead.
+        // A dive keeps speeding up into what it dives on.
+        protected IEnumerator Glide(Vector3 to, float speed, float bank = 0f, bool dive = false)
         {
-            while (Alive)
+            float seconds = (to - Pos).magnitude / Mathf.Max(0.1f, speed);
+            if (!dive) { yield return FlyOnto(to, seconds, Vector3.zero, bank); yield break; }
+            Vector3 from = Pos;
+            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime * SlowFactor)
             {
-                Vector3 d = to - Pos;
-                float step = speed * SlowFactor * Time.deltaTime;
-                if (d.magnitude <= step) { Put(to); yield break; }
-                Quaternion face = d.Flat().sqrMagnitude > 0.01f ? Facing(d) * Quaternion.Euler(0f, 0f, bank) : T.rotation;
-                Put(Pos + d.normalized * step, Quaternion.RotateTowards(T.rotation, face, 120f * Time.deltaTime));
+                float k = t / seconds;
+                Put(Vector3.Lerp(from, to, k * (0.4f + 0.6f * k)), Quaternion.RotateTowards(T.rotation, (to - from).Flat().sqrMagnitude > 0.01f ? Facing(to - from) : T.rotation, 240f * Time.deltaTime));
+                yield return null;
+            }
+            Put(to);
+        }
+
+        // Flown onto `to` in `seconds` along a curve: out of the way it's going now, into `v1` (m/s) as it gets there, so a
+        // flyer swings round into its rounds and out of its runs (a Hermite curve). Never down into the ground.
+        protected IEnumerator FlyOnto(Vector3 to, float seconds, Vector3 v1, float bank = 0f)
+        {
+            Vector3 from = Pos, m0 = Vel * seconds, m1 = v1 * seconds;
+            if (seconds < 0.02f) { Put(to); yield break; }
+            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime * SlowFactor)
+            {
+                float s = t / seconds, s2 = s * s, s3 = s2 * s;
+                Vector3 p = (2f * s3 - 3f * s2 + 1f) * from + (s3 - 2f * s2 + s) * m0 + (3f * s2 - 2f * s3) * to + (s3 - s2) * m1;
+                Vector3 d = (6f * s2 - 6f * s) * (from - to) + (3f * s2 - 4f * s + 1f) * m0 + (3f * s2 - 2f * s) * m1;
+                float floor = Mathf.Min(from.y, to.y, GroundY(p) + Foot + 0.5f);
+                if (p.y < floor) p.y = floor;
+                Put(p, d.Flat().sqrMagnitude > 0.01f ? Quaternion.RotateTowards(T.rotation, Facing(d) * Quaternion.Euler(0f, 0f, bank), 240f * Time.deltaTime) : T.rotation);
+                yield return null;
+            }
+            Put(to);
+        }
+
+        // Turned to face `toward`: speeding up into the turn and slowing out of it.
+        protected IEnumerator Turn(Vector3 toward, float seconds)
+        {
+            Quaternion r0 = T.rotation, r1 = Facing(toward - Pos);
+            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime) { Put(Pos, Quaternion.Slerp(r0, r1, Ease(t / seconds))); yield return null; }
+            Put(Pos, r1);
+        }
+
+        // ---------- how it carries itself (Owen: 「要感覺王不笨重 要靈活」) ----------
+        // None of this moves when or where a hit lands: a warning still runs its whole time and the hit lands as it ends,
+        // and what it does after a hit takes as long as it stood there before. It's how the body gets there: drawn back
+        // and coiled while it warns, thrown at its mark in the last moment, held a beat, sprung back; and between moves
+        // it moves about instead of standing still.
+
+        protected static float Ease(float k) => k * k * (3f - 2f * k);
+
+        // A wind-up over a warning (k 0..1 of `seconds`), 1 being drawn all the way back: drawn fast at first, then the
+        // last bit coiled, trembling; thrown in its last `burst` seconds to Over past where it stood, as the hit lands.
+        protected const float Over = 0.3f;
+        protected static float Windup(float k, float seconds, float burst = 0.12f)
+        {
+            float top = 1f - Mathf.Clamp01(burst / Mathf.Max(0.2f, seconds));
+            if (k >= top) { float v = (k - top) / Mathf.Max(1e-4f, 1f - top); return Mathf.Lerp(1f, -Over, v * v); }
+            float u = k / top, coil = Mathf.Clamp01(u * 2f - 1f), drawn = 1f - Mathf.Pow(1f - Mathf.Min(1f, u * 2f), 3f);
+            return 0.85f * drawn + 0.15f * Ease(coil) + 0.03f * coil * Mathf.Sin(k * seconds * 45f);
+        }
+
+        // A spring let go at `from` (k 0..1 of its time): back through rest, a little past, and still at 0.
+        protected static float Spring(float from, float k) => from * Mathf.Exp(-5f * k) * Mathf.Cos(k * 2.5f * Mathf.PI);
+
+        // The body leaned by one number (x): 1 drawn back (its nose `rear`° up, `back` m off from `at` and `rise` m up),
+        // 0 standing as it was facing `at`, below 0 thrown at it. `turned` (0..1): how far round it is from how it stood
+        // to facing `at` (it looks where it will hit: the warning says where, and so does its body).
+        protected Action<float, float> Lean(Vector3 at, float rear, float back = 0f, float rise = 0f)
+        {
+            Vector3 p0 = Pos, away = (p0 - at).Flat();
+            away = away.sqrMagnitude > 0.01f ? away.normalized : -Forward.Flat().normalized;
+            Quaternion r0 = T.rotation, r1 = (at - p0).Flat().sqrMagnitude > 0.01f ? Facing(at - p0) : Facing(Forward);
+            return (x, turned) => Put(p0 + away * (back * x) + Vector3.up * (rise * Mathf.Max(0f, x)), Quaternion.Slerp(r0, r1, turned) * Quaternion.Euler(-rear * x, 0f, 0f));
+        }
+
+        // Over a warning (Warn's `during`), or Posed: turned to face its mark in the first quarter, drawn back, coiled,
+        // and thrown at it as the time runs out.
+        protected static Action<float> Coil(Action<float, float> lean, float seconds, float burst = 0.12f) =>
+            k => lean(Windup(k, seconds, burst), Ease(Mathf.Min(1f, k * 4f)));
+
+        // After the blow: held a beat where it struck, then sprung back to standing, all in `seconds`.
+        protected IEnumerator Recoil(Action<float, float> lean, float seconds, float hold = 0.1f)
+        {
+            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime)
+            {
+                lean(t < hold ? -Over : Spring(-Over, (t - hold) / Mathf.Max(0.05f, seconds - hold)), 1f);
+                yield return null;
+            }
+            if (Alive) lean(0f, 1f);
+        }
+
+        // `pose` (0..1 through it) over `seconds`, where no warning carries it.
+        protected static IEnumerator Posed(float seconds, Action<float> pose)
+        {
+            for (float t = 0f; t < seconds; t += Time.deltaTime) { pose(t / seconds); yield return null; }
+        }
+
+        // Between its moves (its breath) it doesn't stand about. By default it sidesteps round what it's after: keeping its
+        // distance, easing into it and out of it, facing it, then ready for the last of it. As long as the breath was:
+        // nothing comes sooner.
+        protected virtual IEnumerator Prowl(float seconds) => Sidestep(seconds, TowerPoint(34f), 1.4f, 4f);
+
+        // Round `at` by up to `most` m at `speed` on average; either way round, whichever is clear (no building, cliff or
+        // sea in the way: a walker; a hoverer keeps its height and bobs). `stutter` > 0: in jumps that long (glitching).
+        private float _side = 1f;
+        protected IEnumerator Sidestep(float seconds, Vector3 at, float speed, float most, float stutter = 0f, Action<Vector3, Quaternion> put = null)
+        {
+            put = put ?? Put;
+            Vector3 p0 = Pos, off = (p0 - at).Flat();
+            float r = off.magnitude, span = 0f;
+            _side = -_side;
+            if (r > 0.5f)
+                for (int i = 0; i < 4 && span == 0f; i++) // this way, that way, then half as far each
+                {
+                    float s = (i % 2 == 0 ? _side : -_side) * Mathf.Min(most * (i < 2 ? 1f : 0.5f), speed * seconds) / r;
+                    if (Clear(at, off, s)) span = s;
+                }
+            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime)
+            {
+                float tq = stutter > 0f ? Mathf.Floor(t / stutter) * stutter : t;
+                Vector3 p = at + Quaternion.Euler(0f, -span * Mathf.Rad2Deg * Ease(Mathf.Min(1f, tq / (seconds * 0.75f))), 0f) * off;
+                p = Grounded ? Stand(new Vector3(p.x, p0.y, p.z)) : new Vector3(p.x, p0.y + 0.3f * Mathf.Sin(t * 2.4f) * Mathf.Sin(Mathf.PI * t / seconds), p.z);
+                put(p, Quaternion.Slerp(T.rotation, Facing(at - p), 1f - Mathf.Exp(-6f * Time.deltaTime)));
                 yield return null;
             }
         }
 
-        protected IEnumerator Turn(Vector3 toward, float seconds)
+        // Is the way round `at` by `span` radians clear for a walker: no wall or turret it would stand in, no step of more
+        // than 2 m, no sea, no edge of the island? (A hoverer goes over it all.)
+        private bool Clear(Vector3 at, Vector3 off, float span)
         {
-            Quaternion r0 = T.rotation, r1 = Facing(toward - Pos);
-            for (float t = 0f; t < seconds && Alive; t += Time.deltaTime) { Put(Pos, Quaternion.Slerp(r0, r1, t / seconds)); yield return null; }
-            Put(Pos, r1);
+            if (!Grounded) return true;
+            float room = Reach * 0.7f + 0.4f, y = LandY(Pos);
+            for (int i = 1; i <= 5; i++)
+            {
+                Vector3 p = at + Quaternion.Euler(0f, -span * Mathf.Rad2Deg * i / 5f, 0f) * off;
+                foreach (var w in Pieces)
+                    if ((w.Type == PieceType.Wall || Catalog.IsTurret(w.Type)) && (w.Pos - p).Flat().sqrMagnitude < room * room && (w.Pos - Pos).Flat().sqrMagnitude >= room * room) return false;
+                float ly = LandY(p);
+                if ((p - Center).Flat().magnitude > 29f || Mathf.Abs(ly - y) > 2f || ly < WaterManager.GetWaterHeight(p) + 0.2f) return false;
+                y = ly;
+            }
+            return true;
         }
 
         // ---------- warnings ----------

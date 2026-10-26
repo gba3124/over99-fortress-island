@@ -33,13 +33,18 @@ namespace HtfFortress
         public void Play(FxEvent e)
         {
             string k = e.Key ?? "";
-            if (k.StartsWith("w.")) { StartCoroutine(Warning(k.Substring(2), e.From, e.To, e.Who % 100000 / 100f, e.Who / 100000, e.Arg / 1000f, ColourOf(e.PieceId))); return; }
+            if (k.StartsWith("w.")) { Focus(e.PieceId, k.Substring(2), e.From, e.To, e.Arg / 1000f); StartCoroutine(Warning(k.Substring(2), e.From, e.To, e.Who % 100000 / 100f, e.Who / 100000, e.Arg / 1000f, ColourOf(e.PieceId))); return; }
             switch (k)
             {
                 case "winding": StartCoroutine(Winding(e.PieceId, e.Arg / 1000f)); return;
                 case "broken":
+                    _brokeAt[e.PieceId] = Time.time;
                     StartCoroutine(Dizzy(e.PieceId, e.Arg / 1000f)); Fx.Sound("Hitmarker", e.From, 1f, AudioDistance.Long); Burst(e.From, "Gold", 40, 0.18f);
                     if (BossEye.Of(e.PieceId) is BossEye eye) eye.Reel(e.Arg / 1000f); // the eye squints, shaking
+                    if (BossBody.Of(e.PieceId) is BossBody body) body.Stagger(); // held a beat, white, then knocked loose
+                    Fx.SoundRandom("MetallicItemImpact_V", 1, 3, e.From, 1f, AudioDistance.Long);
+                    Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, e.From, 0.9f, AudioDistance.Long);
+                    BossMoves.Shake(e.From, 0.5f);
                     return;
                 case "stomp": WeaponFx.Emit(WeaponFx.Dust, e.From, 8, Vector3.up); Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, e.From, 0.7f); return;
                 case "phase2": StartCoroutine(Transform2(e.PieceId)); return;
@@ -202,15 +207,32 @@ namespace HtfFortress
 
         // ---------- winding up, reeling, the second form, the end ----------
 
-        // Over its head while it winds up a move that can be broken: a gold ring closing in.
+        // Its body on where its move will land while it warns: the head and claws (BossIk), the eye's pupil. The last
+        // warning of a move is its main one (the brain casts the others first).
+        private static void Focus(int id, string shape, Vector3 a, Vector3 b, float seconds)
+        {
+            Vector3 at = shape == "lane" ? (a + b) * 0.5f : shape == "cone" ? Vector3.Lerp(a, b, 0.6f) : a;
+            if (BossIk.Of(id) is BossIk ik) ik.Focus(at, seconds);
+            if (BossEye.Of(id) is BossEye eye) eye.LookAt(at, seconds);
+        }
+
+        private readonly Dictionary<int, float> _brokeAt = new Dictionary<int, float>();
+
+        // Over its head while it winds up a move that can be broken: a gold ring closing in, gone if it's broken. It's
+        // heard drawing back as it starts, and the swing as it lets go.
         private IEnumerator Winding(int id, float seconds)
         {
             var body = BodyOf(id);
             if (!body) yield break;
+            float start = Time.time;
+            bool swung = false;
+            Fx.SoundRandom("BowDrawbackLong_0", 1, 5, body.position, 0.9f, AudioDistance.Long);
             var ring = WeaponFx.Piece(WeaponFx.Torus, BossVfx.Glow(new Color(1f, 0.8f, 0.25f), 6f));
             float top = Top(body);
             for (float t = 0f; t < seconds && ring && body; t += Time.deltaTime)
             {
+                if (_brokeAt.TryGetValue(id, out float broke) && broke >= start) break;
+                if (!swung && t >= seconds - 0.14f) { swung = true; Fx.Sound("PunchSwoosh", body.position, 1f, AudioDistance.Long); }
                 float k = t / seconds;
                 ring.position = new Vector3(body.position.x, body.position.y + top + 0.6f, body.position.z);
                 ring.rotation = Quaternion.Euler(90f, t * 180f, 0f);
@@ -255,6 +277,7 @@ namespace HtfFortress
             Color c = ColourOf(id);
             float top = Top(body);
             Fx.Sound("BossFightIntro", body.position, 1f, AudioDistance.Long);
+            Fx.SoundRandom("LavaWhaleNoise_0", 1, 4, body.position, 1f, AudioDistance.Long); // and a roar
             for (int i = 0; i < 4; i++)
             {
                 if (!body) yield break;

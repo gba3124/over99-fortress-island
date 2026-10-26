@@ -33,6 +33,13 @@ namespace HtfFortress
         private Vector3 _aim, _aimSmooth;
         private float _weight, _weightTarget;
         private float _nextAim;
+        private Vector3 _focus;
+        private float _focusUntil;
+
+        public static BossIk Of(int id) => BossFx.BodyOf(id) is Transform t && t ? t.GetComponent<BossIk>() : null;
+
+        // While it warns of a move, its head and claws are on where it will land (BossFx: every warning), turned to it fast.
+        public void Focus(Vector3 at, float seconds) { _focus = at; _focusUntil = Time.time + seconds; }
 
         private void Start()
         {
@@ -105,15 +112,17 @@ namespace HtfFortress
         private void LateUpdate()
         {
             float dt = Time.deltaTime;
-            if (dt <= 0f) return;
-            if (Time.time >= _nextAim)
+            if (dt <= 0f || (_body && _body.Frozen)) return; // its move broken: held a beat
+            bool focused = Time.time < _focusUntil;
+            if (focused) _aim = _focus;
+            else if (Time.time >= _nextAim)
             {
                 _nextAim = Time.time + 0.1f; // ten times a second is plenty for a look-at, and cheap on ten bosses
                 _aim = NearestPlayer(transform.position);
             }
-            _aimSmooth = Vector3.Lerp(_aimSmooth, _aim, 1f - Mathf.Exp(-6f * dt));
-            _weightTarget = _body && _body.Second ? 1f : 0.55f; // the second form reaches harder
-            _weight = Mathf.MoveTowards(_weight, _weightTarget, dt * 1.5f);
+            _aimSmooth = Vector3.Lerp(_aimSmooth, _aim, 1f - Mathf.Exp(-(focused ? 12f : 6f) * dt));
+            _weightTarget = focused || (_body && _body.Second) ? 1f : 0.55f; // on its mark, and the second form, it reaches harder
+            _weight = Mathf.MoveTowards(_weight, _weightTarget, dt * (focused ? 4f : 1.5f));
 
             if (_head) LookAt(_head, _aimSmooth, 0.8f * _weight);
             foreach (var c in _chains) Reach(c, _aimSmooth, _weight);

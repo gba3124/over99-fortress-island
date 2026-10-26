@@ -172,7 +172,7 @@ namespace HtfFortress
         // ---------- small pieces ----------
 
         // The screen shakes for whoever is close.
-        private static void Shake(Vector3 at, float amount)
+        internal static void Shake(Vector3 at, float amount)
         {
             var me = Player.LocalPlayer;
             if (!me || !me.Transform || !me.ScreenShake) return;
