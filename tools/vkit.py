@@ -311,16 +311,47 @@ def crate(b, F, s=0.7, at=(0, 0, 0), yaw=0.0):
     box(b, G, (math.hypot(h - 0.1, s - 0.1), 0.03, 0.05), (0, -s / 2 - 0.02, h / 2), trim, ry=-ang)
 
 
+def sign_icon(b, G, kind, x, z, paint):
+    # A small emblem on both faces of an arm board: a fish, an anvil, a crate, a lighthouse.
+    for sy in (-1, 1):
+        y = sy * 0.04
+        if kind == "fish":
+            box(b, G, (0.18, 0.03, 0.08), (x, y, z), paint)
+            for rz in (0.55, -0.55):
+                box(b, G, (0.1, 0.03, 0.035), (x - 0.13, y, z), paint, ry=rz)
+            box(b, G, (0.025, 0.034, 0.025), (x + 0.05, y, z + 0.02), cream)
+        elif kind == "anvil":
+            box(b, G, (0.14, 0.03, 0.035), (x, y, z - 0.065), paint)
+            box(b, G, (0.07, 0.03, 0.05), (x, y, z - 0.025), paint)
+            box(b, G, (0.2, 0.03, 0.05), (x, y, z + 0.02), paint)
+            box(b, G, (0.07, 0.03, 0.035), (x + 0.13, y, z + 0.03), paint, ry=0.35)
+        elif kind == "crate":
+            box(b, G, (0.15, 0.03, 0.15), (x, y, z), paint)
+            for rz in (0.785, -0.785):
+                box(b, G, (0.19, 0.034, 0.02), (x, y, z), brass, ry=rz)
+        elif kind == "tower":
+            cyl(b, G, 0.05, 0.035, 0.16, (x, y, z - 0.01), paint, segs=6)
+            box(b, G, (0.11, 0.034, 0.02), (x, y, z + 0.075), iron)
+            box(b, G, (0.05, 0.034, 0.04), (x, y, z + 0.105), lit)
+            cyl(b, G, 0.05, 0.0, 0.05, (x, y, z + 0.15), canvas, segs=6)
+
+
 def signpost(b, F, arms):
-    # A post with pointed boards: arms = [(yaw degrees, height, paint material)].
-    box(b, F, (0.32, 0.32, 0.16), (0, 0, 0.08), stone)
-    box(b, F, (0.12, 0.12, 2.3), (0, 0, 1.15), trim)
-    cyl(b, F, 0.1, 0.0, 0.14, (0, 0, 2.37), trim, segs=4, rz=math.pi / 4)
-    for yaw, z, paint in arms:
+    # A post with pointed boards: arms = [(yaw degrees, height, paint material[, emblem])]; a colour band along each
+    # board's top edge and the emblem on both faces (sign_icon).
+    box(b, F, (0.36, 0.36, 0.16), (0, 0, 0.08), stone)
+    top = max(a[1] for a in arms) + 0.3
+    box(b, F, (0.12, 0.12, top), (0, 0, top / 2), trim)
+    cyl(b, F, 0.1, 0.0, 0.14, (0, 0, top + 0.07), trim, segs=4, rz=math.pi / 4)
+    for yaw, z, paint, *icon in arms:
         G = F.sub((0, 0, 0), yaw)
-        box(b, G, (0.56, 0.05, 0.2), (0.34, 0, z), plank)
-        cyl(b, G, 0.13, 0.0, 0.12, (0.67, 0, z), plank, segs=3, ry=math.pi / 2, rz=0)
-        box(b, G, (0.38, 0.06, 0.06), (0.32, 0, z), paint)
+        box(b, G, (0.66, 0.045, 0.24), (0.39, 0, z), plank)                      # the board
+        box(b, G, (0.68, 0.03, 0.28), (0.39, 0, z), trim)                        # its dark edge, top and bottom
+        cyl(b, G, 0.15, 0.0, 0.12, (0.78, 0, z), plank, segs=3, ry=math.pi / 2)  # the point
+        box(b, G, (0.56, 0.05, 0.04), (0.36, 0, z + 0.085), paint)               # the colour band
+        box(b, G, (0.08, 0.08, 0.05), (0.1, 0, z - 0.145), iron)                 # the bracket it hangs on
+        if icon:
+            sign_icon(b, G, icon[0], 0.42, z - 0.02, paint if icon[0] in ("fish", "tower") else iron)
 
 
 def fence(b, F, length, h=0.9, posts=4):

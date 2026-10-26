@@ -106,7 +106,10 @@ namespace HtfFortress
         // The island model's parts that are only drawn, not solid: the buoys bobbing off the pier (white and red; the red also
         // floats the net rack's net). Solid, one sat 2 m from the berth and the boat was pinned on it (Owen's playtest: 「白色
         // 浮標卡到他」, and they were stuck on the island).
-        public static readonly string[] NotSolid = { "White", "IslBuoyRed" };
+        // Decoration that nothing should collide with: buoys (they pinned the boat), flowers, starfish and shells, net cords,
+        // lantern glass (thin bits fish and players caught on). Ropes on the pier rails stay solid.
+        public static readonly string[] NotSolid = { "White", "IslBuoyRed", "IslCord", "IslStarfish", "IslShell", "IslFlowerA", "IslFlowerB",
+                                                     "VkPetalA", "VkPetalB", "VkPetalC", "VkLeaf", "VkLit", "IslLampGlow" };
         public void ServerMoveBoatToBerth() => BoatManager.Instance.TryMoveBoat(BerthPos, Quaternion.identity);
         // On the ground in front of the fish stall's counter: where nets are sold, the helpers sell, a thief steals coins.
         public Vector3 CounterPos { get; private set; }
@@ -346,6 +349,13 @@ namespace HtfFortress
             if (mf && mf.sharedMesh) mc.sharedMesh = Models.ColliderOf("FortressIsland", NotSolid) ?? mf.sharedMesh;
             Decor = _root.AddComponent<IslandDecor>();
             Decor.Load(System.IO.Path.Combine(Models.Dir, "FortressIsland.decor.txt"));
+            // The shipwreck on the north beach: its own mesh (island-local coordinates baked in), and a smooth closed hull as its
+            // collider, so fish push along it and round its ends instead of wedging between the ribs of the open shell (they
+            // did, when the wreck was part of the island's one collider).
+            var wreck = Models.Attach("Wreck", _root.transform, new Vector3(4f, 2f, 10f), new Vector3(3.6f, 1f, 25.6f));
+            var hull = Models.ColliderOf("WreckCollider");
+            if (hull) { var wc = wreck.AddComponent<MeshCollider>(); wc.sharedMesh = hull; wc.convex = true; }
+            else if (wreck.GetComponent<MeshFilter>() is MeshFilter wmf && wmf.sharedMesh) wreck.AddComponent<MeshCollider>().sharedMesh = wmf.sharedMesh;
 
             // The fish stall: sell your net and buy a bigger one at its counter, and whatever is thrown onto the counter is sold,
             // like at the game's shopkeepers. (A fish crate stood in front of it doing the same till Owen: "感覺小幫手直接賣店家…
