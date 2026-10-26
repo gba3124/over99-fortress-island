@@ -261,7 +261,7 @@ namespace HtfFortress
                 case Gear.Whirlpool: return G(Display.Long, 0.40f, new Vector3(0f, 0.10f, 0.315f));
                 case Gear.NetLauncher: return G(Display.Long, 0.42f, new Vector3(0f, 0.10f, 0.313f));
                 case Gear.WaterCannon: return G(Display.Long, 0.40f, new Vector3(0f, 0.09f, 0.398f));
-                case Gear.Rocket: return G(Display.Heavy, 0.60f, new Vector3(0f, 0.13f, 0.41f));
+                case Gear.Rocket: return G(Display.Heavy, 0.60f, new Vector3(0f, 0.12f, 0.58f));
                 case Gear.Gatling: return G(Display.Heavy, 0.55f, new Vector3(0f, 0.11f, 0.443f)); // Owen: "加特林好小把，我以為會很大"
                 // Not guns: the boomerang stood up by its elbow, the puffer in the palm, the conch tipped up like a horn, the
                 // whistle raised toward the mouth. They leave from where the hand lets go / the air comes out.
