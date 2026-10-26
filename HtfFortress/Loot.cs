@@ -1185,7 +1185,14 @@ namespace HtfFortress
             spin.SetParent(go.transform, false);
             var model = DropModel(g) == null ? WeaponItems.GameGunModel(g, spin) : null;
             if (model) model.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            else model = Models.Attach(DropModel(g) ?? Weapons.ModelName(g), spin, Vector3.one * 0.4f, shadows: false, share: true); // no such gun: a cube in its colour
+            else
+            {
+                // A rare-or-better weapon wears its rarity's look on the ground as in the hand (bands, glow, gilding): its own
+                // materials then, since RarityLook recolours them; everything else shares the session's.
+                bool dressed = GearCatalog.IsWeapon(g) && r != Rarity.Common;
+                model = Models.Attach(DropModel(g) ?? Weapons.ModelName(g), spin, Vector3.one * 0.4f, shadows: false, share: !dressed); // no such gun: a cube in its colour
+                if (dressed) WeaponItems.RarityLook(model, r);
+            }
             var mf = model.GetComponent<MeshFilter>();
             if (mf && mf.sharedMesh)
             {

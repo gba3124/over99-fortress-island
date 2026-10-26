@@ -111,34 +111,69 @@ g.cyl(0.016, 0.004, (0.053, 0.04, Z), white, segs=10, axis="X")
 g.box((0.003, 0.004, 0.014), (0.0555, 0.04, Z + 0.004), black, rot=(0.6, 0, 0))
 out.append(g.finish())
 
-# ---------- Boomerang: a carved wooden V (110°, its elbow toward -Y), lying flat in x/y, a tuna-blue stripe painted along its
-# top, brass caps on the tips and a fat rope-bound hub at the elbow (12 cm through, so it reads edge-on in the hand) ----------
-g = Builder("Boomerang", [wood, dark, fishblue, brass, rope])
-L, HALF, BEND = 0.3, math.radians(55), 0.12
+# ---------- Boomerang: a tuna bent into a 110° V, lying on its side, back on the outside of the bend (Owen's pick over a wooden V).
+# It's held stood up on its edge (WeaponItems.StandUp): a chubby body (FAT) so it reads from the side too ----------
+g = Builder("Boomerang", [fishblue, white, yellow, pearl, black])
+L, STEPS, FAT = 0.58, 120, 1.3
+PROF = ((0.0, 0.0, 0.0), (0.04, 0.022, 0.014), (0.1, 0.038, 0.022), (0.2, 0.05, 0.028), (0.35, 0.054, 0.031), (0.5, 0.052, 0.03),
+        (0.65, 0.045, 0.026), (0.8, 0.031, 0.019), (0.92, 0.016, 0.011), (1.0, 0.011, 0.008))  # (u snout..tail, half height, half width)
 
 
-def bpt(u):  # the spine: u -1 (left tip) .. 1 (right tip), the elbow (u 0) rounded off
-    a = abs(u)
-    return Vector((math.sin(HALF) * L * u, math.cos(HALF) * L * (math.sqrt(a * a + BEND * BEND) - BEND) - 0.025 * (1 - u * u), 0))
+def heading(u):  # 215° along the head arm, turning 70° around u = 0.55 (the tail fin makes the arms equal)
+    t = min(1.0, max(0.0, (u - 0.47) / 0.16))
+    return math.radians(215 - 70 * t * t * (3 - 2 * t))
 
 
-US = [-1.0, -0.97, -0.9, -0.75, -0.55, -0.35, -0.18, -0.07, 0.0, 0.07, 0.18, 0.35, 0.55, 0.75, 0.9, 0.97, 1.0]
-rings = []
-for u in US:
-    p = bpt(u)
-    t = (bpt(min(1.0, u + 0.01)) - bpt(max(-1.0, u - 0.01))).normalized()
-    side = Vector((-t.y, t.x, 0))
-    w = 0.046 - 0.012 * abs(u) if abs(u) < 0.96 else 0.014     # half width in the plane, rounded off at the tips
-    th = 0.03 - 0.008 * abs(u) if abs(u) < 0.96 else 0.01     # half thickness
-    rings.append([p + side * (w * math.cos(j * TAU / 10)) + UP * (th * math.sin(j * TAU / 10)) for j in range(10)])
-loft(g, rings, wood, mf=lambda i, j: fishblue if j in (2, 3) and (2 <= i <= 6 or 10 <= i <= 14) else dark if j > 5 else wood)
-for u in (-0.93, 0.93):                                                   # brass tip caps
-    p = bpt(u)
-    t = (bpt(u + 0.01) - bpt(u - 0.01)).normalized() * (1 if u > 0 else -1)
-    g.beam(p - t * 0.03, p + t * 0.02, 0.036, brass, segs=8, r2=0.014)
-for x in (-0.026, 0.0, 0.026):                                           # the hub: rope turns round the elbow
-    loft(g, [[Vector((x + dx, 0, 0)) + Vector((0, 0.05 * math.cos(j * TAU / 10), 0.064 * math.sin(j * TAU / 10))) for j in range(10)] for dx in (-0.01, 0.01)],
-         rope)
+spine = [Vector((0, 0, 0))]
+for k in range(STEPS):
+    a = heading((k + 0.5) / STEPS)
+    spine.append(spine[-1] + Vector((math.cos(a), math.sin(a), 0)) * (L / STEPS))
+
+
+def frame(u):  # point on the spine, tangent (toward the tail), back direction (in the V's plane)
+    f = u * STEPS
+    k = min(int(f), STEPS - 1)
+    a = heading(u)
+    t = Vector((math.cos(a), math.sin(a), 0))
+    return spine[k].lerp(spine[k + 1], f - k), t, Vector((-t.y, t.x, 0))
+
+
+def surf(u, side, out_=0.0):  # a point on the back (side 1) or belly (side -1) edge
+    p, t, d = frame(u)
+    return p + d * (side * (lerp_table(PROF, u)[0] + out_))
+
+
+rings = [[frame(0)[0]]]
+for u in (0.02, 0.05, 0.1, 0.16, 0.23, 0.3, 0.37, 0.43, 0.47, 0.5, 0.53, 0.56, 0.59, 0.62, 0.66, 0.72, 0.78, 0.84, 0.9, 0.95, 1.0):
+    p, t, d = frame(u)
+    h, w = lerp_table(PROF, u)
+    w *= FAT
+    rings.append([p + d * (h * math.cos(j * TAU / 12)) + UP * (w * math.sin(j * TAU / 12)) for j in range(12)])
+loft(g, rings, fishblue, mf=lambda i, j: fishblue if math.cos((j + 0.5) * TAU / 12) > 0 else white)
+p, t, d = frame(1.0)                                                       # lunate tail
+fin(g, [p + d * 0.012 - t * 0.01, p + t * 0.03 + d * 0.05, p + t * 0.085 + d * 0.1, p + t * 0.07 + d * 0.045, p + t * 0.055,
+        p + t * 0.07 - d * 0.045, p + t * 0.085 - d * 0.1, p + t * 0.03 - d * 0.05, p - d * 0.012 - t * 0.01], UP,
+    [0.014, 0.01, 0.005, 0.008, 0.01, 0.008, 0.005, 0.01, 0.014], fishblue)
+fin(g, [surf(0.24, 1, -0.006), surf(0.34, 1, -0.006), surf(0.4, 1, 0.03)], UP, [0.01, 0.01, 0.004], fishblue)  # first dorsal
+for side in (1, -1):
+    fin(g, [surf(0.64, side, -0.006), surf(0.71, side, -0.006), surf(0.78, side, 0.045)], UP, [0.01, 0.01, 0.004], yellow)
+    for u in (0.79, 0.83, 0.87, 0.91, 0.95):                              # finlets
+        fin(g, [surf(u - 0.012, side, -0.004), surf(u + 0.012, side, -0.004), surf(u + 0.03, side, 0.02)], UP, [0.008, 0.008, 0.003], yellow)
+for s in (-1, 1):
+    h, w = lerp_table(PROF, 0.2)
+    w *= FAT
+    pa, ta, da = frame(0.15)
+    pb, tb, db = frame(0.33)
+    fin(g, [pa + da * 0.014 + UP * (s * w * 0.75), pa + UP * (s * w * 0.75),
+            pb - db * 0.004 + UP * (s * (w + 0.012)), pb + db * 0.01 + UP * (s * (w + 0.014))], UP, 0.006, yellow)  # pectorals
+    p, t, d = frame(0.085)
+    h, w = lerp_table(PROF, 0.085)
+    w *= FAT
+    g.ico(0.019, p + d * 0.01 + UP * (s * w * 0.6), pearl, subdiv=2)        # eyes
+    g.ico(0.01, p + d * 0.012 - t * 0.004 + UP * (s * (w * 0.6 + 0.014)), black, subdiv=1)
+    p0, t0, d0 = frame(0.0)
+    p1, t1, d1 = frame(0.07)
+    g.beam(p0 - d0 * 0.004 + t0 * 0.004 + UP * (s * 0.004), p1 - d1 * 0.02 + UP * (s * lerp_table(PROF, 0.07)[1] * FAT * 0.85), 0.0035, black, segs=4)
 lo = Vector((min(v.co.x for v in g.bm.verts), min(v.co.y for v in g.bm.verts), 0))
 hi = Vector((max(v.co.x for v in g.bm.verts), max(v.co.y for v in g.bm.verts), 0))
 for v in g.bm.verts:

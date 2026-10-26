@@ -1,0 +1,6 @@
+rows top to bottom; views: side, 3/4, front, top, fp
+classic Rocket dims (0.146, 0.62, 0.307) tris 508 mats 7
+round2 Rocket dims (0.204, 0.814, 0.326) tris 1018 mats 6
+restored Rocket dims (0.188, 1.101, 0.302) tris 1178 mats 6
+final Rocket dims (0.164, 0.946, 0.315) tris 1238 mats 6
+final RocketShell dims (0.15, 0.616, 0.15) tris 320 mats 5

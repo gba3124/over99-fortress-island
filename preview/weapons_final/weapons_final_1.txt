@@ -1,0 +1,10 @@
+rows top to bottom; views: side, 3/4, front, top, fp
+final Rocket dims (0.164, 0.946, 0.315) tris 1238 mats 6
+final Gatling dims (0.244, 0.671, 0.335) tris 1370 mats 6
+final LaserGun dims (0.17, 0.494, 0.267) tris 902 mats 4
+final GasGun dims (0.142, 0.543, 0.365) tris 806 mats 6
+final BubbleGun dims (0.19, 0.481, 0.343) tris 1238 mats 6
+final HookGun dims (0.193, 0.613, 0.247) tris 1252 mats 6
+final JellyGun dims (0.104, 0.415, 0.327) tris 574 mats 6
+final StarThrower dims (0.085, 0.255, 0.267) tris 1170 mats 5
+final LobsterClaw dims (0.124, 0.46, 0.257) tris 630 mats 4
