@@ -76,8 +76,14 @@ for s_, x in ((-1, -1.1), (1, 1.1)):
     vkit.box(v, F, (0.6, 0.03, 0.09), (x, -HD - 0.14, Z0 + 1.8), vkit.iron)
 vkit.box(v, F, (1.3, 0.06, 0.34), (0, -HD - 0.12, Z1 + 0.2), vkit.plank)
 vkit.box(v, F, (1.38, 0.04, 0.42), (0, -HD - 0.09, Z1 + 0.2), vkit.trim)
-vkit.box(v, F, (0.34, 0.04, 0.17), (0, -HD - 0.16, Z1 + 0.18), vkit.brass)
-vkit.box(v, F, (0.36, 0.045, 0.045), (0, -HD - 0.165, Z1 + 0.24), vkit.iron)
+# Its emblem: a brass shield with an iron cross, a strapped crate either side (the quartermaster's stores).
+vkit.box(v, F, (0.3, 0.04, 0.27), (0, -HD - 0.16, Z1 + 0.2), vkit.brass)
+vkit.box(v, F, (0.22, 0.05, 0.05), (0, -HD - 0.165, Z1 + 0.2), vkit.iron)   # a band across the shield
+vkit.box(v, F, (0.05, 0.05, 0.19), (0, -HD - 0.165, Z1 + 0.2), vkit.iron)   # and a bolt down it
+for x in (-0.42, 0.42):
+    vkit.box(v, F, (0.2, 0.04, 0.2), (x, -HD - 0.16, Z1 + 0.2), vkit.plank2)
+    for ry in (0.785, -0.785):
+        vkit.box(v, F, (0.26, 0.045, 0.03), (x, -HD - 0.165, Z1 + 0.2), vkit.trim, ry=ry)
 vkit.box(v, F, (0.06, 0.34, 0.06), (-1.66, -HD - 0.15, 2.1), vkit.trim)  # a lantern beside the doorway
 vkit.lantern(v, F, (-1.66, -HD - 0.3, 1.86), 0.9)
 

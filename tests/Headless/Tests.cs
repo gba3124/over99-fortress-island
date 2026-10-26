@@ -1155,7 +1155,7 @@ namespace HtfFortress.Headless
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             string mat = "";
             int groundDown = 0, ground = 0;
-            var groundMats = new HashSet<string> { "Sand", "Grass", "IslPath", "IslWetSand", "IslTileDark", "IslGrout" };
+            var groundMats = new HashSet<string> { "Sand", "Grass", "IslPath", "IslWetSand", "IslTileDark", "IslGrout", "IslPathWet", "IslPathEdge", "IslGateStone" };
             foreach (var line in File.ReadLines(Path.Combine(Src, "Models", "FortressIsland.obj")))
             {
                 var p = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);

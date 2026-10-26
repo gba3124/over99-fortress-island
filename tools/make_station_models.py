@@ -252,15 +252,18 @@ for z in RACK_Z:
 for k, x in enumerate((-0.52, -0.42)):
     beam(f, F, (x, 1.36, 2.35), (x + 0.02 * k, 1.36, 1.85), 0.015, vkit.iron, segs=4)
 box(f, F, (0.14, 0.06, 0.07), (-0.52, 1.34, 1.84), vkit.iron)
-# The sign over the front, hanging from the beam: a hammer crossing a gun barrel.
+# The sign over the front, hanging from the beam: an anvil with two hammers crossed behind it.
 for x in (-0.5, 0.5):
     beam(f, F, (x, -1.5, 2.37), (x, -1.5, 2.2), 0.008, vkit.iron, segs=4)
 box(f, F, (1.4, 0.06, 0.45), (0, -1.52, 1.98), vkit.plank)
 box(f, F, (1.48, 0.04, 0.53), (0, -1.49, 1.98), vkit.trim)
-beam(f, F, (-0.4, -1.57, 1.82), (0.35, -1.57, 2.14), 0.035, vkit.iron, segs=6)
-box(f, F, (0.28, 0.06, 0.14), (0.36, -1.58, 2.15), steel, ry=math.radians(-25))
-beam(f, F, (-0.35, -1.58, 2.14), (0.42, -1.58, 1.82), 0.03, vkit.trim, segs=5)
-box(f, F, (0.12, 0.05, 0.22), (-0.38, -1.59, 2.14), steel)
+for sx in (-1, 1):  # the hammers: handles crossing, steel heads at the top
+    beam(f, F, (sx * 0.42, -1.565, 1.8), (-sx * 0.3, -1.565, 2.15), 0.025, vkit.trim, segs=5)
+    box(f, F, (0.15, 0.06, 0.08), (-sx * 0.32, -1.57, 2.15), steel, ry=sx * 0.5)
+box(f, F, (0.3, 0.06, 0.05), (0, -1.58, 1.8), vkit.iron)                    # the anvil: its foot,
+box(f, F, (0.14, 0.06, 0.07), (0, -1.58, 1.86), vkit.iron)                  # waist,
+box(f, F, (0.42, 0.06, 0.09), (0, -1.58, 1.94), vkit.iron)                  # face
+box(f, F, (0.13, 0.06, 0.06), (0.26, -1.58, 1.955), vkit.iron, ry=0.4)      # and horn
 box(f, F, (0.06, 0.3, 0.06), (W / 2, -1.5, 2.15), vkit.trim)                 # a lantern on the front right post
 vkit.lantern(f, F, (W / 2, -1.62, 1.9), 0.9)
 out.append(f.finish())
