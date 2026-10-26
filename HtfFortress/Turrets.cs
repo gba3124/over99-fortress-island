@@ -121,7 +121,7 @@ namespace HtfFortress
             if (!target) return;
             _nextFire[p.Id] = Time.time + s.Interval;
             Vector3 hit = target.transform.position;
-            AutoTest.Count("shots_" + p.Type);
+            if (AutoTest.Running) AutoTest.Count("shots_" + p.Type);
 
             switch (p.Type)
             {
@@ -133,13 +133,16 @@ namespace HtfFortress
                     if (Time.time - tr.next > 0.5f) tr.dmg = 0; // left over from when it last stopped firing
                     tr.dmg += dmg;
                     bool show = Time.time >= tr.next;
-                    if (show) { Fx.Send(FxKind.Tracer, muzzle, hit, p.Id, tr.dmg, 0, p.Type.ToString()); tr = (Time.time + 0.15f, 0); }
+                    if (show) { Fx.Send(FxKind.Tracer, muzzle, hit, p.Id, tr.dmg, 0, Key(p.Type)); tr = (Time.time + 0.15f, 0); }
                     _tracer[p.Id] = tr;
-                    var extraGun = Others(alive, target, muzzle, s, false).ToList();
+                    var extraGun = Others(alive, target, muzzle, s, false);
                     if (extraGun.Count > 0)
                     {
-                        var shots = extraGun.Select(c => (c, Dmg(s.Damage, c, s))).ToList();
-                        StartCoroutine(GunBurst(muzzle, shots, show, p.Type.ToString()));
+                        // A loop, not a lambda over `s`: the lambda's closure was built at the top of Fire, on every call of
+                        // every turret every frame, reloading or not.
+                        var shots = new List<(Creature c, int dmg)>(extraGun.Count);
+                        foreach (var c in extraGun) shots.Add((c, Dmg(s.Damage, c, s)));
+                        StartCoroutine(GunBurst(muzzle, shots, show, Key(p.Type)));
                     }
                     break;
                 }
@@ -148,7 +151,8 @@ namespace HtfFortress
                 {
                     // Everything in a cone toward the target burns.
                     Vector3 aim = (hit - muzzle).Flat().normalized;
-                    foreach (var c in alive.Where(Alive).ToList())
+                    var living = Living(alive);
+                    foreach (var c in living)
                     {
                         Vector3 to = (c.transform.position - muzzle).Flat();
                         float reach = Enemies.Instance.TryGet(c, out var ft) && EnemyCatalog.IsBoss(ft.Kind) ? s.Range * 1.6f : s.Range;
@@ -156,7 +160,8 @@ namespace HtfFortress
                         Hit(c, Dmg(s.Damage, c, s));
                         SetBurn(c, s.Burn);
                     }
-                    Fx.Send(FxKind.Flame, muzzle, muzzle + aim * s.Range, p.Id, 0, 0, p.Type.ToString()); // the visual ends at the real range
+                    Done(living);
+                    Fx.Send(FxKind.Flame, muzzle, muzzle + aim * s.Range, p.Id, 0, 0, Key(p.Type)); // the visual ends at the real range
                     break;
                 }
 
@@ -164,14 +169,14 @@ namespace HtfFortress
                 {
                     int dmg = Dmg(s.Damage, target, s);
                     Hit(target, dmg);
-                    Fx.Send(FxKind.Snipe, muzzle, hit, p.Id, dmg, 0, p.Type.ToString());
+                    Fx.Send(FxKind.Snipe, muzzle, hit, p.Id, dmg, 0, Key(p.Type));
                     // Three targets (Lv5+ barrels) are a burst, not a shotgun: `啪、啪、啪`, each round separately aimed.
-                    var extras = Others(alive, target, muzzle, s, true).ToList();
+                    var extras = Others(alive, target, muzzle, s, true);
                     if (extras.Count > 0)
                     {
                         var shots = new List<(Creature c, int dmg)>(extras.Count);
                         foreach (var extra in extras) shots.Add((extra, Dmg(s.Damage, extra, s)));
-                        StartCoroutine(SniperBurst(muzzle, shots, p.Id, p.Type.ToString()));
+                        StartCoroutine(SniperBurst(muzzle, shots, p.Id, Key(p.Type)));
                     }
                     break;
                 }
@@ -181,7 +186,7 @@ namespace HtfFortress
                     {
                         Vector3 at = i == 0 ? hit : hit + Random.insideUnitSphere.Flat() * 3f;
                         Splash(alive, at, s.Splash, s.Damage, s);
-                        Fx.Send(FxKind.Cannonball, muzzle, at, i == 0 ? p.Id : 0, Mathf.RoundToInt(s.Damage * DamageMultiplier.Value * SoulTurretMult), 0, p.Type.ToString());
+                        Fx.Send(FxKind.Cannonball, muzzle, at, i == 0 ? p.Id : 0, Mathf.RoundToInt(s.Damage * DamageMultiplier.Value * SoulTurretMult), 0, Key(p.Type));
                     }
                     break;
 
@@ -192,13 +197,15 @@ namespace HtfFortress
                     {
                         Vector3 d = Quaternion.Euler(0f, (i - (s.Shots - 1) * 0.5f) * 12f, 0f) * dir;
                         Vector3 end = muzzle + d * s.Range;
-                        foreach (var c in alive.Where(Alive).ToList())
+                        var living = Living(alive);
+                        foreach (var c in living)
                             if (DistToSegment(c.transform.position, muzzle, end) < 1f)
                             {
                                 Hit(c, Dmg(s.Damage, c, s));
                                 Siege.Instance.Slow(c, s.Slow, s.SlowTime);
                             }
-                        Fx.Send(FxKind.Harpoon, muzzle, end, i == 0 ? p.Id : 0, 0, 0, p.Type.ToString());
+                        Done(living);
+                        Fx.Send(FxKind.Harpoon, muzzle, end, i == 0 ? p.Id : 0, 0, 0, Key(p.Type));
                     }
                     break;
                 }
@@ -207,7 +214,7 @@ namespace HtfFortress
                     for (int i = 0; i < s.Shots; i++)
                     {
                         Vector3 at = i == 0 ? hit : hit + Random.insideUnitSphere.Flat() * 2.5f;
-                        Fx.Send(FxKind.Mortar, muzzle, at, i == 0 ? p.Id : 0, 0, 0, p.Type.ToString());
+                        Fx.Send(FxKind.Mortar, muzzle, at, i == 0 ? p.Id : 0, 0, 0, Key(p.Type));
                         StartCoroutine(MortarLands(at, s, _owner, _from));
                     }
                     break;
@@ -224,7 +231,7 @@ namespace HtfFortress
                         Hit(cur, zd);
                         if (Perks.TeamLegend(Gear.TeslaCoil)) { Siege.Instance.Slow(cur, 1f, 0.35f); Perks.Proc(Gear.TeslaCoil, cur.transform.position); } // legendary: every zap stuns
                         Vector3 to = cur.transform.position + Vector3.up * 0.4f;
-                        Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0, zd, 0, p.Type.ToString());
+                        Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0, zd, 0, Key(p.Type));
                         from = to;
                         Creature nextC = null; float nb = 6f * 6f;
                         foreach (var c in alive)
@@ -282,9 +289,12 @@ namespace HtfFortress
         }
 
         // The other fish a multi-barrel turret shoots at once: the nearest (or, for the sniper, the toughest) in range.
-        private IEnumerable<Creature> Others(List<Creature> alive, Creature first, Vector3 muzzle, Catalog.TurretStats s, bool toughest)
+        private List<Creature> Others(List<Creature> alive, Creature first, Vector3 muzzle, Catalog.TurretStats s, bool toughest) =>
+            s.Targets <= 1 ? NoOthers : OthersInRange(alive, first, muzzle, s, toughest);
+        private static readonly List<Creature> NoOthers = new List<Creature>(); // read only
+
+        private List<Creature> OthersInRange(List<Creature> alive, Creature first, Vector3 muzzle, Catalog.TurretStats s, bool toughest)
         {
-            if (s.Targets <= 1) return Enumerable.Empty<Creature>();
             var inRange = alive.Where(c => c != first && Alive(c) && Flat2(c.transform.position - muzzle) < s.Range * s.Range
                                            && Flat2(c.transform.position - muzzle) >= s.MinRange * s.MinRange);
             var sorted = toughest ? inRange.OrderByDescending(c => c._hp.Value) : inRange.OrderBy(c => Flat2(c.transform.position - muzzle));
@@ -298,8 +308,30 @@ namespace HtfFortress
         private void Splash(List<Creature> alive, Vector3 at, float radius, int dmg, Catalog.TurretStats s)
         {
             float r2 = radius * radius;
-            foreach (var c in alive.Where(Alive).ToList())
+            var living = Living(alive);
+            foreach (var c in living)
                 if ((c.transform.position - at).sqrMagnitude <= r2) Hit(c, Dmg(dmg, c, s));
+            Done(living);
+        }
+
+        // The fish a shot can hit, copied before the hits as `alive.Where(Alive).ToList()` did (a hit may change `alive`),
+        // into a reused list: a new one per shell, flame or harpoon (hundreds of fish late on) was the host's largest
+        // steady garbage in a big fight. A stack, so a hit that ends in another shot gets a list of its own.
+        private readonly Stack<List<Creature>> _spareLists = new Stack<List<Creature>>();
+        private List<Creature> Living(List<Creature> alive)
+        {
+            var l = _spareLists.Count > 0 ? _spareLists.Pop() : new List<Creature>();
+            foreach (var c in alive) if (Alive(c)) l.Add(c);
+            return l;
+        }
+        private void Done(List<Creature> l) { l.Clear(); _spareLists.Push(l); }
+
+        // PieceType names for the effects' key, made once (an enum's ToString is a new string each shot).
+        private static readonly Dictionary<PieceType, string> KeyNames = new Dictionary<PieceType, string>();
+        private static string Key(PieceType t)
+        {
+            if (!KeyNames.TryGetValue(t, out var k)) KeyNames[t] = k = t.ToString();
+            return k;
         }
 
         // Incendiary rounds (fortress gear): turret hits set the target burning for 3 s.
@@ -311,12 +343,14 @@ namespace HtfFortress
             float dps = Perks.Team(Gear.Incendiary);
             if (dps <= 0f || !Alive(c)) return;
             SetBurn(c, dps); // never weakens a flamethrower's burn
-            // Legendary: the fire jumps to the nearest other fish.
-            if (spread && Perks.TeamLegend(Gear.Incendiary))
-            {
-                var next = FortressPlugin.Alive.Where(x => x != c && Alive(x) && !_burning.ContainsKey(x) && (x.transform.position - c.transform.position).sqrMagnitude < 2.5f * 2.5f).FirstOrDefault();
-                if (next) { Ignite(next, false); Perks.Proc(Gear.Incendiary, next.transform.position); }
-            }
+            if (spread && Perks.TeamLegend(Gear.Incendiary)) Spread(c);
+        }
+
+        // Legendary: the fire jumps to the nearest other fish. (Apart from Ignite: this lambda's closure was built on every hit.)
+        private void Spread(Creature c)
+        {
+            var next = FortressPlugin.Alive.Where(x => x != c && Alive(x) && !_burning.ContainsKey(x) && (x.transform.position - c.transform.position).sqrMagnitude < 2.5f * 2.5f).FirstOrDefault();
+            if (next) { Ignite(next, false); Perks.Proc(Gear.Incendiary, next.transform.position); }
         }
 
         // Keeps the stronger of two burns (flamethrower vs incendiary rounds).
@@ -367,6 +401,12 @@ namespace HtfFortress
         {
             c.ServerChangeHp(dmg);
             if (c._hp.Value > 0 || _bursting || !Perks.TeamLegend(Gear.Gunpowder)) return;
+            Burst(c, dmg);
+        }
+
+        // (Apart from Hit: this lambda captures `c`, and its closure was built on every hit.)
+        private void Burst(Creature c, int dmg)
+        {
             _bursting = true;
             Vector3 at = c.transform.position;
             foreach (var x in FortressPlugin.Alive.Where(x => x != c && Alive(x) && (x.transform.position - at).sqrMagnitude < 2.5f * 2.5f).ToList())

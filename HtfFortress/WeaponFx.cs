@@ -430,7 +430,10 @@ namespace HtfFortress
         // ---------- the kinds ----------
 
         // Glowing chips (the game's bullets and muzzle flashes are such glowing chunks): one system per colour.
-        public static ParticleSystem Sparks(string colour) => System("Sparks" + colour, () => new Spec
+        // Found by colour without building its name (and a closure) on every hit: see BossVfx.Sparks.
+        private static readonly Dictionary<string, ParticleSystem> SparksOf = new Dictionary<string, ParticleSystem>();
+        public static ParticleSystem Sparks(string colour) => SparksOf.TryGetValue(colour, out var ps) && ps ? ps : SparksOf[colour] = MakeSparks(colour);
+        private static ParticleSystem MakeSparks(string colour) => System("Sparks" + colour, () => new Spec
         {
             Mat = Emissive("Spark" + colour, SparkColour(colour), 7f), Mesh = Cube,
             Life = new Vector2(0.2f, 0.45f), Speed = new Vector2(3f, 8f), Size = new Vector2(0.05f, 0.1f), Gravity = 1.2f, Drag = 1.5f,

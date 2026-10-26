@@ -29,6 +29,9 @@ namespace HtfFortress
         private readonly Dictionary<ulong, float> _readyAt = new Dictionary<ulong, float>();
         // client
         private float _myReadyAt, _myCooldown = 1f;
+        private (int at, int count, Gear g, Rarity r, int uses, int secs) _shown;
+        private float _relabelAt;
+        private static readonly List<(Gear g, Rarity r, int stars)> NoneOwned = new List<(Gear g, Rarity r, int stars)>(); // read only
         private static Gear? _picked;
         private UnityEngine.UI.Image _panel, _pic;
         private TextMeshProUGUI _label, _count;
@@ -50,18 +53,33 @@ namespace HtfFortress
         public static List<(Gear g, Rarity r, int stars)> Owned(VaultData v)
         {
             var list = new List<(Gear, Rarity, int)>();
-            foreach (var g in GearCatalog.All.Where(g => GearCatalog.IsActive(g) && g != Gear.NetCannon))
+            foreach (var g in GearCatalog.All)
+            {
+                if (!GearCatalog.IsActive(g) || g == Gear.NetCannon) continue;
                 for (int r = (int)Rarity.Legendary; r >= 0; r--) // an int: a Rarity is a byte, and Common-- wraps to 255 (that hung the game)
                 {
                     int st = 0;
                     for (int s = GearCatalog.MaxStars; s >= 0; s--) if (v.Count(g, (Rarity)r, s) > 0) { st = s; break; }
-                    if (v.Count(g, (Rarity)r) > 0 || v.Owned.Keys.Any(k => k.Item1 == g && k.Item2 == (Rarity)r)) { list.Add((g, (Rarity)r, st)); break; }
+                    if (v.Count(g, (Rarity)r) > 0 || AnyStars(v, g, (Rarity)r)) { list.Add((g, (Rarity)r, st)); break; }
                 }
+            }
             return list;
         }
 
+        // Loops rather than LINQ here: the HUD and the loadout bar ask a few times a frame on every screen, and each lambda
+        // over g and r was a new closure (a few kB of garbage a frame with nothing owned).
+        private static bool AnyStars(VaultData v, Gear g, Rarity r)
+        {
+            foreach (var k in v.Owned.Keys) if (k.Item1 == g && k.Item2 == r) return true;
+            return false;
+        }
+
         // Which of them K uses now: the one picked, while the team still has it; else the first.
-        private static int PickedIndex(List<(Gear g, Rarity r, int stars)> owned) => Mathf.Max(0, _picked is Gear p ? owned.FindIndex(x => x.g == p) : 0);
+        private static int PickedIndex(List<(Gear g, Rarity r, int stars)> owned)
+        {
+            if (_picked is Gear p) for (int i = 0; i < owned.Count; i++) if (owned[i].g == p) return i;
+            return 0;
+        }
 
         private void Update()
         {
@@ -150,7 +168,7 @@ namespace HtfFortress
 
         private void DrawHud()
         {
-            var owned = Player.LocalPlayer && Loot.Instance ? Owned(Loot.Instance.ClientVault) : new List<(Gear g, Rarity r, int)>();
+            var owned = Player.LocalPlayer && Loot.Instance ? Owned(Loot.Instance.ClientVault) : NoneOwned;
             bool show = owned.Count > 0 && Siege.Instance && Siege.Instance.ViewActive && Hud.Font;
             if (!show) { if (_panel) _panel.gameObject.SetActive(false); return; }
             if (!_panel)
@@ -161,17 +179,26 @@ namespace HtfFortress
                 _label.enableWordWrapping = false; _label.enableAutoSizing = true; _label.fontSizeMin = 14f; _label.fontSizeMax = 21f; // one line, whatever the name
                 _count = Hud.Label(_panel.transform, "", 16f, new Vector2(1f, 1f), new Vector2(-10f, -10f), new Vector2(50f, 26f), TextAlignmentOptions.TopRight, Hud.Muted, pivot: new Vector2(1f, 1f));
                 _bar = Hud.Bar.Make(_panel.transform, new Vector2(0f, 0f), new Vector2(64f, 12f), new Vector2(242f, 10f), Hud.Accent);
+                _relabelAt = 0f;
             }
             _panel.gameObject.SetActive(true);
             int at = PickedIndex(owned);
             var (g, r, st) = owned[at];
-            _count.text = owned.Count > 1 ? $"{at + 1}/{owned.Count}" : ""; // Shift+K for the others
-            Hud.ShowPicture(_pic, "Gear" + g);
             float left = _myReadyAt - Time.time;
             bool ready = left <= 0f;
-            string state = ready ? $"<color={Hud.Hex(Hud.Good)}>{L10n.T("activeReady")}</color>" : $"<color={Hud.Hex(Hud.Muted)}>{Mathf.CeilToInt(left)}s</color>";
-            int uses = GearCatalog.Rarities.Sum(x => Loot.Instance.ClientVault.Count(g, x)); // what's left of it, every colour
-            _label.text = Hud.Keys($"[K] <color=#{GearCatalog.Hex(r)}>{GearCatalog.Name(g)}</color> ×{uses}  {state}");
+            int uses = 0; // what's left of it, every colour
+            foreach (var x in GearCatalog.Rarities) uses += Loot.Instance.ClientVault.Count(g, x);
+            // The texts are rebuilt when what they say changes (and twice a second anyway, for a language switch), not as new
+            // strings every frame on every screen.
+            var shown = (at, owned.Count, g, r, uses, ready ? 0 : Mathf.CeilToInt(left));
+            if (!shown.Equals(_shown) || Time.time >= _relabelAt)
+            {
+                _shown = shown; _relabelAt = Time.time + 0.5f;
+                _count.text = owned.Count > 1 ? $"{at + 1}/{owned.Count}" : ""; // Shift+K for the others
+                Hud.ShowPicture(_pic, "Gear" + g);
+                string state = ready ? $"<color={Hud.Hex(Hud.Good)}>{L10n.T("activeReady")}</color>" : $"<color={Hud.Hex(Hud.Muted)}>{Mathf.CeilToInt(left)}s</color>";
+                _label.text = Hud.Keys($"[K] <color=#{GearCatalog.Hex(r)}>{GearCatalog.Name(g)}</color> ×{uses}  {state}");
+            }
             _bar.Set(ready ? 1f : 1f - left / _myCooldown, ready ? Hud.Good : Hud.Accent);
         }
     }

@@ -1741,6 +1741,7 @@ namespace HtfFortress
             v.A = a; v.B = b; v.Width = width; v.Heat = heat; v.Until = Time.time + 0.22f; v.Muzzle = muzzle;
         }
 
+        private static readonly string[] BeamSparks = { "Red", "Green", "Blue", "Violet" }, HotBeamSparks = { "Red", "Gold", "Green", "Cyan", "Violet" }; // (made once, not per beam per frame)
         private void AnimateBeams(float now)
         {
             foreach (var v in _beams.Values)
@@ -1807,8 +1808,7 @@ namespace HtfFortress
                     st.SetPositionAndRotation(v.A + dir * from, rot);
                     st.localScale = new Vector3(v.Width * 0.5f, to - from, v.Width * 0.5f);
                 }
-                string[] sparks = { "Red", "Green", "Blue", "Violet" };
-                WeaponFx.Emit(WeaponFx.Sparks(v.Heat >= 3.5f ? new[] { "Red", "Gold", "Green", "Cyan", "Violet" }[(int)(now * 20f) % 5] : sparks[Mathf.Clamp(Mathf.RoundToInt(v.Heat), 0, 3)]), v.B, 2, -dir + Vector3.up * 0.5f);
+                WeaponFx.Emit(WeaponFx.Sparks(v.Heat >= 3.5f ? HotBeamSparks[(int)(now * 20f) % 5] : BeamSparks[Mathf.Clamp(Mathf.RoundToInt(v.Heat), 0, 3)]), v.B, 2, -dir + Vector3.up * 0.5f);
                 if (now >= v.NextFlash) { v.NextFlash = now + 0.07f; WeaponFx.Game("PistolFire", v.A, dir); }
                 if (now >= v.NextSmoke) { v.NextSmoke = now + 0.3f; WeaponFx.Game("SmallSmoke", v.B); WeaponFx.Emit(WeaponFx.Dust, v.B, 1, Vector3.up); }
             }

@@ -169,7 +169,11 @@ namespace HtfFortress
         public static Material Wash(Color c) => new Material(Shader.Find("Sprites/Default")) { color = c, renderQueue = 3015 };
 
         // Glowing chips in one colour (their glow kept under the bloom's white, unlike the weapons' sparks): one system per colour.
-        public static ParticleSystem Sparks(Color c) => WeaponFx.System("BossSparks" + ColorUtility.ToHtmlStringRGB(c), () => new WeaponFx.Spec
+        // Found by the colour itself: the name (a hex string) and the closure built for the lookup were garbage on every call,
+        // and boss auras and moves ask several times a second. The named system behind it is the same one as before.
+        private static readonly Dictionary<Color, ParticleSystem> SparksOf = new Dictionary<Color, ParticleSystem>();
+        public static ParticleSystem Sparks(Color c) => SparksOf.TryGetValue(c, out var ps) && ps ? ps : SparksOf[c] = MakeSparks(c);
+        private static ParticleSystem MakeSparks(Color c) => WeaponFx.System("BossSparks" + ColorUtility.ToHtmlStringRGB(c), () => new WeaponFx.Spec
         {
             Mat = Glow(c, 3f), Mesh = WeaponFx.Cube, Life = new Vector2(0.25f, 0.55f), Speed = new Vector2(3f, 8f), Size = new Vector2(0.06f, 0.12f), Gravity = 1.2f, Drag = 1.5f,
             SizeOverLife = WeaponFx.Curve(0f, 1f, 0.6f, 0.8f, 1f, 0f), Shape = ParticleSystemShapeType.Cone, Angle = 50f, Radius = 0.02f, Max = 800,

@@ -297,14 +297,17 @@ namespace HtfFortress
             if (Time.unscaledTime >= _nextLod) { _nextLod = Time.unscaledTime + 0.35f; ApplyRenderLod(); }
             // Forget fish that are gone (the lists are walked every frame for markers, plates and tips).
             var cm = InstanceFinder.ClientManager;
-            if (cm != null && Time.time >= _nextPrune)
-            {
-                _nextPrune = Time.time + 5f;
-                _dressed.RemoveWhere(id => !cm.Objects.Spawned.ContainsKey(id));
-                foreach (int id in _clientTags.Keys.Where(id => !_dressed.Contains(id)).ToList()) { _clientTags.Remove(id); _seenMax.Remove(id); _tops.Remove(id); _rends.Remove(id); }
-            }
+            if (cm != null && Time.time >= _nextPrune) Prune(cm);
         }
         private float _nextPrune;
+
+        // (Apart from Update: the lambda captures `cm`, and its closure was built every frame, not every 5 s.)
+        private void Prune(FishNet.Managing.Client.ClientManager cm)
+        {
+            _nextPrune = Time.time + 5f;
+            _dressed.RemoveWhere(id => !cm.Objects.Spawned.ContainsKey(id));
+            foreach (int id in _clientTags.Keys.Where(id => !_dressed.Contains(id)).ToList()) { _clientTags.Remove(id); _seenMax.Remove(id); _tops.Remove(id); _rends.Remove(id); }
+        }
 
         // Render LOD: 400 trash fish behind you still cost draw calls and skinned-mesh work. Only bosses and fish within
         // 90 m of the camera are drawn; the host's simulation is untouched.

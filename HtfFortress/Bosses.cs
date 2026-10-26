@@ -120,7 +120,7 @@ namespace HtfFortress
             bool aura = Time.time >= _nextAura;
             if (aura) _nextAura = Time.time + 0.5f;
             _brainsScratch.Clear();
-            _brainsScratch.AddRange(_brains);
+            foreach (var kv in _brains) _brainsScratch.Add(kv); // (not AddRange: Mono's copies through a temporary array every frame)
             foreach (var kv in _brainsScratch)
             {
                 var b = kv.Value;
@@ -140,7 +140,9 @@ namespace HtfFortress
                 if (aura && b.IsBoss) b.Aura();
                 if (AutoTest.Running && Time.time >= b.NextTrace) { b.NextTrace = Time.time + 3f; BuildSystem.Log.LogInfo("boss trace " + b.Trace()); }
             }
-            if (!_brains.Values.Any(b => b.IsBoss))
+            bool anyBoss = false; // (a loop: Values.Any boxed an enumerator every frame)
+            foreach (var b in _brains.Values) if (b.IsBoss) { anyBoss = true; break; }
+            if (!anyBoss)
             {
                 if (Dark) { Dark = false; BossFx.Send("dark", null, Vector3.zero, Vector3.zero, 0); }
                 if (_musicOn) { _musicOn = false; Fx.Send(FxKind.BossMusic, Vector3.zero, Vector3.zero, 0, 0); }

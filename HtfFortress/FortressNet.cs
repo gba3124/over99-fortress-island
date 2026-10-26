@@ -416,13 +416,18 @@ namespace HtfFortress
             }
         }
 
+        private readonly List<int> _packIds = new List<int>(); // RefreshWaist runs every frame: one list, not a new one each time
         private void RefreshWaist()
         {
             // Client: one small fish model per belt, attached to the player's hip.
-            foreach (var id in new List<int>(_pack.Keys))
+            if (_pack.Count == 0) return;
+            _packIds.Clear();
+            foreach (int id in _pack.Keys) _packIds.Add(id);
+            foreach (var id in _packIds)
             {
                 _pack.TryGetValue(id, out int n);
-                var p = PlayerManager.Players.FirstOrDefault(x => x && x.ObjectId == id);
+                Player p = null; // (a loop: FirstOrDefault's lambda over `id` was a closure per belt per frame)
+                for (int i = 0; i < PlayerManager.Players.Count; i++) { var x = PlayerManager.Players[i]; if (x && x.ObjectId == id) { p = x; break; } }
                 // Visual tiers: a belt cannot show 100 fish, so it grows a handful and then a basket; the exact number is on
                 // the stall's backup-fish line.
                 int want = n >= 100 ? 6 : n >= 50 ? 5 : n >= 20 ? 5 : n >= 15 ? 4 : n >= 10 ? 3 : n >= 5 ? 2 : 1;

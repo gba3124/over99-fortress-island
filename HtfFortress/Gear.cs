@@ -675,9 +675,11 @@ namespace HtfFortress
         public static bool TeamLegend(Gear g)
         {
             Fresh();
-            if (!LegendNow.TryGetValue(g, out bool on)) LegendNow[g] = on = V != null && V.Fortress.Any(f => f.Item1 == g && f.Item2 == Rarity.Legendary);
+            if (!LegendNow.TryGetValue(g, out bool on)) LegendNow[g] = on = HasLegend(g);
             return on;
         }
+        // (Apart from TeamLegend: the lambda captures `g`, so its closure was built on every call, cached answer or not.)
+        private static bool HasLegend(Gear g) => V != null && V.Fortress.Any(f => f.Item1 == g && f.Item2 == Rarity.Legendary);
         public static bool Legend(Player p, Gear g) =>
             p && V != null && V.Personal.TryGetValue(Loot.KeyOf(p), out var l) && l.Any(x => x.Item1 == g && x.Item2 == Rarity.Legendary);
         public static bool Legend(int playerObjectId, Gear g) => Legend(PlayerManager.Players.FirstOrDefault(x => x && x.ObjectId == playerObjectId), g);

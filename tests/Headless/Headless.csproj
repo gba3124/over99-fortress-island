@@ -23,6 +23,7 @@
     <Reference Include="FishNet.Runtime" HintPath="$(Managed)/FishNet.Runtime.dll" Private="false" />
     <Reference Include="UnityEngine" HintPath="$(Managed)/UnityEngine.dll" Private="false" />
     <Reference Include="UnityEngine.CoreModule" HintPath="$(Managed)/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.ParticleSystemModule" HintPath="$(Managed)/UnityEngine.ParticleSystemModule.dll" Private="false" />
   </ItemGroup>
 
 </Project>

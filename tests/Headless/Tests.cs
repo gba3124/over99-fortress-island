@@ -31,6 +31,7 @@ namespace HtfFortress.Headless
 
         public static int Run(string[] args)
         {
+            if (args.Contains("perf")) { Perf.Run(Path.Combine(Program.Repo, "HtfFortress/bin/Release/netstandard2.1/HtfFortress.dll")); return 0; }
             foreach (var t in typeof(Loot).Assembly.GetTypes())
                 try { RuntimeHelpers.RunClassConstructor(t.TypeHandle); }
                 catch (Exception e) { _fail++; Console.WriteLine($"  FAIL static init {t.Name}: {e.GetBaseException().Message}"); }
@@ -1089,6 +1090,31 @@ namespace HtfFortress.Headless
             // Fewer effects (WeaponFx.Thin): two in five, a lone one at that chance; everything with the setting off.
             Check(WeaponFx.Thin(10, 0.99f, true) == 4 && WeaponFx.Thin(1, 0.3f, true) == 1 && WeaponFx.Thin(1, 0.5f, true) == 0 && WeaponFx.Thin(7, 0.5f, false) == 7,
                   "fewer effects thins the wrong amount");
+            // Actives.Owned lost its LINQ (it runs a few times a frame on every screen): same answer as the LINQ it replaced.
+            static List<(Gear, Rarity, int)> OwnedLinq(VaultData v)
+            {
+                var list = new List<(Gear, Rarity, int)>();
+                foreach (var g in GearCatalog.All.Where(g => GearCatalog.IsActive(g) && g != Gear.NetCannon))
+                    for (int r = (int)Rarity.Legendary; r >= 0; r--)
+                    {
+                        int st = 0;
+                        for (int s = GearCatalog.MaxStars; s >= 0; s--) if (v.Count(g, (Rarity)r, s) > 0) { st = s; break; }
+                        if (v.Count(g, (Rarity)r) > 0 || v.Owned.Keys.Any(k => k.Item1 == g && k.Item2 == (Rarity)r)) { list.Add((g, (Rarity)r, st)); break; }
+                    }
+                return list;
+            }
+            var orng = new System.Random(11);
+            var kinds = GearCatalog.All.Where(g => GearCatalog.IsActive(g) || orng.Next(4) == 0).ToArray();
+            for (int round = 0; round < 300; round++)
+            {
+                var v = new VaultData();
+                for (int i = orng.Next(8); i > 0; i--)
+                    v.Owned[new GearKey(kinds[orng.Next(kinds.Length)], GearCatalog.Rarities[orng.Next(GearCatalog.Rarities.Length)], orng.Next(GearCatalog.MaxStars + 1))] = 1 + orng.Next(3);
+                var want = OwnedLinq(v);
+                var got = Actives.Owned(v).Select(x => ((Gear, Rarity, int))x).ToList();
+                if (!got.SequenceEqual(want)) { Check(false, $"Actives.Owned differs from its LINQ version for {string.Join(", ", v.Owned.Keys)}"); break; }
+                Check(true, "");
+            }
             FxChecks();
         }
 

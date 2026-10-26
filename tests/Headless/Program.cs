@@ -28,6 +28,11 @@ namespace HtfFortress.Headless
                 if (v.sqrMagnitude <= 1f) return v;
             }
         }
+        // `perf` only: UnityEngine.Object's == and `if (obj)` need the engine (its static constructor asks the C++ side for a
+        // layout); the benchmark's stand-in objects count as alive while they are referenced.
+        public static bool Exists(UnityEngine.Object o) => (object)o != null;
+        public static bool Same(UnityEngine.Object a, UnityEngine.Object b) => ReferenceEquals(a, b);
+        public static bool Differ(UnityEngine.Object a, UnityEngine.Object b) => !ReferenceEquals(a, b);
         public static float Time() => Now;
         public static float DeltaTime() => Dt;
         public static int FrameCount() => Frame;
@@ -59,12 +64,12 @@ namespace HtfFortress.Headless
                 }
                 return null;
             };
-            Rewrite(mod, patched);
+            Rewrite(mod, patched, args.Contains("perf"));
             return Tests.Run(args);
         }
 
         // Every call to UnityEngine.Random / UnityEngine.Time in the mod goes to Shim instead.
-        private static void Rewrite(string src, string dst)
+        private static void Rewrite(string src, string dst, bool objects)
         {
             var resolver = new DefaultAssemblyResolver();
             foreach (var d in Dirs) resolver.AddSearchDirectory(d);
@@ -80,6 +85,15 @@ namespace HtfFortress.Headless
             Map("UnityEngine.Time::get_deltaTime()", nameof(Shim.DeltaTime));
             Map("UnityEngine.Time::get_frameCount()", nameof(Shim.FrameCount));
             Map("UnityEngine.Time::get_realtimeSinceStartup()", nameof(Shim.Time));
+            Map("UnityEngine.Time::get_unscaledTime()", nameof(Shim.Time));
+            Map("UnityEngine.Time::get_unscaledDeltaTime()", nameof(Shim.DeltaTime));
+            if (objects)
+            {
+                var o = typeof(UnityEngine.Object);
+                Map("UnityEngine.Object::op_Implicit(UnityEngine.Object)", nameof(Shim.Exists), o);
+                Map("UnityEngine.Object::op_Equality(UnityEngine.Object,UnityEngine.Object)", nameof(Shim.Same), o, o);
+                Map("UnityEngine.Object::op_Inequality(UnityEngine.Object,UnityEngine.Object)", nameof(Shim.Differ), o, o);
+            }
             int n = 0;
             var missing = new HashSet<string>();
             foreach (var t in module.GetTypes())
@@ -103,10 +117,10 @@ namespace HtfFortress.Headless
                             n++;
                             continue;
                         }
-                        if (dt != "UnityEngine.Random" && dt != "UnityEngine.Time") continue;
+                        if (dt != "UnityEngine.Random" && dt != "UnityEngine.Time" && dt != "UnityEngine.Object") continue;
                         string key = $"{dt}::{mr.Name}({string.Join(",", mr.Parameters.Select(p => p.ParameterType.FullName))})";
                         if (map.TryGetValue(key, out var rep)) { ins.Operand = rep; n++; }
-                        else missing.Add(key);
+                        else if (dt != "UnityEngine.Object") missing.Add(key);
                     }
             module.Write(dst);
             module.Dispose();
