@@ -1,0 +1,15 @@
+rows top to bottom: before Gun 3/4, before Gun front, after Gun 3/4, after Gun front; columns: Lv1, A Lv3, B Lv3, A1 Lv9, A2 Lv9, B1 Lv9, B2 Lv9
+before Gun Lv1 top 1.79 m, 18952 tris in view
+before Gun A Lv3 top 1.94 m, 21016 tris in view
+before Gun B Lv3 top 1.94 m, 20956 tris in view
+before Gun A1 Lv9 top 2.17 m, 29616 tris in view
+before Gun A2 Lv9 top 2.17 m, 25444 tris in view
+before Gun B1 Lv9 top 2.17 m, 24720 tris in view
+before Gun B2 Lv9 top 2.20 m, 27256 tris in view
+after Gun Lv1 top 1.90 m, 12816 tris in view
+after Gun A Lv3 top 2.08 m, 12932 tris in view
+after Gun B Lv3 top 2.09 m, 12736 tris in view
+after Gun A1 Lv9 top 2.64 m, 13792 tris in view
+after Gun A2 Lv9 top 2.63 m, 13532 tris in view
+after Gun B1 Lv9 top 2.35 m, 13300 tris in view
+after Gun B2 Lv9 top 2.35 m, 13144 tris in view

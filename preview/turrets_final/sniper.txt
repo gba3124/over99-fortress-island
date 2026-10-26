@@ -1,0 +1,15 @@
+rows top to bottom: before Sniper 3/4, before Sniper front, after Sniper 3/4, after Sniper front; columns: Lv1, A Lv3, B Lv3, A1 Lv9, A2 Lv9, B1 Lv9, B2 Lv9
+before Sniper Lv1 top 1.50 m, 14864 tris in view
+before Sniper A Lv3 top 1.68 m, 16928 tris in view
+before Sniper B Lv3 top 1.65 m, 16868 tris in view
+before Sniper A1 Lv9 top 1.94 m, 19548 tris in view
+before Sniper A2 Lv9 top 1.87 m, 19016 tris in view
+before Sniper B1 Lv9 top 1.85 m, 18292 tris in view
+before Sniper B2 Lv9 top 1.97 m, 20828 tris in view
+after Sniper Lv1 top 2.08 m, 12724 tris in view
+after Sniper A Lv3 top 2.27 m, 12784 tris in view
+after Sniper B Lv3 top 2.27 m, 12796 tris in view
+after Sniper A1 Lv9 top 2.66 m, 13076 tris in view
+after Sniper A2 Lv9 top 2.57 m, 13046 tris in view
+after Sniper B1 Lv9 top 2.57 m, 13064 tris in view
+after Sniper B2 Lv9 top 3.34 m, 13056 tris in view

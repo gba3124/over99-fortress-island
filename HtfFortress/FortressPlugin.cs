@@ -73,10 +73,6 @@ namespace HtfFortress
             _menuKey = Config.Bind("Debug", "MenuKey", Key.F12, "Open the clickable cheat menu (needs DebugKeys).");
             _showKeyHelp = Config.Bind("Debug", "ShowKeyHelp", false, "Show the test-key list in the top-right corner. Off by default: F12 (MenuKey) still opens the clickable menu.");
             _menuScale = Config.Bind("Debug", "MenuScale", 1f, new ConfigDescription("Cheat menu size.", new AcceptableValueRange<float>(0.6f, 1.8f)));
-            // Basic host-facing model preset: the original single-piece turret heads (Owen preferred them), no
-            // user-selectable modular art pass. Model options are deliberately few: classic heads, enemy/prop shadows
-            // off, corpse cap 160; everything else is automatic.
-            Catalog.ClassicHeads = true;
             FortressIsland.Unlock = Config.Bind("Island", "Unlock", IslandUnlock.AfterFinalBoss, "When the fortress island appears: after beating the final boss, or always.");
             Reveal.Seen = Config.Bind("Island", "RevealSeen", false, "The island's entrance (it rises out of the sea) has played on this computer. Set to false to see it again.");
             _pool = Config.Bind("Waves", "CreaturePool", "", "Comma-separated creature names to spawn. Empty = hostile creatures only. Names are listed in the BepInEx log on start.");

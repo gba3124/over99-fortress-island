@@ -379,8 +379,8 @@ if not ONLY or "GearAbsorber" in ONLY:
 ICONS["GearAbsorber"] = ([("Absorber", (0, 0, 0)), ("IconAbsorberGlass", (0, 0, 0))], SIDE)
 FRAME = {}  # icon: (objects the frame is fitted to, how much lower the frame reaches, in parts of its height)
 for t in ("Gun", "Cannon", "Harpoon", "Mortar", "Tesla", "Flame", "Sniper", "Bubble", "Mender"):
-    ICONS["Piece" + t] = ([("TurretBase", (0, 0, 0)), (t + "Head", (0, 0, 0.85))], FRONT)
-    FRAME["Piece" + t] = ([t + "Head"], 0.35)
+    ICONS["Piece" + t] = ([("TurretBase", (0, 0, 0)), (t + "Body", (0, 0, 0.85)), (t + "Default", (0, 0, 0.85))], FRONT)
+    FRAME["Piece" + t] = ([t + "Body", t + "Default"], 0.35)
 
 # ---------- the help panel's pictures (Tips.cs): the lighthouse and its pearl, the village, each kind of fish ----------
 # A part can carry a rotation and a scale too: (object, location, rotation, scale).

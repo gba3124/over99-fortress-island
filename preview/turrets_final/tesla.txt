@@ -1,0 +1,15 @@
+rows top to bottom: before Tesla 3/4, before Tesla front, after Tesla 3/4, after Tesla front; columns: Lv1, A Lv3, B Lv3, A1 Lv9, A2 Lv9, B1 Lv9, B2 Lv9
+before Tesla Lv1 top 2.54 m, 18960 tris in view
+before Tesla A Lv3 top 2.81 m, 21024 tris in view
+before Tesla B Lv3 top 2.81 m, 20964 tris in view
+before Tesla A1 Lv9 top 3.22 m, 22344 tris in view
+before Tesla A2 Lv9 top 3.22 m, 21812 tris in view
+before Tesla B1 Lv9 top 3.22 m, 21088 tris in view
+before Tesla B2 Lv9 top 3.22 m, 23624 tris in view
+after Tesla Lv1 top 2.99 m, 12932 tris in view
+after Tesla A Lv3 top 3.45 m, 13156 tris in view
+after Tesla B Lv3 top 3.33 m, 13144 tris in view
+after Tesla A1 Lv9 top 4.21 m, 13596 tris in view
+after Tesla A2 Lv9 top 3.99 m, 14048 tris in view
+after Tesla B1 Lv9 top 3.85 m, 13540 tris in view
+after Tesla B2 Lv9 top 4.15 m, 13684 tris in view

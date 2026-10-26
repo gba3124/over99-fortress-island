@@ -1,0 +1,15 @@
+rows top to bottom: before Mender 3/4, before Mender front, after Mender 3/4, after Mender front; columns: Lv1, A Lv3, B Lv3, A1 Lv9, A2 Lv9, B1 Lv9, B2 Lv9
+before Mender Lv1 top 2.05 m, 17196 tris in view
+before Mender A Lv3 top 2.24 m, 19260 tris in view
+before Mender B Lv3 top 2.24 m, 19200 tris in view
+before Mender A1 Lv9 top 2.53 m, 20580 tris in view
+before Mender A2 Lv9 top 2.53 m, 20048 tris in view
+before Mender B1 Lv9 top 2.53 m, 19324 tris in view
+before Mender B2 Lv9 top 2.53 m, 21860 tris in view
+after Mender Lv1 top 2.09 m, 12632 tris in view
+after Mender A Lv3 top 2.29 m, 12820 tris in view
+after Mender B Lv3 top 2.29 m, 12756 tris in view
+after Mender A1 Lv9 top 2.59 m, 13092 tris in view
+after Mender A2 Lv9 top 2.59 m, 12988 tris in view
+after Mender B1 Lv9 top 3.03 m, 13012 tris in view
+after Mender B2 Lv9 top 2.85 m, 13044 tris in view

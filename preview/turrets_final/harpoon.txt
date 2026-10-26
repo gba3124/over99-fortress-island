@@ -1,0 +1,15 @@
+rows top to bottom: before Harpoon 3/4, before Harpoon front, after Harpoon 3/4, after Harpoon front; columns: Lv1, A Lv3, B Lv3, A1 Lv9, A2 Lv9, B1 Lv9, B2 Lv9
+before Harpoon Lv1 top 1.56 m, 15726 tris in view
+before Harpoon A Lv3 top 1.78 m, 17790 tris in view
+before Harpoon B Lv3 top 1.75 m, 17730 tris in view
+before Harpoon A1 Lv9 top 2.06 m, 19110 tris in view
+before Harpoon A2 Lv9 top 1.99 m, 18578 tris in view
+before Harpoon B1 Lv9 top 1.96 m, 17854 tris in view
+before Harpoon B2 Lv9 top 2.09 m, 20390 tris in view
+after Harpoon Lv1 top 1.89 m, 12614 tris in view
+after Harpoon A Lv3 top 2.06 m, 12846 tris in view
+after Harpoon B Lv3 top 2.12 m, 12666 tris in view
+after Harpoon A1 Lv9 top 2.32 m, 13224 tris in view
+after Harpoon A2 Lv9 top 2.68 m, 13518 tris in view
+after Harpoon B1 Lv9 top 2.60 m, 12922 tris in view
+after Harpoon B2 Lv9 top 2.68 m, 12824 tris in view
