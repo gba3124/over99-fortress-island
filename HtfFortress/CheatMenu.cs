@@ -19,8 +19,10 @@ namespace HtfFortress
 
         private Canvas _canvas;
         private RectTransform _panel;
-        private TextMeshProUGUI _godText, _freezeText, _roundText, _scaleText;
-        private float _nextRefresh;
+        private TextMeshProUGUI _godText, _freezeText, _roundText, _scaleText, _resetText;
+        private Image _resetBox;
+        private float _nextRefresh, _resetArmedUntil;
+        private static readonly Color Danger = new Color(0.45f, 0.17f, 0.16f, 1f);
 
         private void Awake() => Instance = this;
 
@@ -110,15 +112,18 @@ namespace HtfFortress
             Btn(X1, y - DY * row++, L10n.T("cheatBreakMove"), () => P.TestKey(Key.F2, true), out _);
             Btn(X0, y - DY * row, L10n.T("cheatTrophies"), () => P.TestKey(Key.F3, true), out _);
             Btn(X1, y - DY * row++, L10n.T("cheatJumpTen"), () => P.TestKey(Key.F8, false, true), out _);
+            // The whole save's progress, set apart and in red: two clicks (the second within 3 s), host only, between rounds.
+            _resetBox = Btn(X0, y - DY * row++ - 10f, L10n.T("cheatResetProgress"), () => HostOnly(ResetProgress), out _resetText, X1 + W - X0);
+            _resetBox.color = Danger;
 
-            float sy = y - DY * row - 8f;
+            float sy = y - DY * row - 18f;
             Btn(X0, sy, L10n.T("cheatScaleMinus"), () => { P.MenuScale -= 0.1f; Refresh(); }, out _, 120f);
             Btn(X1 + 144f, sy, L10n.T("cheatScalePlus"), () => { P.MenuScale += 0.1f; Refresh(); }, out _, 120f);
             _scaleText = Hud.Label(_panel, "", 20f, new Vector2(0f, 1f), new Vector2(X0 + 130f, sy - 8f), new Vector2(144f, 30f), TextAlignmentOptions.Center);
 
             Hud.Label(_panel, L10n.T("cheatClose"), 16f, new Vector2(0.5f, 0f), new Vector2(0f, 14f), new Vector2(560f, 22f), TextAlignmentOptions.Center).color = Hud.Muted;
 
-            void Btn(float x, float yy, string text, Action act, out TextMeshProUGUI label, float width = W)
+            Image Btn(float x, float yy, string text, Action act, out TextMeshProUGUI label, float width = W)
             {
                 var b = Hud.Box(_panel, new Vector2(0f, 1f), new Vector2(x, yy), new Vector2(width, H), new Color(0.13f, 0.16f, 0.22f, 1f), 10f);
                 b.raycastTarget = true;
@@ -127,7 +132,18 @@ namespace HtfFortress
                 btn.onClick.AddListener(() => { Fx.Sound("Click", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Vector3.zero, 0.5f, AudioDistance.Short); act(); });
                 label = Hud.Label(b.transform, text, 20f, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(width - 12f, H - 6f), TextAlignmentOptions.Center, bold: true);
                 label.enableAutoSizing = true; label.fontSizeMin = 12f; label.fontSizeMax = 20f;
+                return b;
             }
+        }
+
+        private void ResetProgress()
+        {
+            if (P.Running) { Hud.Banner(L10n.T("cheatResetRunning"), 2f, Hud.Bad); return; }
+            if (Time.unscaledTime > _resetArmedUntil) { _resetArmedUntil = Time.unscaledTime + 3f; Refresh(); return; }
+            _resetArmedUntil = 0f;
+            if (P.DebugResetProgress()) Hud.Banner(L10n.T("cheatResetDone"), 4f, Hud.Gold);
+            else Hud.Banner(L10n.T("cheatResetFailed"), 3f, Hud.Bad);
+            Refresh();
         }
 
         private void HostOnly(Action act)
@@ -143,6 +159,9 @@ namespace HtfFortress
             if (_godText) _godText.text = L10n.T(PlayerManager.InGodMode ? "cheatGodOff" : "cheatGodOn");
             if (_freezeText) _freezeText.text = L10n.T(FortressPlugin.Frozen ? "cheatFreezeOff" : "cheatFreezeOn");
             if (_scaleText) _scaleText.text = L10n.T("cheatScale", Mathf.RoundToInt(P.MenuScale * 100f));
+            bool armed = Time.unscaledTime < _resetArmedUntil;
+            if (_resetText) _resetText.text = L10n.T(armed ? "cheatResetConfirm" : "cheatResetProgress");
+            if (_resetBox) _resetBox.color = armed ? Hud.Bad : Danger;
             _panel.localScale = Vector3.one * P.MenuScale;
         }
     }

@@ -293,6 +293,17 @@ namespace HtfFortress
             AutoTest.Count("test_horde", n);
         }
         public void DebugSouls(int n) { if (!IsHost) return; var v = Loot.Instance ? Loot.Instance.Vault : null; if (v == null) return; v.Souls = Mathf.Max(0, v.Souls + n); Loot.Instance.SaveVault(); }
+        // Test menu: this save back to where a new one starts (Owen: 「測試選單我想要有重製進度」): the vault (record, souls and
+        // the keeper's tree, gear and mods, scales, expansions, helpers, wins) after a copy to fortress-backups, the run
+        // checkpoint, and the crew's money (the next run's budget). Not mid-round.
+        public bool DebugResetProgress()
+        {
+            if (!IsHost || _running || !Loot.Instance || !Loot.Instance.ServerResetVault()) return false;
+            RunSave.Clear();
+            if (Siege.Instance) { Logger.LogInfo($"Test menu: progress reset (the crew had ${Siege.Instance.ServerCoins})."); Siege.Instance.ServerSetCoins(0); }
+            AutoTest.Count("progress_reset");
+            return true;
+        }
         public void DebugScales(int n) { if (!IsHost) return; var v = Loot.Instance ? Loot.Instance.Vault : null; if (v == null) return; v.Scales = Mathf.Max(0, v.Scales + n); Loot.Instance.SaveVault(); }
         public void DebugGear(int n)
         {

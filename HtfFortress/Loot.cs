@@ -1081,6 +1081,15 @@ namespace HtfFortress
             SaveVault();
         }
 
+        // Test menu: back to a new save's vault, this one copied to fortress-backups first (no copy, no wipe).
+        public bool ServerResetVault()
+        {
+            EnsureLoaded();
+            if (!Snapshot("reset")) return false;
+            ServerWipeVaultForTest();
+            return true;
+        }
+
         // Auto-test: start from an empty vault.
         public void ServerWipeVaultForTest()
         {
