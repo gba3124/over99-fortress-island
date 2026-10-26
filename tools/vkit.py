@@ -330,3 +330,173 @@ def fence(b, F, length, h=0.9, posts=4):
         cyl(b, F, 0.07, 0.0, 0.08, (x, 0, h + 0.04), trim, segs=4, rz=math.pi / 4)
     for z in (h * 0.4, h * 0.8):
         box(b, F, (length, 0.04, 0.09), (0, -0.06, z), plank)
+
+
+# ---------- finer pieces (the stations' props): any turn, chamfered boxes, turned shapes, chains, hooped barrels, slatted
+# crates, a glazed lantern. None of them draws on rng (the shared one above shapes the walls and roofs). ----------
+
+glow2 = mat("VkGlow2", (0.95, 0.74, 0.42), (0.85, 0.5, 0.2), force=True)  # a lantern's glass, lit from inside
+KIT2 = [glow2]
+
+
+class MFrame(Frame):
+    # A frame turned any way (a fish on its side, a tilted tray): a whole matrix where Frame has an origin and a yaw.
+    def __init__(self, mtx):
+        self.M = Matrix(mtx)
+
+    def m(self, at, rx=0.0, ry=0.0, rz=0.0):
+        return self.M @ Matrix.Translation(Vector(at)) @ Matrix.Rotation(rz, 4, "Z") @ Matrix.Rotation(ry, 4, "Y") @ Matrix.Rotation(rx, 4, "X")
+
+    def p(self, at):
+        return self.M @ Vector(at)
+
+    def sub(self, at, yaw=0.0):
+        return MFrame(self.m(at, rz=math.radians(yaw)))
+
+
+def turned(F, at, rx=0.0, ry=0.0, rz=0.0):  # a frame at `at` in F, turned about x, then y, then z (radians)
+    return MFrame(F.m(at, rx, ry, rz))
+
+
+def cbox(b, F, size, at, m, c=0.012, rx=0.0, ry=0.0, rz=0.0):
+    # A box with every edge chamfered by c: the game's flat light catches each edge in a bright line. 26 faces.
+    h = [s / 2 for s in size]
+    c = min(c, *(x * 0.45 for x in h))
+    mtx = F.m(at, rx, ry, rz)
+    P = {}
+    for s in ((x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)):
+        for a in range(3):
+            q = [s[k] * (h[k] - c) for k in range(3)]
+            q[a] = s[a] * h[a]
+            P[s, a] = b.bm.verts.new(mtx @ Vector(q))
+    mi = b.mats.index(m)
+
+    def face(vs):
+        b.bm.faces.new(vs).material_index = mi
+
+    def S(a, sa, u, su, v, sv):
+        s = [0, 0, 0]
+        s[a], s[u], s[v] = sa, su, sv
+        return tuple(s)
+
+    for a in range(3):
+        u, v = (a + 1) % 3, (a + 2) % 3
+        for sa in (-1, 1):
+            face([P[S(a, sa, u, su, v, sv), a] for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
+        for su in (-1, 1):
+            for sv in (-1, 1):
+                lo, hi = S(a, -1, u, su, v, sv), S(a, 1, u, su, v, sv)
+                face([P[lo, u], P[hi, u], P[hi, v], P[lo, v]])
+    for s in ((x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)):
+        face([P[s, 0], P[s, 1], P[s, 2]])
+
+
+def lathe(b, F, prof, at, m, segs=8, mf=None, rx=0.0, ry=0.0, rz=0.0, caps=True, sx=1.0):
+    # A turned shape: the profile [(radius, height)] from the bottom up, revolved round the frame's z at `at` (a radius of 0
+    # closes that end in a point; sx squashes it across x, for an oval). mf(i, j): the material of band i (point i to i + 1)
+    # at column j: a jar's label, its lid, a barrel's staves. caps=False leaves the ends open (a hoop).
+    from bkit import loft
+    mtx = F.m(at, rx, ry, rz)
+    a0 = math.pi / segs
+    rings = [[mtx @ Vector((0, 0, z))] if r <= 0 else
+             [mtx @ Vector((r * sx * math.cos(a0 + k * TAU / segs), r * math.sin(a0 + k * TAU / segs), z)) for k in range(segs)] for r, z in prof]
+    if caps:
+        loft(b, rings, m, mf=mf, caps=(mf(0, 0), mf(len(prof) - 2, 0)) if mf else None)
+        return
+    vs = [[b.bm.verts.new(p) for p in r] for r in rings]
+    for i in range(len(vs) - 1):
+        for j in range(segs):
+            k = (j + 1) % segs
+            b.bm.faces.new((vs[i][j], vs[i][k], vs[i + 1][k], vs[i + 1][j])).material_index = b.mats.index(mf(i, j) if mf else m)
+
+
+def chain(b, F, a, c, m, link=0.04, wire=0.006, pts=6):
+    # Links from a to c, each a flat oval turned a quarter from the last (`pts` points round, a three-sided wire).
+    from bkit import tube
+    A, Cc = F.p(a), F.p(c)
+    d = Cc - A
+    n = max(1, round(d.length / (link * 0.72)))
+    t = d.normalized()
+    e1 = t.orthogonal().normalized()
+    e2 = t.cross(e1)
+    for i in range(n):
+        mid = A + d * ((i + 0.5) / n)
+        e = e1 if i % 2 == 0 else e2
+        tube(b, [mid + t * (link / 2 - wire) * math.cos(k * TAU / pts) + e * (link * 0.32 - wire) * math.sin(k * TAU / pts) for k in range(pts)], wire, m,
+             segs=3, closed=True)
+
+
+def barrel2(b, F, r=0.3, h=0.8, at=(0, 0, 0), staves=12, hoops=(0.09, 0.27, 0.73, 0.91), head=True, inset=0.035):
+    # A coopered barrel: staves bulging at the middle (alternate shades), the staves' ends standing past the head (the chime),
+    # a head of three boards, iron hoops standing proud. head=False leaves the inside showing down to `inset` (for coal).
+    x, y, z = at
+    G = F.sub((x, y, z))
+    prof = [(r * 0.86, 0.0), (r * 0.97, h * 0.25), (r, h * 0.5), (r * 0.97, h * 0.75), (r * 0.86, h)]
+    rim = r * 0.86 - 0.022
+    prof += [(rim, h), (rim, h - inset), (0, h - inset)]
+    lathe(b, G, prof, (0, 0, 0), plank, segs=staves, mf=lambda i, j: (plank if j % 2 == 0 else plank2) if i < 6 else plank)
+    if head:
+        for k in (-1, 1):
+            box(b, G, (rim * 1.85, 0.012, 0.006), (0, k * rim * 0.34, h - inset + 0.002), seam)
+    for t in hoops:
+        zz = h * t
+        k = min(3, int(t * 4))
+        rr = prof[k][0] + (prof[k + 1][0] - prof[k][0]) * (t * 4 - k)  # the staves' radius there
+        lathe(b, G, [(rr - 0.004, zz - 0.022), (rr + 0.011, zz - 0.018), (rr + 0.011, zz + 0.018), (rr - 0.004, zz + 0.022)], (0, 0, 0), iron,
+              segs=staves, caps=False)
+
+
+def crate2(b, F, size=(0.6, 0.45, 0.4), at=(0, 0, 0), yaw=0.0, slats=3, lid=True, nails=True):
+    # A slatted crate: chamfered corner posts, horizontal slats with gaps on every side (alternate shades), a rim round the
+    # top, a floor, nail heads at the slat ends on the long sides; a lid of boards, or open (lid=False) to show what's in it.
+    G = F.sub(at, yaw)
+    w, d, h = size
+    gap = 0.018
+    sh = (h - 0.02 - gap * (slats - 1)) / slats
+    for k in range(slats):
+        zc = 0.02 + k * (sh + gap) + sh / 2
+        for sy in (-1, 1):
+            box(b, G, (w - 0.05, 0.02, sh), (0, sy * (d / 2 - 0.01), zc), plank if (k + (sy > 0)) % 2 == 0 else plank2)
+            if nails:
+                for sx in (-1, 1):
+                    box(b, G, (0.014, 0.008, 0.014), (sx * (w / 2 - 0.055), sy * (d / 2 + 0.002), zc), iron)
+        for sx in (-1, 1):
+            box(b, G, (0.02, d - 0.05, sh), (sx * (w / 2 - 0.01), 0, zc), plank2 if k % 2 == 0 else plank)
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            cbox(b, G, (0.05, 0.05, h + 0.01), (sx * (w / 2 - 0.02), sy * (d / 2 - 0.02), (h + 0.01) / 2), trim, c=0.008)
+    box(b, G, (w - 0.04, d - 0.04, 0.02), (0, 0, 0.015), plank2)
+    for sy in (-1, 1):
+        box(b, G, (w + 0.01, 0.035, 0.03), (0, sy * (d / 2 - 0.005), h - 0.005), trim)
+    for sx in (-1, 1):
+        box(b, G, (0.035, d - 0.03, 0.03), (sx * (w / 2 - 0.005), 0, h - 0.005), trim)
+    if lid:
+        n = max(2, round(w / 0.16))
+        for k in range(n):
+            box(b, G, (w / n - 0.012, d - 0.03, 0.022), (-w / 2 + (k + 0.5) * w / n, 0, h + 0.016), plank if k % 2 == 0 else plank2)
+        box(b, G, (w - 0.04, 0.05, 0.02), (0, 0, h + 0.036), trim)
+
+
+def lantern2(b, F, at, s=1.0):
+    # A glazed lantern: a stepped base, four corner posts round the glass (a flame-bright core behind it), a wire guard across
+    # each pane, a pyramid cap with a vented chimney and a ring on top.
+    from bkit import torus
+    x, y, z = at
+    G = F.sub((x, y, z))
+    q = s
+    cbox(b, G, (0.17 * q, 0.17 * q, 0.03 * q), (0, 0, -0.135 * q), iron, c=0.006 * q)
+    cbox(b, G, (0.13 * q, 0.13 * q, 0.02 * q), (0, 0, -0.16 * q), iron, c=0.005 * q)
+    box(b, G, (0.125 * q, 0.125 * q, 0.22 * q), (0, 0, 0), glow2)
+    box(b, G, (0.07 * q, 0.07 * q, 0.12 * q), (0, 0, -0.02 * q), lit)
+    for dx in (-1, 1):
+        for dy in (-1, 1):
+            box(b, G, (0.024 * q, 0.024 * q, 0.25 * q), (dx * 0.067 * q, dy * 0.067 * q, 0), iron)
+    for k in range(4):
+        H = G.sub((0, 0, 0), 90 * k)
+        box(b, H, (0.11 * q, 0.012 * q, 0.012 * q), (0, -0.066 * q, 0.03 * q), iron)
+        box(b, H, (0.012 * q, 0.012 * q, 0.2 * q), (0, -0.066 * q, 0), iron)
+    cbox(b, G, (0.175 * q, 0.175 * q, 0.025 * q), (0, 0, 0.122 * q), iron, c=0.006 * q)
+    cyl(b, G, 0.12 * q, 0.035 * q, 0.09 * q, (0, 0, 0.18 * q), iron, segs=4, rz=math.pi / 4)
+    cyl(b, G, 0.032 * q, 0.032 * q, 0.04 * q, (0, 0, 0.245 * q), iron, segs=6)
+    cyl(b, G, 0.05 * q, 0.0, 0.03 * q, (0, 0, 0.28 * q), iron, segs=6)
+    torus(b, G.p((0, 0, 0.32 * q)), G.m((0, 0, 0)).to_3x3() @ Vector((1, 0, 0)), 0.03 * q, 0.007 * q, iron, segs=8, tsegs=3)
