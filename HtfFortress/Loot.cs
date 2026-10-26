@@ -1162,8 +1162,10 @@ namespace HtfFortress
         // The piece itself (its own model, the one its icon is drawn from), turning and bobbing over a ring in its rarity's
         // colour, with a glowing gem of that colour over it from rare up (RarityGem), so it's seen across the island.
         // Walk onto it or look at it and press E (the game's outline and prompt).
+        // Null: one of the game's guns, drawn from its own mesh (WeaponItems.GameGunModel).
         public static string DropModel(Gear g)
         {
+            if (GearCatalog.IsGameGun(g)) return null;
             if (GearCatalog.IsWeapon(g)) return Weapons.ModelName(g);
             switch (g)
             {
@@ -1181,16 +1183,19 @@ namespace HtfFortress
             go.transform.position = pos;
             var spin = new GameObject("Spin").transform; // AnimateViews turns child 0
             spin.SetParent(go.transform, false);
-            var model = Models.Attach(DropModel(g), spin, Vector3.one * 0.4f, shadows: false, share: true);
+            var model = DropModel(g) == null ? WeaponItems.GameGunModel(g, spin) : null;
+            if (model) model.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            else model = Models.Attach(DropModel(g) ?? Weapons.ModelName(g), spin, Vector3.one * 0.4f, shadows: false, share: true); // no such gun: a cube in its colour
             var mf = model.GetComponent<MeshFilter>();
             if (mf && mf.sharedMesh)
             {
                 var b = mf.sharedMesh.bounds;
-                float k = (r >= Rarity.Epic ? 0.75f : 0.6f) / Mathf.Max(0.05f, Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)));
+                float k = WeaponItems.DropLength(g, r) / Mathf.Max(0.05f, Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)));
                 model.transform.localScale = Vector3.one * k;
                 // Sit the piece ON the sand: the old offset put its centre at the drop point, so half a sword/rocket
-                // (and its glow) was buried and read as broken geometry.
-                model.transform.localPosition = new Vector3(-b.center.x * k, -b.min.y * k, -b.center.z * k);
+                // (and its glow) was buried and read as broken geometry. (World bounds: a game gun lies turned.)
+                var wb = model.GetComponent<Renderer>().bounds;
+                model.transform.position += new Vector3(pos.x - wb.center.x, pos.y - wb.min.y, pos.z - wb.center.z);
             }
             else Models.Paint(model, GearCatalog.Color(r));
             if (!BeamMats.TryGetValue(r, out var bm)) BeamMats[r] = bm = Models.Make(GearCatalog.Color(r), GearCatalog.Color(r) * 1.2f);

@@ -1058,7 +1058,7 @@ namespace HtfFortress
                 aimed.SecondaryInput(default);
                 yield return new WaitForSecondsRealtime(0.6f);
             }
-            // Candidate grips, to pick WeaponItems.InHand by eye (held_* shots next to pistol_view).
+            // Candidate grips, to pick WeaponItems.Spec by eye (held_* shots next to pistol_view).
             var inHand = me.Holding.HeldItem;
             var model = WeaponItems.ModelOf(inHand);
             if (model && inHand.HandModelRight)
@@ -1076,7 +1076,7 @@ namespace HtfFortress
                     FortressPlugin.Shot("held_" + tag);
                     yield return new WaitForSecondsRealtime(0.4f);
                 }
-                WeaponItems.Place(model, inHand.HandModelRight, inHand.transform, WeaponItems.InHand);
+                WeaponItems.Place(model, inHand.HandModelRight, inHand.transform, WeaponItems.Is(inHand, out var heldGear, out _) ? WeaponItems.Spec(heldGear) : WeaponItems.InHand);
                 Weapons.Instance.DebugForgetHeld();
             }
             // The game's own pistol in the same hand, to compare size and place.

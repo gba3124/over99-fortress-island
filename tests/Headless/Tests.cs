@@ -721,6 +721,7 @@ namespace HtfFortress.Headless
                   && ids.All(i => i > 102 && (i < 180 || i > 189)), "weapon item ids collide (the absorber's 190-193, the gatling's 194-197)");
             AbsorberChecks();
             GatlingChecks();
+            GunSpecChecks(weapons);
             // The first fourteen keep 200-255 (saves hold them); the rocket and the game's guns take 150-177.
             Check(weapons.Max(g => WeaponItems.IdOf(g, Rarity.Legendary)) == 255 && WeaponItems.IdOf(Gear.Laser, Rarity.Common) == 200 && WeaponItems.IdOf(Gear.LobsterClaw, Rarity.Legendary) == 255
                   && WeaponItems.IdOf(Gear.Rocket, Rarity.Common) == WeaponItems.SecondId && WeaponItems.IdOf(Gear.Bow, Rarity.Legendary) == 177, "weapon item ids moved");
@@ -843,6 +844,74 @@ namespace HtfFortress.Headless
             int cut = whole.Count(t => WeaponItems.GatlingBarrel(t.a) && WeaponItems.GatlingBarrel(t.b) && WeaponItems.GatlingBarrel(t.c));
             int across = whole.Count(t => new[] { t.a, t.b, t.c }.Count(WeaponItems.GatlingBarrel) is int n && n > 0 && n < 3);
             Check(cut > 0 && cut == Tris("GatlingBarrels").Count && across == 0, $"the gatling's barrels: {cut} triangles cut out, {Tris("GatlingBarrels").Count} turning, {across} half in");
+        }
+
+        // Each fortress weapon's own size, pose and muzzle in the hand (WeaponItems.Spec), its drop, and the shark whistle's
+        // sharks (GUN-MODEL-AUDIT P0s: one 0.22 m pistol rule for everything, shots from a fixed point under the eyes, no
+        // sharks ever made, the game's guns lying on the ground as nothing).
+        private static void GunSpecChecks(List<Gear> weapons)
+        {
+            (Vector3 min, Vector3 max) Box(string name)
+            {
+                Vector3 lo = Vector3.one * 99f, hi = -lo;
+                foreach (var line in File.ReadLines(Path.Combine(Src, "Models", name + ".obj")))
+                {
+                    var q = line.Split(' ');
+                    if (q[0] != "v") continue;
+                    float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
+                    var v = new Vector3(-F(1), F(2), F(3)); // as Models.Parse: x flipped
+                    lo = Vector3.Min(lo, v); hi = Vector3.Max(hi, v);
+                }
+                return (lo, hi);
+            }
+            var ours = weapons.Where(g => !GearCatalog.IsGameGun(g)).ToList();
+            Check(ours.Count == 17, $"{ours.Count} fortress weapons, expected 17");
+            foreach (var g in ours)
+            {
+                var spec = WeaponItems.Spec(g);
+                var (lo, hi) = Box(Weapons.ModelName(g));
+                var size = hi - lo;
+                Check(spec.HasMuzzle && spec.Longest > 0.1f && spec.Longest <= Math.Max(size.x, Math.Max(size.y, size.z)) + 1e-3f, $"{g}: no spec, or held bigger than its model ({spec.Longest} m)");
+                var m = spec.Muzzle;
+                Check(m.x >= lo.x - 0.01f && m.x <= hi.x + 0.01f && m.y >= lo.y - 0.01f && m.y <= hi.y + 0.01f && m.z >= lo.z - 0.01f && m.z <= hi.z + 0.01f, $"{g}: muzzle {m} outside its model {lo}..{hi}");
+                bool gun = spec.Kind == WeaponItems.Display.Pistol || spec.Kind == WeaponItems.Display.Long || spec.Kind == WeaponItems.Display.Heavy;
+                if (gun) Check(m.z > hi.z - 0.18f && Math.Abs(m.x) < 0.02f, $"{g}: muzzle {m} isn't at the front of the barrel (front {hi.z})");
+                float k = WeaponItems.HeldScale(size, spec);
+                Check(Math.Abs(Math.Max(size.x, Math.Max(size.y, size.z)) * k - spec.Longest) < 1e-4f, $"{g}: held scale doesn't make it {spec.Longest} m");
+                Check(-lo.z * k - WeaponItems.SlideForward(lo.z, k) <= WeaponItems.BackMax + 1e-4f, $"{g}: its back end reaches into the camera");
+                Check(WeaponItems.DropLength(g, Rarity.Common) >= spec.Longest && WeaponItems.DropLength(g, Rarity.Epic) > WeaponItems.DropLength(g, Rarity.Rare), $"{g}: drop smaller than in the hand, or epic not larger");
+            }
+            float Len(Gear g) => WeaponItems.Spec(g).Longest;
+            float Max(WeaponItems.Display k) => ours.Where(g => WeaponItems.Spec(g).Kind == k).Max(Len);
+            float Min(WeaponItems.Display k) => ours.Where(g => WeaponItems.Spec(g).Kind == k).Min(Len);
+            Check(Min(WeaponItems.Display.Heavy) > Max(WeaponItems.Display.Long) && Min(WeaponItems.Display.Long) > Max(WeaponItems.Display.Pistol)
+                  && Min(WeaponItems.Display.Pistol) > WeaponItems.InHand.Longest, "pistols < long guns < heavy guns, all bigger than the old 0.22 m");
+            Check(Len(Gear.Rocket) >= 2.5f * WeaponItems.InHand.Longest && Len(Gear.Gatling) >= 2.5f * WeaponItems.InHand.Longest, "the rocket and the gatling are big in the hand");
+            Check(WeaponItems.DropLength(Gear.Rocket, Rarity.Common) > WeaponItems.DropLength(Gear.Laser, Rarity.Common), "a rocket on the ground is bigger than a laser");
+            foreach (var g in new[] { Gear.Boomerang, Gear.SharkWhistle, Gear.Conch, Gear.PufferBomb })
+                Check(WeaponItems.Spec(g).Kind != WeaponItems.Display.Pistol && WeaponItems.Spec(g).Euler != Vector3.zero, $"{g} is held like a pistol");
+            Check(WeaponItems.Spec(Gear.Boomerang).Euler == WeaponItems.StandUp, "the boomerang in the hand isn't stood up like its hotbar icon");
+            string weaponsSrc = File.ReadAllText(Path.Combine(Src, "Weapons.cs")) + File.ReadAllText(Path.Combine(Src, "Absorber.cs"));
+            Check(!weaponsSrc.Contains("Muzzle(o, d)") && Regex.Matches(weaponsSrc, @"d \* 0\.6f \+ Vector3\.down \* 0\.25f").Count == 1,
+                  "shots start at the shooter's muzzle (HeldMuzzle), the fixed point under the eyes only as the fallback");
+            Check(weaponsSrc.Contains("HeldMuzzle(shooter"), "a friend's shot isn't drawn from their gun");
+            // The game's guns on the ground: their own mesh, not a missing OBJ.
+            foreach (var g in weapons)
+            {
+                string drop = Loot.DropModel(g);
+                if (GearCatalog.IsGameGun(g)) Check(drop == null && !string.IsNullOrEmpty(WeaponItems.GameName(g)), $"{g}: its drop looks for {drop}.obj instead of the game's gun");
+                else Check(drop != null && File.Exists(Path.Combine(Src, "Models", drop + ".obj")), $"{g}: no drop model {drop}.obj");
+            }
+            Check(File.ReadAllText(Path.Combine(Src, "Loot.cs")).Contains("WeaponItems.GameGunModel(g, spin)"), "a game gun's drop isn't drawn from its own mesh");
+            // The shark whistle makes sharks (SharkTick had nothing to hunt with) that stay by their pool.
+            Check(weaponsSrc.Contains("_sharks.Add(sh)"), "the shark whistle never makes a shark");
+            Check(GearCatalog.Rarities.All(r => Weapons.SharkSpots(Vector3.zero, r).Length == (r == Rarity.Legendary ? 2 : 1)), "one shark, two for a legendary");
+            Vector3 home = new Vector3(5f, 1f, 5f);
+            var step = Weapons.SharkStep(home, home, home + new Vector3(10f, 0f, 0f), 14f, 1f);
+            Check((step - (home + Vector3.right)).magnitude < 1e-4f, $"a shark swims toward its prey: {step}");
+            var held = Weapons.SharkStep(home + new Vector3(13.5f, 0f, 0f), home, home + new Vector3(30f, 0f, 0f), 14f, 2f);
+            Check(Math.Abs(new Vector2(held.x - home.x, held.z - home.z).magnitude - 14f) < 1e-3f, $"a shark stays within its sight of the pool: {held}");
+            Check(Weapons.SharkLife.All(t => t > Weapons.SharkLeap + Weapons.SharkBiteEvery), "a shark lives long enough to bite more than once");
         }
 
         // Damage a second (Sim.Dps): within each damage role every weapon stays within x1.6 of the role's median (single-target

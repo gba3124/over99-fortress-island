@@ -298,17 +298,7 @@ namespace HtfFortress
         // Ours, or the game's own gun (its hotbar mesh, in the colours its model is drawn in).
         private static GameObject Model(Gear g, Transform slot)
         {
-            if (!GearCatalog.IsGameGun(g)) return Models.Attach(Weapons.ModelName(g), slot, new Vector3(0.1f, 0.1f, Length));
-            var item = GameInfo.GetSpawnable(WeaponItems.GameName(g));
-            if (!item || !item.Mesh) return null;
-            var shown = item.GetComponentsInChildren<Renderer>(true).FirstOrDefault(r => r is SkinnedMeshRenderer sk ? sk.sharedMesh == item.Mesh : r.GetComponent<MeshFilter>() is MeshFilter mf && mf.sharedMesh == item.Mesh);
-            var go = new GameObject("Gun" + g, typeof(MeshFilter), typeof(MeshRenderer));
-            go.transform.SetParent(slot, false);
-            var size = item.Mesh.bounds.size; // lie it down: its longest side along the rail, like ours
-            go.transform.localRotation = size.x >= size.y && size.x >= size.z ? Quaternion.Euler(0f, 90f, 0f) : size.y >= size.z ? Quaternion.Euler(90f, 0f, 0f) : Quaternion.identity;
-            go.GetComponent<MeshFilter>().sharedMesh = item.Mesh;
-            go.GetComponent<MeshRenderer>().sharedMaterials = shown ? shown.sharedMaterials : new[] { Models.Make(new Color(0.25f, 0.25f, 0.28f)) };
-            return go;
+            return GearCatalog.IsGameGun(g) ? WeaponItems.GameGunModel(g, slot) : Models.Attach(Weapons.ModelName(g), slot, new Vector3(0.1f, 0.1f, Length));
         }
 
         // "Every one $3,000 (in a round)" on a board over the rails.

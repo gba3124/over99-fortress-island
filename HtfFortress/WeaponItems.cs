@@ -132,8 +132,7 @@ namespace HtfFortress
             var model = Models.Attach(Weapons.ModelName(g), hand && hand.parent ? hand.parent : go.transform, new Vector3(0.12f, 0.12f, 0.45f));
             model.name = ModelName;
             RarityLook(model, r);
-            Place(model.transform, hand, go.transform, InHand);
-            if (g == Gear.Gatling) model.transform.localScale *= 1.5f; // Owen: "加特林好小把，我以為會很大"
+            Place(model.transform, hand, go.transform, Spec(g));
             Icon(item, model, pistol, g);
             if (g == Gear.Gatling) Gatling(model);
             go.AddComponent<RarityGem>().Rarity = r;
@@ -163,7 +162,7 @@ namespace HtfFortress
                     if (!(Barrel(t[i]) && Barrel(t[i + 1]) && Barrel(t[i + 2]))) { keep.Add(t[i]); keep.Add(t[i + 1]); keep.Add(t[i + 2]); }
                 body.SetTriangles(keep, s);
             }
-            body.bounds = whole.bounds; // its front is still the muzzle (Weapons.MyMuzzle)
+            body.bounds = whole.bounds; // held scale and drop size still go by the whole gun (its muzzle: Spec)
             mf.sharedMesh = body;
             int n = 0; // the rarity's bands (RarityLook) round the receiver, not standing still across the turning barrels
             foreach (Transform t in model.transform) if (t.name == "RarityBand") t.localPosition = new Vector3(0f, GatlingAxis.y, -0.02f - 0.07f * n++);
@@ -222,23 +221,81 @@ namespace HtfFortress
         public const string ModelName = "FortressModel";
         public static Transform ModelOf(Item item) => item ? item.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t.name == ModelName) : null;
 
-        // How a model sits in the hand: its longest side (metres), and where its grip is from the hand target (item axes:
-        // x right, y up, z the barrel). Calibrated by eye against the game's pistol (auto-test "weapons": held_* shots).
-        public struct Grip { public float Longest; public Vector3 FromHand; }
-        private const float Across = 0.15f;
+        // How a model sits in the hand: its longest side (metres), where its grip is from the hand target (item axes: x
+        // right, y up, z the barrel), how it's turned from the item's own axes, and where its shots leave (in the mesh's
+        // units, as Models.Parse has it: x flipped). Calibrated by eye against the game's pistol (auto-test "weapons": held_*
+        // shots); the pistol-sized ones are where the old one-size InHand was.
+        public enum Display { Pistol, Long, Heavy, Thrown, Blow }
+        public struct Grip
+        {
+            public float Longest; public Vector3 FromHand;
+            public Display Kind; public Vector3 Euler, Muzzle;
+            public bool HasMuzzle; // false: the front of its bounds
+        }
         public static readonly Grip InHand = new Grip { Longest = 0.22f, FromHand = new Vector3(-0.03f, 0.03f, 0.05f) };
+        // Nothing reaches further back from the hand than this (metres): a long gun slides forward instead of into the camera.
+        public const float BackMax = 0.09f;
+        public static readonly Vector3 StandUp = new Vector3(0f, 0f, 90f); // the boomerang lies flat: rolled up to show its V (Euler: no native call at start-up)
+
+        private static Grip G(Display k, float longest, Vector3 muzzle, Vector3 euler = default, Vector3? from = null) => new Grip
+        {
+            Kind = k, Longest = longest, Muzzle = muzzle, HasMuzzle = true, Euler = euler,
+            FromHand = from ?? (k == Display.Heavy ? new Vector3(-0.02f, 0f, 0.05f) : k == Display.Long ? new Vector3(-0.03f, 0.02f, 0.05f) : InHand.FromHand),
+        };
+
+        // Every fortress weapon. The muzzles are the bore's centre on the front face of each OBJ (tools/make_weapon_models*.py
+        // put the barrel axis at x 0, y 0.09-0.115); the hook's is its seat, behind the hook's tip.
+        public static Grip Spec(Gear g)
+        {
+            switch (g)
+            {
+                case Gear.Laser: return G(Display.Pistol, 0.30f, new Vector3(0f, 0.09f, 0.364f));
+                case Gear.PoisonGas: return G(Display.Pistol, 0.32f, new Vector3(0f, 0.09f, 0.349f));
+                case Gear.BubbleGun: return G(Display.Pistol, 0.30f, new Vector3(-0.015f, 0.108f, 0.376f));
+                case Gear.Hook: return G(Display.Pistol, 0.32f, new Vector3(0f, 0.09f, 0.29f));
+                case Gear.JellyGun: return G(Display.Pistol, 0.30f, new Vector3(0f, 0.095f, 0.305f));
+                case Gear.StarThrower: return G(Display.Pistol, 0.26f, new Vector3(0f, 0.09f, 0.205f));
+                case Gear.LobsterClaw: return G(Display.Pistol, 0.32f, new Vector3(0f, 0.087f, 0.36f));
+                case Gear.Absorber: return G(Display.Long, 0.36f, new Vector3(0f, 0.11f, 0.262f));
+                case Gear.Whirlpool: return G(Display.Long, 0.40f, new Vector3(0f, 0.10f, 0.38f));
+                case Gear.NetLauncher: return G(Display.Long, 0.42f, new Vector3(0f, 0.10f, 0.313f));
+                case Gear.WaterCannon: return G(Display.Long, 0.40f, new Vector3(0f, 0.09f, 0.398f));
+                case Gear.Rocket: return G(Display.Heavy, 0.60f, new Vector3(0f, 0.115f, 0.38f));
+                case Gear.Gatling: return G(Display.Heavy, 0.55f, new Vector3(0f, 0.11f, 0.443f)); // Owen: "加特林好小把，我以為會很大"
+                // Not guns: the boomerang stood up by its elbow, the puffer in the palm, the conch tipped up like a horn, the
+                // whistle raised toward the mouth. They leave from where the hand lets go / the air comes out.
+                case Gear.Boomerang: return G(Display.Thrown, 0.40f, Vector3.zero, StandUp, new Vector3(-0.02f, 0.05f, 0.08f));
+                case Gear.PufferBomb: return G(Display.Thrown, 0.16f, new Vector3(0f, 0.11f, 0f), new Vector3(0f, 30f, 0f), new Vector3(-0.02f, 0.01f, 0.07f));
+                case Gear.Conch: return G(Display.Blow, 0.30f, new Vector3(-0.01f, 0f, 0.2f), new Vector3(-15f, 0f, 0f), new Vector3(-0.03f, 0.05f, 0.08f));
+                case Gear.SharkWhistle: return G(Display.Blow, 0.162f, new Vector3(0f, 0.008f, 0.078f), new Vector3(-25f, 0f, 0f), new Vector3(-0.05f, 0.08f, 0.02f));
+            }
+            return InHand; // the game's guns use their own rig; never placed
+        }
+
+        // Where a weapon's shots leave its model (world). Its muzzle, or failing that the front of its bounds.
+        public static Vector3 MuzzleOf(Transform model, Gear g)
+        {
+            var spec = Spec(g);
+            if (spec.HasMuzzle) return model.TransformPoint(spec.Muzzle);
+            var mesh = model.GetComponent<MeshFilter>() is MeshFilter f ? f.sharedMesh : null;
+            var b = mesh ? mesh.bounds : new Bounds(Vector3.zero, Vector3.zero);
+            return model.TransformPoint(new Vector3(b.center.x, b.center.y, b.max.z));
+        }
+
+        // A model's scale for its longest side, and how far forward it slides so nothing reaches BackMax behind the hand.
+        public static float HeldScale(Vector3 size, Grip grip) => grip.Longest / Mathf.Max(0.01f, Mathf.Max(size.x, Mathf.Max(size.y, size.z)));
+        public static float SlideForward(float backOfMesh, float k) => Mathf.Max(0f, -backOfMesh * k - BackMax);
 
         public static void Place(Transform model, Transform hand, Transform item, Grip grip)
         {
             var mesh = model.GetComponent<MeshFilter>() is MeshFilter f ? f.sharedMesh : null;
-            var size = mesh ? mesh.bounds.size : new Vector3(0.12f, 0.12f, 0.45f);
-            // The whistle stays its size; nothing round is fatter than a fist, or a ball (the puffer) fills the view.
-            float k = Mathf.Min(1f, Mathf.Min(grip.Longest / Mathf.Max(0.01f, Mathf.Max(size.x, Mathf.Max(size.y, size.z))),
-                                              Across / Mathf.Max(0.01f, Mathf.Min(size.x, size.y))));
+            var b = mesh ? mesh.bounds : new Bounds(Vector3.zero, new Vector3(0.12f, 0.12f, 0.45f));
+            float k = HeldScale(b.size, grip);
             var s = model.parent.lossyScale;
             model.localScale = new Vector3(k / s.x, k / s.y, k / s.z);
-            model.rotation = item.rotation; // the item's forward is the barrel's
-            model.position = (hand ? hand.position : item.position) + item.rotation * grip.FromHand;
+            model.rotation = item.rotation * Quaternion.Euler(grip.Euler); // the item's forward is the barrel's
+            var from = grip.FromHand + Vector3.forward * SlideForward(b.min.z, k);
+            model.position = (hand ? hand.position : item.position) + item.rotation * from;
         }
 
         // The hotbar shows an item's one mesh (Item.Mesh), placed by the item's own numbers: ours, framed like the pistol's.
@@ -253,7 +310,7 @@ namespace HtfFortress
                 rd is SkinnedMeshRenderer sk ? sk.sharedMesh == theirs : rd.GetComponent<MeshFilter>() is MeshFilter f && f.sharedMesh == theirs);
             Quaternion inPistol = shown ? Quaternion.Inverse(pistol.transform.rotation) * shown.transform.rotation : Quaternion.identity;
             // The slot looks at the pistol's side; the boomerang lies flat, so it's stood up to show its V, not its edge.
-            Quaternion rp = Quaternion.Euler(pistol.InventoryMeshRot), ro = rp * Quaternion.Inverse(inPistol) * (g == Gear.Boomerang ? Quaternion.Euler(0f, 0f, 90f) : Quaternion.identity);
+            Quaternion rp = Quaternion.Euler(pistol.InventoryMeshRot), ro = rp * Quaternion.Inverse(inPistol) * (g == Gear.Boomerang ? Quaternion.Euler(StandUp) : Quaternion.identity);
             float Big(Bounds b) => Mathf.Max(0.001f, Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)));
             float kp = pistol.InventoryMeshScale, ko = kp * Big(theirs.bounds) / Big(ours.bounds);
             Vector3 middle = pistol.InventoryMeshPos + rp * (theirs.bounds.center * kp);
@@ -261,6 +318,28 @@ namespace HtfFortress
             AccessTools.Field(typeof(Item), "_inventoryMeshRot").SetValue(item, ro.eulerAngles);
             AccessTools.Field(typeof(Item), "_inventoryMeshScale").SetValue(item, ko);
         }
+
+        // One of the game's guns as a plain model (its hotbar mesh, in the colours its model is drawn in), lying down with its
+        // longest side along z like ours: for the armoury's rails and a drop on the ground. Null if the game has none.
+        public static GameObject GameGunModel(Gear g, Transform parent)
+        {
+            var item = GameInfo.GetSpawnable(GameName(g));
+            if (!item || !item.Mesh) return null;
+            var shown = item.GetComponentsInChildren<Renderer>(true).FirstOrDefault(r => r is SkinnedMeshRenderer sk ? sk.sharedMesh == item.Mesh : r.GetComponent<MeshFilter>() is MeshFilter mf && mf.sharedMesh == item.Mesh);
+            var go = new GameObject("Gun" + g, typeof(MeshFilter), typeof(MeshRenderer));
+            go.transform.SetParent(parent, false);
+            go.layer = parent.gameObject.layer;
+            var size = item.Mesh.bounds.size;
+            go.transform.localRotation = size.x >= size.y && size.x >= size.z ? Quaternion.Euler(0f, 90f, 0f) : size.y >= size.z ? Quaternion.Euler(90f, 0f, 0f) : Quaternion.identity;
+            go.GetComponent<MeshFilter>().sharedMesh = item.Mesh;
+            go.GetComponent<MeshRenderer>().sharedMaterials = shown ? shown.sharedMaterials : new[] { Models.Make(new Color(0.25f, 0.25f, 0.28f)) };
+            return go;
+        }
+
+        // How long a piece lies on the ground (metres, its longest side): a weapon about half again its size in the hand, so
+        // a rocket still lies bigger than a pistol; the game's guns and everything else as before. Epic and up a size larger.
+        public static float DropLength(Gear g, Rarity r) =>
+            (GearCatalog.IsWeapon(g) && !GearCatalog.IsGameGun(g) ? Mathf.Clamp(Spec(g).Longest * 1.6f, 0.45f, 0.95f) : 0.6f) * (r >= Rarity.Epic ? 1.25f : 1f);
 
         // Its colours for the hotbar (the slot has one material of its own).
         public static Material[] Colours(Item item) =>

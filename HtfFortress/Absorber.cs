@@ -96,7 +96,7 @@ namespace HtfFortress
             {
                 if (held == null) return;
                 vault.Absorbed.Remove(key);
-                SpitOut(who, held, Muzzle(o, d), d, r);
+                SpitOut(who, held, Muzzle(who, o, d), d, r);
                 Loot.Instance.SaveVault();
                 return;
             }
@@ -126,7 +126,7 @@ namespace HtfFortress
             float now = Time.time;
             var vault = Loot.Instance.Vault;
             float reach = SuckReach(vault, key), cone = SuckAngle + WeaponMods.TraitAdd(Gear.Absorber, vault.ModOf(key, Gear.Absorber, WeaponMods.Trait));
-            Vector3 muzzle = Muzzle(o, d);
+            Vector3 muzzle = Muzzle(who, o, d);
             if (!_nextSuckFx.TryGetValue(who.ObjectId, out float fx) || now >= fx) { _nextSuckFx[who.ObjectId] = now + 0.25f; AbsFx("suck", muzzle, muzzle + d * reach, who); }
             if (_nextSuck.TryGetValue(who.ObjectId, out float next) && now < next) return;
             var it = SuckTarget(o, d, reach, cone, who);
@@ -183,7 +183,7 @@ namespace HtfFortress
         {
             Vector3 end = Reach(o, d, ShotRange);
             var c = Along(o, end, ShotRadius * 1.25f).FirstOrDefault();
-            AbsFx("shot", Muzzle(o, d), c ? Body(c) : end, who, held.Id);
+            AbsFx("shot", Muzzle(who, o, d), c ? Body(c) : end, who, held.Id);
             if (c)
             {
                 HitNumber(c, Hurt(c, v * ShotMult(held.Worth), who));
@@ -214,7 +214,7 @@ namespace HtfFortress
         // Returns its cooldown (seconds, for a common absorber).
         private float TrophyMove(EnemyKind boss, Player who, Vector3 o, Vector3 d, float v)
         {
-            Vector3 muzzle = Muzzle(o, d), fwd = d.Flat().sqrMagnitude > 1e-4f ? d.Flat().normalized : who.Transform.forward.Flat().normalized;
+            Vector3 muzzle = Muzzle(who, o, d), fwd = d.Flat().sqrMagnitude > 1e-4f ? d.Flat().normalized : who.Transform.forward.Flat().normalized;
             float hit = v * MoveMult(boss);
             switch (boss)
             {

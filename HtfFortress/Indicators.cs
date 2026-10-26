@@ -7,9 +7,8 @@ namespace HtfFortress
     // What a weapon in hand will reach, drawn on the ground like a MOBA's ability indicators (Owen: "像是lol那種感覺"; "射距…
     // 很多沒設計好": you should see how far each one goes), with the shooter's own range and trait mods:
     // - lobbed (gas, whirlpool, net, jellyfish, puffer) and the rocket: a disc the size of what it does where it comes down;
-    // - the shark whistle: the shark comes up on the sea ring in the direction you aim (OnSea) and hunts what's in reach of
-    //   the water within its sight of there: a circle of that on the water, a pulsing mark where it surfaces (two for a
-    //   legendary's pair);
+    // - the shark whistle: the shark leaps out of a pool where you aim and hunts anything within its sight of there: a circle
+    //   of that, a pulsing mark where it comes up (two for a legendary's pair);
     // - the conch: its cone round your feet;
     // - everything aimed that flies (bubbles, hook, starfish, boomerang, claw): a ring where the shot stops (the first fish,
     //   or the ground), or at the end of its reach, in red, when you aim past it. Not the laser or the water cannon: their
@@ -68,14 +67,16 @@ namespace HtfFortress
 
             if (gear == Gear.SharkWhistle)
             {
-                // Where the host will put it (Fire's SharkWhistle: Land, then OnSea), as near as the client can tell.
-                Vector3 aim = Reach(o, d, 30f);
-                if (Physics.Raycast(aim + Vector3.up * 0.5f, Vector3.down, out var gh, 40f, GameInfo.LevelLayer)) aim = gh.point;
-                Vector3 at = OnSea(aim);
+                // Where the host will open its pool (Fire's SharkWhistle: Land, then SharkSpots), as near as the client can tell,
+                // and how far round it the shark hunts.
+                Vector3 at = Reach(o, d, 30f);
+                if (Physics.Raycast(at + Vector3.up * 0.5f, Vector3.down, out var gh, 40f, GameInfo.LevelLayer)) at = gh.point;
+                at.y = Mathf.Max(at.y, WaterManager.GetWaterHeight(at));
+                var spots = SharkSpots(at, legend ? Rarity.Legendary : Rarity.Common);
                 Disc(at, SharkSight * reach);
-                Mark(_castMark, at, 1.3f);
-                _castMark2.gameObject.SetActive(legend);
-                if (legend) Mark(_castMark2, OnSea(aim + Quaternion.Euler(0f, 90f, 0f) * d.Flat().normalized * 4f), 1.3f);
+                Mark(_castMark, spots[0], 1.3f);
+                _castMark2.gameObject.SetActive(spots.Length > 1);
+                if (spots.Length > 1) Mark(_castMark2, spots[1], 1.3f);
                 Off(_castCone);
             }
             else if (Lobbed(gear))

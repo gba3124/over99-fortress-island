@@ -47,7 +47,7 @@ namespace HtfFortress
         public const int MaxPoisonStacks = 5;
         public const float BoomerangRange = 18f, BoomerangLeg = 0.55f, BoomerangHitRadius = 1.3f, BoomerangSlow = 0.4f;
         public static readonly float[] SharkLife = { 15f, 17f, 20f, 25f };
-        public const float SharkSpeed = 7f, SharkBiteEvery = 1.2f, SharkReach = 2.6f, SharkSight = 14f, SeaRing = 27.5f;
+        public const float SharkSpeed = 7f, SharkBiteEvery = 1.2f, SharkReach = 2.6f, SharkSight = 14f, SeaRing = 27.5f, SharkLeap = 0.55f;
         public const float ShotRange = 25f, ShotRadius = 0.8f, LobRadius = 1.2f, WhirlRange = 24f, WhirlRadius = 6f, WhirlDps = 5f, WhirlBurst = 40f;
         public const float ConchRange = 10f, ConchHalfAngle = 30f, ConchDamage = 10f, BubblePop = 20f;
         public const float NetRange = 24f, NetRadius = 3.5f, NetDamage = 8f, NettedMult = 1.3f;
@@ -236,7 +236,7 @@ namespace HtfFortress
         private class Cloud { public Vector3 At; public float Radius, Until, Dps; public int Owner; public bool Legend; }
         private class Poison { public int Stacks, Owner; public float Until, NextStack, Dps, NextNumber; public bool Legend; }
         private class Vortex { public Vector3 At; public float Until, Dps, NextNumber, NumberDmg; public int Owner; public bool Legend; }
-        private class Shark { public int Id, Owner; public Vector3 Pos, Face; public float Until, NextBite, Dmg, Sight = SharkSight, Size = 1.85f; }
+        private class Shark { public int Id, Owner; public Vector3 Home, Pos, Face; public float Until, Landed, NextBite, Dmg, Sight = SharkSight, Size = 1.85f; }
         private class Jelly { public Vector3 At; public float Radius, Until, Dps, NextNumber, NumberDmg; public int Owner; public bool Legend; }
 
         private readonly Dictionary<(int, Gear), Gun> _guns = new Dictionary<(int, Gear), Gun>(); // each weapon keeps its own heat and cooldown
@@ -354,7 +354,19 @@ namespace HtfFortress
             return p;
         }
 
-        private static Vector3 Muzzle(Vector3 o, Vector3 d) => o + d * 0.6f + Vector3.down * 0.25f;
+        // Where a shot leaves: the muzzle of the weapon in the shooter's hand as this machine sees it (WeaponItems.Spec), or,
+        // with no model to go by (or one that's far from where they shoot from), a little ahead of and below their eyes.
+        private static Vector3 Muzzle(Player who, Vector3 o, Vector3 d) => HeldMuzzle(who, o, 2.5f) ?? o + d * 0.6f + Vector3.down * 0.25f;
+
+        internal static Vector3? HeldMuzzle(Player who, Vector3 near, float within)
+        {
+            var held = who && who.Holding ? who.Holding.HeldItem : null;
+            if (!WeaponItems.Is(held, out var g, out _) || GearCatalog.IsGameGun(g)) return null;
+            var m = WeaponItems.ModelOf(held);
+            if (!m || !m.gameObject.activeInHierarchy) return null;
+            var p = WeaponItems.MuzzleOf(m, g);
+            return Finite(p) && (p - near).sqrMagnitude <= within * within ? p : (Vector3?)null;
+        }
 
         // Every weapon hit: the kill and the stats are the shooter's, the gauntlet counts, a bubbled fish takes half again.
         private static int Hurt(Creature c, float dmg, Player by)
@@ -421,7 +433,7 @@ namespace HtfFortress
         private float Fire(Gear g, Player who, Vector3 o, Vector3 d, float v, bool legend, Rarity r, float trait, float reach)
         {
             float s = Scale;
-            Vector3 muzzle = Muzzle(o, d);
+            Vector3 muzzle = Muzzle(who, o, d);
             switch (g)
             {
                 case Gear.PoisonGas:
@@ -446,13 +458,10 @@ namespace HtfFortress
                 }
                 case Gear.SharkWhistle:
                 {
-                    // Owen: "打到的地方直接一灘水，鯊魚從下面跳上來咬". A pool opens where it lands; the shark leaps out of it.
+                    // Owen: "打到的地方直接一灘水，鯊魚從下面跳上來咬". A pool opens where it lands; the shark leaps out of it
+                    // and then stays, hunting round its pool and biting (SharkTick) till its time is up.
                     Vector3 at = Land(o, d, 30f);
                     Fx.Send(FxKind.Water, at, at); // the pool
-                    int bites = legend ? 2 : 1;
-                    float bite = v * s * (1f + trait);
-                    int id = _nextShark++;
-                    var owner = who; float radius = 2.8f;
                     // The shark grows with the gun's own power/trait upgrades and rarity: a maxed shark is a real sea monster,
                     // not the same little fish every time.
                     var sharkVault = Loot.Instance ? Loot.Instance.Vault : null;
@@ -461,18 +470,14 @@ namespace HtfFortress
                     int tl = sharkVault != null ? sharkVault.ModOf(sharkKey, Gear.SharkWhistle, WeaponMods.Trait) : 0;
                     float size = Mathf.Clamp(1.70f + 0.075f * pl + 0.05f * tl + 0.12f * (int)r, 1.7f, 3.4f);
                     string sizeKey = size.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
-                    for (int i = 0; i < bites; i++)
+                    foreach (var spot in SharkSpots(at, r))
                     {
-                        Vector3 spot = at + Quaternion.Euler(0f, i * 120f, 0f) * Vector3.forward * (i == 0 ? 0f : 1.8f);
-                        StartCoroutine(After(0.25f + i * 0.25f, () =>
-                        {
-                            Fx.Send(FxKind.Shark, spot + Vector3.down * 3.2f, spot, id + i, 1, owner.ObjectId, sizeKey);
-                            Fx.Send(FxKind.Water, spot, spot);
-                            foreach (var c in Targets().Where(x => (x.transform.position - spot).Flat().sqrMagnitude <= radius * radius))
-                                HitNumber(c, Hurt(c, bite, owner));
-                            StartCoroutine(After(0.6f, () => Fx.Send(FxKind.Shark, spot, spot, id + i, 0, owner.ObjectId)));
-                            AutoTest.Count("shark_jump");
-                        }));
+                        var sh = new Shark { Id = _nextShark++, Owner = who.ObjectId, Home = spot, Pos = spot, Face = spot + d.Flat(), Dmg = v, Size = size,
+                                             Until = Time.time + SharkLife[(int)r] + trait, Landed = Time.time + SharkLeap, NextBite = Time.time + SharkLeap, Sight = SharkSight * reach };
+                        _sharks.Add(sh);
+                        Fx.Send(FxKind.Shark, spot + Vector3.down * 3.2f, spot, sh.Id, 1, who.ObjectId, sizeKey); // the leap
+                        Fx.Send(FxKind.Water, spot, spot);
+                        AutoTest.Count("shark_jump");
                     }
                     return GearCatalog.Cooldown(g, r);
                 }
@@ -885,7 +890,7 @@ namespace HtfFortress
                 Siege.Instance.ServerPush(c, fwd * push * dt * 2.5f * Perks.Knockback); // the push lands over 0.25 s
                 if (legend) Siege.Instance.Slow(c, 0.5f, 0.5f);
             }
-            Fx.Send(FxKind.Water, Muzzle(o, d), end, 0, 0, who.ObjectId, "WaterCannon");
+            Fx.Send(FxKind.Water, Muzzle(who, o, d), end, 0, 0, who.ObjectId, "WaterCannon");
             // The spray adds up: show it on the first fish hit, a few times a second (the numbers were never flushed).
             if (now >= gun.NextNumber && gun.NumberDmg > 0f && first)
             {
@@ -941,7 +946,7 @@ namespace HtfFortress
                 if (legend && hits.Count > 1) Perks.Proc(Gear.Laser, c.transform.position);
             }
             float bite = v / GearCatalog.Value(Gear.Laser, r) * ramp * pour;
-            Fx.Send(FxKind.Beam, Muzzle(o, d), first && !legend ? Body(first) : end, Mathf.RoundToInt(BeamShown(r, bite, BeamMaxBite, ramp >= maxRamp) * 100f), Mathf.RoundToInt(ramp * 100f), who.ObjectId); // PieceId: its heat x100 (the colour)
+            Fx.Send(FxKind.Beam, Muzzle(who, o, d), first && !legend ? Body(first) : end, Mathf.RoundToInt(BeamShown(r, bite, BeamMaxBite, ramp >= maxRamp) * 100f), Mathf.RoundToInt(ramp * 100f), who.ObjectId); // PieceId: its heat x100 (the colour)
             // Damage is continuous, but the floating number should pulse with the beam, not sit on the screen for half a second.
             float pulse = Mathf.Clamp(0.22f * WeaponMods.TimeMult(rate), 0.08f, 0.22f);
             if (now >= gun.NextNumber && gun.NumberDmg > 0f && first) { HitNumber(first, Mathf.RoundToInt(gun.NumberDmg)); gun.NumberDmg = 0f; gun.NextNumber = now + pulse; }
@@ -1001,7 +1006,7 @@ namespace HtfFortress
                 }
             }
             // PieceId: the bullets (0 while it's still spinning up), Arg: how far it's spun up (%), for everyone's view of it.
-            Fx.Send(FxKind.Gatling, Muzzle(o, d), first ? Body(first) : end, shots, Mathf.RoundToInt(gun.Heat * 100f), who.ObjectId);
+            Fx.Send(FxKind.Gatling, Muzzle(who, o, d), first ? Body(first) : end, shots, Mathf.RoundToInt(gun.Heat * 100f), who.ObjectId);
             if (glanced && first && lastGlance) { Fx.Send(FxKind.Gatling, Body(first), Body(lastGlance), -1, 0, who.ObjectId); Perks.Proc(Gear.Gatling, lastGlance.transform.position); }
             if (now >= gun.NextNumber && gun.NumberDmg > 0f && first) { HitNumber(first, Mathf.RoundToInt(gun.NumberDmg)); gun.NumberDmg = 0f; gun.NextNumber = now + 0.5f; }
             if (now >= gun.NextState) { gun.NextState = now + 0.25f; SendState(who, gun); }
@@ -1047,18 +1052,35 @@ namespace HtfFortress
 
         private static void SendShark(Shark sh, bool alive) => Fx.Send(FxKind.Shark, sh.Pos, sh.Face, sh.Id, alive ? 1 : 0, sh.Owner, sh.Size.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
 
+        // Where a whistle's sharks come up: on the pool, a legendary's second one beside it.
+        public static Vector3[] SharkSpots(Vector3 at, Rarity r) =>
+            r == Rarity.Legendary ? new[] { at, at + new Vector3(1.8f * 0.8660254f, 0f, -1.8f * 0.5f) } : new[] { at };
+
+        // A shark's next spot: toward `goal`, never further than `leash` from the pool it came up in.
+        public static Vector3 SharkStep(Vector3 pos, Vector3 home, Vector3 goal, float leash, float step)
+        {
+            Vector3 next = Vector3.MoveTowards(pos, goal, step), off = (next - home).Flat();
+            if (off.sqrMagnitude > leash * leash) next = home + off.normalized * leash + Vector3.up * (next.y - home.y);
+            return next;
+        }
+
+        // Its surface: the sea, or the ground its pool has opened in.
+        private static float SharkSurface(Vector3 p) => Mathf.Max(WaterManager.GetWaterHeight(p), Loot.Ground(p + Vector3.up * 3f, 20f, out var g) ? g.y : float.MinValue);
+
         private void SharkTick(float now)
         {
             foreach (var sh in _sharks.ToList())
             {
                 if (now > sh.Until) { _sharks.Remove(sh); SendShark(sh, false); continue; }
-                // Only fish it can get at from the water: out at sea or right at the waterline.
-                var prey = Targets().Where(c => (c.transform.position - sh.Pos).Flat().sqrMagnitude < sh.Sight * sh.Sight
-                                                && (OnSea(c.transform.position) - c.transform.position).Flat().sqrMagnitude <= SharkReach * SharkReach)
+                // Any fish in its pool's reach, on the sand or in the sea; nothing about: back to the pool.
+                var prey = Targets().Where(c => (c.transform.position - sh.Home).Flat().sqrMagnitude < sh.Sight * sh.Sight)
                                     .OrderBy(c => (c.transform.position - sh.Pos).Flat().sqrMagnitude).FirstOrDefault();
+                if (now >= sh.Landed) // not while it's still in the air
+                {
+                    sh.Pos = SharkStep(sh.Pos, sh.Home, prey ? prey.transform.position : sh.Home, sh.Sight, SharkSpeed * Time.deltaTime);
+                    sh.Pos.y = SharkSurface(sh.Pos);
+                }
                 if (!prey) continue;
-                Vector3 goal = OnSea(prey.transform.position);
-                sh.Pos = Vector3.MoveTowards(sh.Pos, goal, SharkSpeed * Time.deltaTime);
                 sh.Face = prey.transform.position;
                 if ((prey.transform.position - sh.Pos).Flat().magnitude <= SharkReach && now >= sh.NextBite)
                 {
@@ -1066,6 +1088,7 @@ namespace HtfFortress
                     var owner = PlayerById(sh.Owner);
                     HitNumber(prey, Hurt(prey, sh.Dmg * Scale * (IsSpitter(prey) ? 3f : 1f), owner));
                     Fx.Send(FxKind.WeaponHit, sh.Pos, prey.transform.position, sh.Id, 0, sh.Owner); // the chomp (no number)
+                    AutoTest.Count("shark_bite");
                 }
             }
             if (now >= _nextSharkSend) { _nextSharkSend = now + 0.2f; foreach (var sh in _sharks) SendShark(sh, true); }
@@ -1412,10 +1435,7 @@ namespace HtfFortress
         private Vector3 MyMuzzle(Vector3 fallback)
         {
             var m = HeldModel();
-            var mesh = m && m.GetComponent<MeshFilter>() is MeshFilter f ? f.sharedMesh : null;
-            if (!mesh) return fallback;
-            var b = mesh.bounds;
-            return m.TransformPoint(new Vector3(b.center.x, b.center.y, b.max.z)); // its front end
+            return m && WeaponItems.Is(_heldModelOf, out var g, out _) ? WeaponItems.MuzzleOf(m, g) : fallback;
         }
 
         // Heat and cooldown, weapon by weapon (you can carry several).
@@ -1562,8 +1582,12 @@ namespace HtfFortress
             bool fromMe = Player.LocalPlayer && e.Who == Player.LocalPlayer.ObjectId && e.Kind != FxKind.Shark && e.Kind != FxKind.WeaponHit
                           && cam && (e.From - cam.transform.position).sqrMagnitude < 2f * 2f;
             if (fromMe) _kick = e.Kind == FxKind.Beam || e.Kind == FxKind.Gatling ? Mathf.Max(_kick, 0.3f) : 1f;
-            Vector3 from = fromMe ? MyMuzzle(e.From) : e.From;
-            System.Func<Vector3> muzzle = () => fromMe ? MyMuzzle(from) : from; // follows my gun while I move
+            // A friend's shot: from their gun as I see it, when what the host sent is near it (a chained hook, a bounce or a
+            // burst starts somewhere else, and keeps that).
+            bool theirs = !fromMe && e.Kind != FxKind.Shark && e.Kind != FxKind.WeaponHit && e.Kind != FxKind.Soul;
+            var shooter = theirs ? PlayerById(e.Who) : null;
+            Vector3 from = fromMe ? MyMuzzle(e.From) : shooter ? HeldMuzzle(shooter, e.From, 1.5f) ?? e.From : e.From;
+            System.Func<Vector3> muzzle = () => fromMe ? MyMuzzle(from) : shooter ? HeldMuzzle(shooter, from, 1.5f) ?? from : from; // follows the gun while it moves
             switch (e.Kind)
             {
                 case FxKind.Beam:
@@ -2394,7 +2418,7 @@ namespace HtfFortress
                     continue;
                 }
                 p = Vector3.MoveTowards(t.position, v.Pos, Time.deltaTime * SharkSpeed * 1.5f);
-                p.y = WaterManager.GetWaterHeight(p) + 0.1f + Mathf.Sin(now * 3f + kv.Key) * 0.06f; // teeth above the surface
+                p.y = Mathf.Max(WaterManager.GetWaterHeight(p), v.Pos.y) + 0.1f + Mathf.Sin(now * 3f + kv.Key) * 0.06f; // teeth above the surface (the sea, or its pool in the sand)
                 if (biting)
                 {
                     Vector3 toFace = (v.Face - p).Flat();
