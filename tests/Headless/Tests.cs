@@ -415,6 +415,13 @@ namespace HtfFortress.Headless
                   && old.ModOf(6, Gear.Rocket, WeaponMods.Power) == GearCatalog.MaxEnhance && old.EnhanceOf(Gear.Laser) == 0 && old.EnhanceOf(Gear.Rebar) == 2,
                   "old weapon enhancement didn't become everyone's power:\n" + old.Write());
 
+            // The keeper's tree reset gives back what was paid: a save from before souls-spent was kept paid crit at 5 x1.15 a level.
+            var tree = VaultData.Read("souls 4 0\nsoulup 1 3 0 0 0 2 0 0 0");
+            int paid = 10 + (5 + 6 + 7) + (12 + 14); // damage Lv1, crit Lv3 (old prices), discount Lv2
+            Check(tree.SoulsSpent == paid && VaultData.Read(tree.Write()).SoulsSpent == paid, $"an old save's tree cost {tree.SoulsSpent} souls, not {paid}");
+            Check(tree.ResetTree() == paid && tree.Souls == 4 + paid && tree.SoulsSpent == 0 && tree.SoulDmg + tree.SoulCrit + tree.SoulDiscount == 0
+                  && VaultData.Read(tree.Write()).SoulsSpent == 0, "the tree reset didn't give back what it cost:\n" + tree.Write());
+
             // Random clicking by three players: nothing appears from nowhere, slots stay legal, scales never go negative.
             var rng = new System.Random(3);
             ulong[] keys = { 1, 2, 3 };

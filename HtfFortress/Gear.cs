@@ -275,6 +275,25 @@ namespace HtfFortress
         public float KnockbackMult => 1f + 0.25f * Mathf.Max(0, SoulKnock); // explosions / water push +25% a level
         public float HealthTakenMult => 1f / (1f + 0.10f * Mathf.Max(0, SoulHealth)); // character health: +10% effective HP a level
         public float SettleMult => 1f + 0.10f * Mathf.Max(0, SoulCoins); // settlement money, +10% a level
+        public int SoulsSpent; // souls paid into the tree: what a reset gives back
+
+        // The keeper's tree back to nothing, every soul paid into it returned (Owen: 「重製魂」). What came back.
+        public int ResetTree()
+        {
+            int back = SoulsSpent;
+            Souls += back;
+            SoulsSpent = SoulDmg = SoulCrit = SoulCoins = SoulScales = SoulCore = SoulDiscount = SoulTurretDmg = SoulKnock = SoulHealth = 0;
+            return back;
+        }
+
+        // What a save from before "soulspent" paid for its tree: today's prices, but crit at its old 5 x1.15 a level.
+        private int OldTreePrice()
+        {
+            int sum = 0;
+            for (int k = 0; k < 9; k++)
+                for (int l = 0; l < Loot.SoulLevel(this, k); l++) sum += k == 1 ? Mathf.RoundToInt(5f * Mathf.Pow(1.15f, l)) : Loot.SoulUpgradeCost(k, l);
+            return sum;
+        }
         public readonly HashSet<ulong> Starter = new HashSet<ulong>();          // players who got their first laser gun
         public readonly Dictionary<Expansion, int> Bought = new Dictionary<Expansion, int>(); // expansions bought so far
         public readonly List<(string date, string team)> Wins = new List<(string, string)>();  // every OVER 99 on this save
@@ -413,6 +432,7 @@ namespace HtfFortress
             lines.Add($"best {Best} 0");
             lines.Add($"souls {Souls} 0");
             lines.Add($"soulup {SoulDmg} {SoulCrit} {SoulCoins} {SoulScales} {SoulCore} {SoulDiscount} {SoulTurretDmg} {SoulKnock} {SoulHealth}");
+            lines.Add($"soulspent {SoulsSpent} 0");
             foreach (var k in Starter) lines.Add($"starter {k} 1");
             foreach (var kv in Bought) lines.Add($"buy {kv.Key} {kv.Value}");
             foreach (var w in Wins) lines.Add($"win {w.date} {w.team.Split('、').Length} {w.team.Replace("\n", " ")}");
@@ -555,6 +575,7 @@ namespace HtfFortress
         {
             var v = new VaultData();
             int modv = 1;
+            bool spentKnown = false;
             foreach (var line in (text ?? "").Split('\n'))
             {
                 string raw = line.Trim();
@@ -599,6 +620,7 @@ namespace HtfFortress
                         case "mod": var tl = f[3].Split(' '); v.Mods[(ulong.Parse(f[1]), P<Gear>(f[2]), int.Parse(tl[0]))] = int.Parse(tl[1]); break;
                         case "best": v.Best = int.Parse(f[1]); break;
                         case "souls": v.Souls = int.Parse(f[1]); break;
+                        case "soulspent": v.SoulsSpent = Math.Max(0, int.Parse(f[1])); spentKnown = true; break;
                         case "soulup":
                             var su = f[3].Split(' ');
                             v.SoulDmg = int.Parse(f[1]); v.SoulCrit = Mathf.Max(0, int.Parse(f[2]));
@@ -630,6 +652,7 @@ namespace HtfFortress
                     v.Mods[(p, kv.Key, WeaponMods.Power)] = Math.Max(v.ModOf(p, kv.Key, WeaponMods.Power), Math.Min(GearCatalog.MaxEnhance, kv.Value));
                 v.Enhance.Remove(kv.Key);
             }
+            if (!spentKnown) v.SoulsSpent = v.OldTreePrice();
             // Before the range line these four's trait was how far they reach: those levels are their range now.
             if (modv < 2)
                 foreach (var k in v.Mods.Keys.Where(k => k.Item3 == WeaponMods.Trait && RangeTraits.Contains(k.Item2)).ToList())

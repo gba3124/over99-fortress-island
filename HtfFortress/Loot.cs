@@ -1017,6 +1017,7 @@ namespace HtfFortress
             int lvl = SoulLevel(Vault, kind), cost = SoulUpgradeCost(kind, lvl);
             if (Vault.Souls < cost || lvl >= SoulMaxLevel(kind)) return false;
             Vault.Souls -= cost;
+            Vault.SoulsSpent += cost;
             switch (kind)
             {
                 case 0: Vault.SoulDmg++; break;
@@ -1038,6 +1039,19 @@ namespace HtfFortress
             if (wave <= 0) return 0;
             if (wave >= 100) return Mathf.RoundToInt(100f * Mathf.Pow(1.15f, (wave - 100) / 10f)); // the OVER 99 payout
             return Mathf.Max(1, (wave / 10) * 5); // every earlier 10-wave record: 5, 10, ... 45
+        }
+        // The keeper's reset: the whole tree's souls back. Between runs only, or the discount could be worn for the build and
+        // swapped for damage before the fight.
+        public static bool CanResetTree => !(FortressPlugin.Instance && FortressPlugin.Instance.Running);
+        public int ServerResetTree()
+        {
+            if (!InstanceFinder.IsServerStarted || !CanResetTree) return 0;
+            EnsureLoaded();
+            int back = Vault.ResetTree();
+            SaveVault();
+            BuildSystem.Log.LogInfo($"keeper tree reset: +{back} souls (have {Vault.Souls})");
+            AutoTest.Count("soul_reset");
+            return back;
         }
         public void ServerAddSouls(int n)
         {
