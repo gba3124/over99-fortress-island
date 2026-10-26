@@ -371,13 +371,13 @@ namespace HtfFortress
 
         // Repair towers: once a second every damaged building in reach gets a share of its own health back (not the tower
         // itself: two look after each other), from the strongest tower reaching it only, like bubbles; the lighthouse a part
-        // of that share (Catalog.MendCore). A green spark to a few of them every other second.
+        // of that share (Catalog.MendCore). Each one mended shows it, every second (Fx.Mending: an arc, beads, pluses), up
+        // to MendShown a tower.
         private float _nextMend;
-        private int _mendPulse;
+        private const int MendShown = 10;
         private readonly Dictionary<int, (float share, int by)> _mendBest = new Dictionary<int, (float, int)>();
         private void Mend()
         {
-            bool fx = (++_mendPulse & 1) == 0;
             var menders = BuildSystem.Instance.ServerPieces.Where(x => x.Type == PieceType.Mender && !Bosses.Instance.IsSilenced(x.Id)).ToList();
             if (menders.Count == 0) return;
             _mendBest.Clear();
@@ -392,15 +392,15 @@ namespace HtfFortress
                         _mendBest[p.Id] = (share, m.Id);
                 if ((core - m.Pos).Flat().sqrMagnitude <= r2 && share * s.CoreMend > coreShare) { coreShare = share * s.CoreMend; coreBy = m.Id; }
             }
-            var healed = new Dictionary<int, List<Vector3>>();
-            void Mark(int by, Vector3 at) { if (!healed.TryGetValue(by, out var l)) healed[by] = l = new List<Vector3>(); l.Add(at); }
-            foreach (var kv in _mendBest) if (BuildSystem.Instance.ServerMend(kv.Key, kv.Value.share, out var at)) Mark(kv.Value.by, at);
-            if (coreShare > 0f && Siege.Instance.ServerHealCore(coreShare) > 0) Mark(coreBy, core + Vector3.up * 2f);
+            var healed = new Dictionary<int, List<(Vector3 at, int id)>>();
+            void Mark(int by, Vector3 at, int id) { if (!healed.TryGetValue(by, out var l)) healed[by] = l = new List<(Vector3, int)>(); l.Add((at, id)); }
+            foreach (var kv in _mendBest) if (BuildSystem.Instance.ServerMend(kv.Key, kv.Value.share, out var at)) Mark(kv.Value.by, at, kv.Key);
+            if (coreShare > 0f && Siege.Instance.ServerHealCore(coreShare) > 0) Mark(coreBy, core + Vector3.up * 2f, 0);
             foreach (var m in menders)
             {
                 if (!healed.TryGetValue(m.Id, out var list)) continue;
                 AutoTest.Count("mended");
-                if (fx) foreach (var to in list.Take(3)) Fx.Send(FxKind.Mend, m.Pos + Vector3.up * Catalog.MuzzleHeight(m.Type, m.Level), to + Vector3.up * 0.6f, m.Id);
+                foreach (var h in list.Take(MendShown)) Fx.Send(FxKind.Mend, m.Pos + Vector3.up * Catalog.MuzzleHeight(m.Type, m.Level), h.at + Vector3.up * 0.6f, m.Id, who: h.id);
             }
         }
 

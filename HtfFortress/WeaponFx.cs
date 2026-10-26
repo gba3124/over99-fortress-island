@@ -90,6 +90,24 @@ namespace HtfFortress
             "..##......",
         }, new Dictionary<char, Color> { { '#', Color.white } });
 
+        // A heal's plus: mint with a dark green rim, readable on grass and sky (the repair towers' pluses, Fx.Mending).
+        public static Texture2D PlusTex => Pixels("Plus", new[]
+        {
+            "....ooooo....",
+            "....owggo....",
+            "....owggo....",
+            "....ogggo....",
+            "ooooogggooooo",
+            "owwgggggggggo",
+            "ogggggggggggo",
+            "ogggggggggggo",
+            "ooooogggooooo",
+            "....ogggo....",
+            "....ogggo....",
+            "....ogggo....",
+            "....ooooo....",
+        }, new Dictionary<char, Color> { { 'o', new Color(0.08f, 0.42f, 0.18f) }, { 'g', new Color(0.4f, 1f, 0.45f) }, { 'w', new Color(0.85f, 1f, 0.85f) } });
+
         // A twisted rope, along u.
         public static Texture2D RopeTex => Pixels("Rope", new[] { "aabbaabb", "abbaabba", "bbaabbaa", "baabbaab" },
             new Dictionary<char, Color> { { 'a', new Color(0.78f, 0.62f, 0.4f) }, { 'b', new Color(0.55f, 0.4f, 0.24f) } }, true);
@@ -334,6 +352,7 @@ namespace HtfFortress
             public ParticleSystemShapeType Shape = ParticleSystemShapeType.Sphere;
             public float Radius = 0.05f, Angle = 25f;
             public bool FaceSystem; // turned like the system (rings flying along it), not toward the camera
+            public bool Upright; // camera-facing sprites kept upright (a plus stays a plus), not turned at random
         }
 
         public static Gradient Fade(Color a, Color b, float hold = 0.6f)
@@ -370,7 +389,7 @@ namespace HtfFortress
             main.startLifetime = new ParticleSystem.MinMaxCurve(s.Life.x, s.Life.y);
             main.startSpeed = new ParticleSystem.MinMaxCurve(s.Speed.x, s.Speed.y);
             main.startSize = new ParticleSystem.MinMaxCurve(s.Size.x, s.Size.y);
-            if (s.FaceSystem) main.startRotation = 0f;
+            if (s.FaceSystem || s.Upright) main.startRotation = 0f;
             else if (s.Mesh)
             {
                 main.startRotation3D = true;
@@ -511,6 +530,13 @@ namespace HtfFortress
             Mat = Sprite("Note", NoteTex, new Color(1f, 0.9f, 0.55f, 1f)), Life = new Vector2(0.8f, 1.2f), Speed = new Vector2(3f, 6f), Size = new Vector2(0.6f, 0.9f),
             Color = Fade(Color.white, new Color(1f, 0.8f, 0.4f), 0.7f), Spin = new Vector2(-1.5f, 1.5f), Noise = 1f, Drag = 1.2f,
             Shape = ParticleSystemShapeType.Cone, Angle = 28f, Max = 200,
+        });
+
+        // Green pluses floating up off what a repair tower mends (Fx.Mending): popping in, slowing, fading as they rise.
+        public static ParticleSystem Pluses => System("Pluses", () => new Spec
+        {
+            Mat = Sprite("Plus", PlusTex, Color.white), Life = new Vector2(0.8f, 1.2f), Speed = new Vector2(1f, 1.6f), Size = new Vector2(0.3f, 0.48f),
+            Color = Fade(Color.white, Color.white, 0.55f), SizeOverLife = Curve(0f, 0.2f, 0.12f, 1.2f, 0.25f, 1f, 1f, 0.7f), Drag = 1.4f, Upright = true, Max = 500,
         });
 
         // ---------- lines ----------
