@@ -1325,7 +1325,9 @@ namespace HtfFortress
             }
             // A full vault (every slot taken, and no part-filled stack of it): the next piece becomes scales.
             loot.Vault.Add(Gear.Incendiary, Rarity.Epic, -loot.Vault.Count(Gear.Incendiary, Rarity.Epic));
-            while (!loot.Vault.VaultFull) loot.ServerGive(Gear.Rebar, Rarity.Common, GearCatalog.Stack);
+            // A slot holds a whole (gear, colour) group, so it fills with different ones (more of one never filled it: a hang).
+            for (int i = 0, n = GearCatalog.All.Length; !loot.Vault.VaultFull && i < 4 * n; i++)
+                if (!(GearCatalog.All[i % n] == Gear.Incendiary && i / n == (int)Rarity.Epic)) loot.ServerGive(GearCatalog.All[i % n], (Rarity)(i / n), 1);
             int scales0 = loot.Vault.Scales;
             loot.DebugDrop(Gear.Incendiary, Rarity.Epic, me.Transform.position + Vector3.up);
             yield return new WaitForSecondsRealtime(1.5f);
@@ -1482,7 +1484,7 @@ namespace HtfFortress
                 if (c) { Bosses.Instance.Interrupt(c); yield return new WaitForSecondsRealtime(0.5f); FortressPlugin.Shot($"boss_{kind}_broken"); }
                 yield return new WaitForSecondsRealtime(6f);
                 Note($"{kind}: second form {C("boss_phase2_" + kind)}, broken {C("boss_broken_" + kind)}, moves {Moves(kind)}");
-                if (c) c.ServerChangeHp(1000000);
+                if (c) c.ServerChangeHp(int.MaxValue / 4);
                 yield return new WaitForSecondsRealtime(2.5f);
                 Note($"{kind}: died {C("boss_died_" + kind)}, alive left {FortressPlugin.Alive.Count(x => x && x._hp.Value > 0)}, trophy dropped {C("trophy_dropped_" + kind)}");
                 // Its trophy: a look at it where it fell, then into the fish crate for money (the first one), or the vault.
@@ -1501,7 +1503,7 @@ namespace HtfFortress
                     yield return new WaitForSecondsRealtime(1f);
                     Note($"{kind}: trophy '{trophy.GetName()}' worth {trophy.TotalWorth}: money {money0} -> {Siege.Instance.ServerCoins}, in the vault {stored0} -> {Loot.Instance.Vault.CountItem(BossTrophies.IdOf(kind))}");
                 }
-                foreach (var x in FortressPlugin.Alive.ToList()) if (x) x.ServerChangeHp(1000000);
+                foreach (var x in FortressPlugin.Alive.ToList()) if (x) x.ServerChangeHp(int.MaxValue / 4);
                 yield return new WaitForSecondsRealtime(1f);
             }
             if (_arg.Length > 0) { plugin.DebugStopRound(); yield break; }
@@ -1510,9 +1512,10 @@ namespace HtfFortress
             int coreBefore = Siege.Instance.CoreHp;
             var late = plugin.ServerSpawnBoss(EnemyKind.Warden, 25f, 1, 10, 1f);
             yield return new WaitForSecondsRealtime(2f);
+            if (late) late._hp.Value = Mathf.RoundToInt(late._hp.Value * 0.6f); // a full one would take the whole lighthouse
             Bosses.Instance.DebugAge(Bosses.CrashAfter - 1f);
             yield return new WaitForSecondsRealtime(2.5f);
-            Note($"crash: core {coreBefore} -> {Siege.Instance.CoreHp} (expect about -60% at full health), boss gone {late == null || !late.IsSpawned || late.IsDestroying}, crashes {C("boss_crashed")}");
+            Note($"crash: core {coreBefore} -> {Siege.Instance.CoreHp} (expect about -80% at 60% health), boss gone {late == null || !late.IsSpawned || late.IsDestroying}, crashes {C("boss_crashed")}");
             // Wave 100 cleared: the run is won.
             Siege.Instance.DamageCore(-Siege.Instance.CoreMax);
             plugin.DebugJumpToWave(EnemyCatalog.FinalWave);
@@ -1761,7 +1764,7 @@ namespace HtfFortress
                 yield return new WaitForSecondsRealtime(1f);
                 FortressPlugin.Frozen = false;
                 Reveal.Instance.TestViewEnd();
-                c.ServerChangeHp(10000000);
+                c.ServerChangeHp(int.MaxValue / 4);
                 yield return new WaitForSecondsRealtime(3f);
                 Note($"{kind}: shown; trophy dropped {(Counters.TryGetValue("trophy_dropped_" + kind, out int td) ? td : 0)}");
             }
@@ -3098,7 +3101,7 @@ namespace HtfFortress
                 float apart = near && far ? (far.transform.position - near.transform.position).magnitude : -1f;
                 Vector3 aim = ((near ? near.transform.position : mid) + Vector3.up * 0.5f - eye).normalized;
                 Weapons.Instance.ServerFire(me, new WeaponFire { Phase = 0, Origin = eye, Dir = aim });
-                yield return new WaitForSecondsRealtime(1.1f);
+                yield return new WaitForSecondsRealtime(0.7f); // inside the magazine a common's next rocket is 0.8 s off, 0.62 s with Lv5 rate
                 Weapons.Instance.ServerFire(me, new WeaponFire { Phase = 0, Origin = eye, Dir = aim });
                 yield return new WaitForSecondsRealtime(1.2f);
                 int n1 = near ? near._hp.Value : 0, f1 = far ? far._hp.Value : 0;
@@ -3276,9 +3279,16 @@ namespace HtfFortress
             yield return Until(() => C("helper_sold") >= 2 && FortressNet.Instance.ServerCorpses().Count() == 0, 60f, "helpers selling");
             Note($"helpers: picked {C("helper_picked")} of {corpses}, sold {C("helper_sold")} times for {C("helper_money")} (money {money0} -> {Siege.Instance.ServerCoins}), corpses left {FortressNet.Instance.ServerCorpses().Count()}");
 
-            // Knocked out: four fish held round a helper standing at the stall.
-            yield return new WaitForSecondsRealtime(4f);
-            Vector3 hp = Helpers.Instance.DebugPos(0);
+            // Nothing left to pick up: a coffee at one of the rest spots (Helpers.Rest). Then knocked out: four fish held round
+            // the first of them there.
+            yield return Until(() => Helpers.Instance.DebugState().StartsWith("#1 coffee") || Helpers.Instance.DebugState().StartsWith("#1 talking"), 20f, "helper 1 on its coffee break");
+            Vector3 hp = Helpers.Instance.DebugPos(0), by = hp + new Vector3(3f, 0f, 3f);
+            by.y = BossFx.Ground(by) + stand;
+            me.LocalTeleport(by, YawTo(by, hp), true);
+            Aim(YawTo(by, hp), 14f);
+            yield return new WaitForSecondsRealtime(2f);
+            FortressPlugin.Shot("helpers_coffee");
+            Note("on a break: " + Helpers.Instance.DebugState());
             var biters = new List<Creature>();
             for (int i = 0; i < 4; i++) biters.Add(plugin.ServerSpawnMinion(EnemyKind.Runner, hp + Quaternion.Euler(0f, 90f * i, 0f) * Vector3.forward * 1.1f + Vector3.up * 1f));
             foreach (var b in biters) if (b) Siege.Instance.Slow(b, 1f, 60f);
@@ -3311,7 +3321,7 @@ namespace HtfFortress
             FortressPlugin.Shot("mender");
             int wall1 = BuildSystem.Instance.ServerPieces.FirstOrDefault(p => p.Id == wall.Id).Hp;
             var ts = Catalog.Turret(PieceType.Mender, 1, 0);
-            Note($"repair tower placed {placed}, wall {wallPlaced} at {(wall.Pos - towerAt).Flat().magnitude:0.0} m: wall {wall0} -> {wall1}/{wall.MaxHp} (expect +{ts.Damage}/s), lighthouse {core0} -> {Siege.Instance.CoreHp} (expect +{ts.Damage * Catalog.MendCore:0.#}/s while within {ts.Range} m: it's {(core - towerAt).Flat().magnitude:0.0} m), pulses {C("mended") - mended0}");
+            Note($"repair tower placed {placed}, wall {wallPlaced} at {(wall.Pos - towerAt).Flat().magnitude:0.0} m: wall {wall0} -> {wall1}/{wall.MaxHp} (expect +{Mathf.CeilToInt(wall.MaxHp * ts.Heal)}/s), lighthouse {core0} -> {Siege.Instance.CoreHp} (expect +{Mathf.CeilToInt(Siege.Instance.CoreMax * ts.Heal * ts.CoreMend)}/s while within {ts.Range} m: it's {(core - towerAt).Flat().magnitude:0.0} m), pulses {C("mended") - mended0}");
 
             // Every kind of walker side by side (and an elite runner), each in its own build and colour.
             plugin.DebugKillAll();

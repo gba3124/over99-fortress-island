@@ -27,7 +27,8 @@ namespace HtfFortress
         FinalBoss, // the last boss has just died: the short "the last boss falls" card (every client) // souls rising at the lighthouse after a settlement (drawn by Weapons)
         ChestOpen, // a chest opened: Arg the best rarity inside
         BossMusic, // a fortress boss fight: Arg 1 start, 0 stop
-        RoundEnd } // Arg 1 victory, 0 defeat: the full-screen end beat
+        RoundEnd, // Arg 1 victory, 0 defeat: the full-screen end beat
+        Fuse } // a bomber's fuse lit (Siege.FuseTime to go): PieceId the fish
 
     // Host -> everyone: a visual effect (and for Announce, a banner: Key = string key, Arg = number). Who = the player whose weapon did it.
     public struct FxEvent : IBroadcast { public FxKind Kind; public Vector3 From; public Vector3 To; public int PieceId; public string Key; public int Arg; public int Who; }
@@ -40,7 +41,7 @@ namespace HtfFortress
     {
         private static Fx _instance;
         private NetworkManager _registeredOn;
-        private Material _tracer, _ball, _blast, _spit, _bolt, _zap, _fire, _heal, _dust, _water, _stone, _shell, _sniperTracer, _flameCore;
+        private Material _tracer, _ball, _blast, _spit, _bolt, _zap, _fire, _heal, _mendGlow, _surgeCore, _dust, _water, _stone, _shell, _sniperTracer, _flameCore;
         private static Mesh _flameMesh;
 
         static Fx()
@@ -111,6 +112,13 @@ namespace HtfFortress
         {
             if (!MayPlay(prefix, Time.unscaledTime)) return;
             try { AudioManager.PlayRandomClipAt(prefix, min, max, at, true, dist, volume); } catch { }
+        }
+
+        // Rapid fire: the game's player holds every clip family back 0.1 s (AudioManager's minDelay), which left a 12-a-second
+        // gun sounding every second or third shot. These skip both holds; the callers keep their own beat and count.
+        public static void Rapid(string prefix, int min, int max, Vector3 at, float volume)
+        {
+            try { AudioManager.PlayRandomClipAt(prefix, min, max, at, true, AudioDistance.Medium, volume, 0f); } catch { }
         }
 
         // Every sound of ours goes through here: one clip (a random one's whole family) at most every SameGap, and at most
@@ -301,6 +309,7 @@ namespace HtfFortress
             if (e.Kind == FxKind.Absorb) { StartCoroutine(Swallow.View(e)); return; }
             if (e.Kind == FxKind.BossIntro) { Reveal.Instance.Boss((EnemyKind)e.Arg, e.To, e.From, e.PieceId); return; }
             if (e.Kind == FxKind.BossFx) { if (BossFx.Instance) BossFx.Instance.Play(e); return; }
+            if (e.Kind == FxKind.Fuse) { StartCoroutine(Fuse(e.PieceId, e.From)); return; }
             if (e.Arg > 0 && e.Kind != FxKind.Proc && e.Kind != FxKind.Decoy) { try { PlayerUI.AddDamageNumber(e.To + Vector3.up * 0.8f, e.Arg, false); } catch { } }
             if (!_tracer)
             {
@@ -315,6 +324,8 @@ namespace HtfFortress
                 _zap = BossVfx.Glow(new Color(0.55f, 0.85f, 1f), 8f);
                 _fire = BossVfx.Glow(new Color(1f, 0.42f, 0.08f), 5f);
                 _heal = BossVfx.Glow(new Color(0.45f, 1f, 0.5f), 5f);
+                _mendGlow = BossVfx.Glow(new Color(0.3f, 0.9f, 0.4f), 2.5f);
+                _surgeCore = BossVfx.Glow(new Color(0.85f, 1f, 0.8f), 9f);
                 _dust = Models.Make(new Color(0.62f, 0.5f, 0.36f));
                 _water = Models.Make(new Color(0.55f, 0.8f, 1f), new Color(0.4f, 0.7f, 1f));
                 _stone = Models.Make(new Color(0.32f, 0.32f, 0.34f));
@@ -326,7 +337,10 @@ namespace HtfFortress
             if (e.PieceId != 0 && e.Kind != FxKind.Scoop) AimTurret(e.PieceId, e.To); // for a scoop it's the body being netted
             switch (e.Kind)
             {
-                case FxKind.Tracer: StartCoroutine(Tracer(e.From, e.To, e.Key, TurretLevel(e.PieceId))); SoundRandom("SMGFireOutside_V", 1, 4, e.From, 0.35f); break;
+                case FxKind.Tracer:
+                    if (e.PieceId != 0) Rattling(e.PieceId, e.From, e.To);
+                    else StartCoroutine(Tracer(e.From, e.To, e.Key)); // a second barrel's fish: the rattle above is its sound
+                    break;
                 case FxKind.Cannonball: StartCoroutine(Arc(e.From, e.To, e.Key == "Cannon" ? _stone : _ball, (e.Key == "Cannon" ? 0.46f : 0.35f) * (1f + 0.035f * (TurretLevel(e.PieceId) - 1)), 0.35f, 1.5f, true, e.Key, TurretLevel(e.PieceId))); SoundRandom("ShotgunFireOutside_0", 1, 4, e.From, 0.8f); break;
                 case FxKind.Spit: StartCoroutine(Arc(e.From, e.To, _spit, 0.3f, SpitFlight, 6f, false)); SoundRandom("PiranhaVomit_V", 1, 3, e.From, 0.8f); break; // higher lob for the spitter
                 case FxKind.Blast:
@@ -346,7 +360,7 @@ namespace HtfFortress
                 case FxKind.Sell: SoundRandom("Sell_0", 1, 3, e.To, 1f); StartCoroutine(Blast(e.To + Vector3.up, 1.6f, _tracer)); break;
                 case FxKind.Burn: if (!ClientSettings.Reduced) StartCoroutine(Blast(e.To + Random.insideUnitSphere * 1.5f, 1.4f, _fire)); break; // every burning fish, twice a second
                 case FxKind.Heal: StartCoroutine(Zap(e.From, e.To, _heal)); if (!ClientSettings.Reduced) StartCoroutine(Blast(e.To, 0.9f, _heal)); Sound("QuestReceived", e.To, 0.25f, AudioDistance.Short); break;
-                case FxKind.Mend: AimTurret(e.PieceId, e.To); StartCoroutine(Zap(e.From, e.To, _heal)); if (!ClientSettings.Reduced) StartCoroutine(Blast(e.To, 0.6f, _heal)); break; // quiet: it goes off every other second
+                case FxKind.Mend: if (e.Key == "free") Freeing(e.PieceId, e.Who, e.From, e.To); else Mending(e.PieceId, e.Who, e.From, e.To, e.Key == "surge"); break;
                 case FxKind.Dust: StartCoroutine(Blast(e.To, 2.2f, _dust)); SoundRandom("ItemImpactHeavy_V", 1, 3, e.To, 0.8f); break;
                 case FxKind.Wave: Splash(e.To, 3f); SoundRandom("WhaleLanding_0", 1, 3, e.To, 1f, AudioDistance.Long); break;
                 case FxKind.Decoy: StartCoroutine(Duck(e.To, e.Arg)); break;
@@ -422,6 +436,75 @@ namespace HtfFortress
             if (pool.Count < 200) pool.Push(go); else Destroy(go);
         }
 
+        // Machine-gun turrets rattle at a steady beat on every client. The host's tracer only says "still firing at X" every
+        // 0.15 s; a shot sound per tracer, through the game's 0.1 s hold, came out ragged (Owen: 「機關槍射擊的聲音跟節奏現在不像
+        // 機關槍」). The beat follows the turret's own fire rate, 8 to 14 rounds a second.
+        private sealed class Rattle { public Vector3 From, To; public float Until, Beat; public int Level; }
+        private readonly Dictionary<int, Rattle> _rattles = new Dictionary<int, Rattle>();
+        private const int AudibleRattles = 2; // the nearest ones: every turret on the island at once crackled
+
+        private void Rattling(int id, Vector3 from, Vector3 to)
+        {
+            if (!_rattles.TryGetValue(id, out var r))
+            {
+                r = new Rattle { Level = 1, Beat = 0.12f };
+                if (BuildSystem.Instance && BuildSystem.Instance.TryGetState(id, out var st))
+                {
+                    r.Level = st.Level;
+                    r.Beat = Mathf.Clamp(Catalog.Turret(st.Type, st.Level, st.Branch).Interval, 0.07f, 0.12f);
+                }
+                _rattles[id] = r;
+                StartCoroutine(RattleLoop(id, r));
+            }
+            r.From = from; r.To = to; r.Until = Time.time + 0.25f;
+        }
+
+        private IEnumerator RattleLoop(int id, Rattle r)
+        {
+            float next = Time.time;
+            while (Time.time < r.Until)
+            {
+                if (Time.time >= next)
+                {
+                    next += r.Beat;
+                    if (next < Time.time) next = Time.time + r.Beat; // after a hitch it carries on, it doesn't catch up
+                    StartCoroutine(Tracer(r.From, r.To + Random.insideUnitSphere * 0.25f, "Gun", r.Level));
+                    if (Audible(r)) Rapid("AssaultrifleFireOutside_0", 1, 4, r.From, 0.3f);
+                }
+                yield return null;
+            }
+            _rattles.Remove(id);
+        }
+
+        private bool Audible(Rattle r)
+        {
+            var cam = GameInfo.CurCamera;
+            if (!cam) return false;
+            Vector3 at = cam.transform.position;
+            float d = (r.From - at).sqrMagnitude;
+            int closer = 0;
+            foreach (var o in _rattles.Values)
+                if (o != r && (o.From - at).sqrMagnitude < d && ++closer >= AudibleRattles) return false;
+            return true;
+        }
+
+        // A lit bomber: it blinks red three times and its head spits sparks, hissing, until it goes off.
+        private IEnumerator Fuse(int fish, Vector3 at)
+        {
+            Sound("Ignite", at, 1f);
+            var red = new Color(1f, 0.15f, 0.1f);
+            float end = Time.time + Siege.FuseTime, blink = 0f;
+            while (Time.time < end)
+            {
+                var body = BossFx.BodyOf(fish);
+                if (!body) yield break; // shot before it went off
+                Vector3 top = body.position + Vector3.up * 0.7f;
+                if (Time.time >= blink) { blink = Time.time + Siege.FuseTime / 3f; BossVfx.Flash(top, 1.8f, red, 0.12f); }
+                WeaponFx.Emit(WeaponFx.Sparks("Gold"), top, 2, Vector3.up);
+                yield return null;
+            }
+        }
+
         private IEnumerator Tracer(Vector3 from, Vector3 to, string key = null, int level = 1)
         {
             float grow = 1f + 0.045f * (Mathf.Max(1, level) - 1);
@@ -432,7 +515,7 @@ namespace HtfFortress
             float w = (sniper ? 0.035f : gun ? 0.06f : 0.05f) * grow;
             go.transform.localScale = new Vector3(w, w, d.magnitude);
             // Sparks leave the muzzle; where it lands, a few chips fly back out of the fish (the gatling's hit look).
-            if (gun) { WeaponFx.Emit(WeaponFx.Sparks("Gold"), from, Mathf.RoundToInt(4 + level * 0.4f), d.normalized); WeaponFx.Emit(WeaponFx.Sparks("Gold"), to, 3, -d.normalized + Vector3.up * 0.5f); }
+            if (gun) { WeaponFx.Emit(WeaponFx.Sparks("Gold"), from, Mathf.RoundToInt(2 + level * 0.15f), d.normalized); WeaponFx.Emit(WeaponFx.Sparks("Gold"), to, 2, -d.normalized + Vector3.up * 0.5f); } // a dozen rounds a second now
             else if (sniper) { WeaponFx.Emit(WeaponFx.Sparks("Cyan"), from, Mathf.RoundToInt(6 + level * 0.5f), d.normalized); WeaponFx.Emit(WeaponFx.Sparks("Cyan"), to, 6, -d.normalized + Vector3.up * 0.5f); }
             yield return new WaitForSeconds(sniper ? 0.09f : 0.05f);
             Done(go);
@@ -508,6 +591,113 @@ namespace HtfFortress
             }
             yield return new WaitForSeconds(0.09f);
             foreach (var go in parts) Done(go);
+        }
+
+        // Repair towers (Owen: 「修補都沒有光線還是什麼連結綠綠的修復效果 每次修復也可以綠綠的有很多＋符號」; a 0.09 s spark every
+        // other second went unseen): every second a green arc from the tower to each building it mends, held while it keeps
+        // mending, two beads of light running down it, and green pluses bursting off the building where they land.
+        // PieceId the tower, Who the building (0: the lighthouse). Key "surge": a surge tower's double mending on something
+        // nearly down, a thicker, brighter arc; "free": a cleansing tower freeing a turret a boss shut down (Freeing).
+        private sealed class Tether { public LineRenderer Glow, Core; public Vector3 From, To; public float Until; public bool Surge; }
+        private readonly Dictionary<long, Tether> _tethers = new Dictionary<long, Tether>();
+        private const int MaxTethers = 30, ArcPoints = 14;
+        private const float TetherHold = 1.25f, TetherFade = 0.3f, BeadFlight = 0.45f, LighthouseRadius = 2.6f;
+
+        public static Vector3 MendArc(Vector3 a, Vector3 b, float k)
+        {
+            Vector3 c = (a + b) * 0.5f + Vector3.up * (0.4f + 0.15f * Vector3.Distance(a, b));
+            return Vector3.Lerp(Vector3.Lerp(a, c, k), Vector3.Lerp(c, b, k), k);
+        }
+
+        private void Mending(int tower, int building, Vector3 from, Vector3 to, bool surge)
+        {
+            var body = MendBounds(building, to);
+            if (building != 0) to = body.center + Vector3.up * body.extents.y * 0.25f; // into the building, a little over its middle
+            long key = ((long)tower << 32) | (uint)building;
+            if (_tethers.TryGetValue(key, out var t) && t.Core) { t.From = from; t.To = to; t.Until = Time.time + TetherHold; t.Surge = surge; }
+            else if (_tethers.Count < MaxTethers) StartCoroutine(TetherRun(key, from, to, surge));
+            StartCoroutine(Beads(from, to, body, building == 0, surge));
+        }
+
+        // A cleansing tower frees a turret: a bright arc to it, its chains or stone break off (BossMoves.Free), a white-green
+        // flash, a ring along the ground, a shower of green sparks and a chime.
+        private void Freeing(int tower, int turret, Vector3 from, Vector3 to)
+        {
+            BossMoves.Free(turret);
+            Mending(tower, turret, from, to, true);
+            var b = MendBounds(turret, to);
+            BossVfx.Flash(b.center, 2.6f, new Color(0.85f, 1f, 0.85f), 0.3f);
+            BossVfx.Shock(new Vector3(b.center.x, b.min.y + 0.1f, b.center.z), 3f, new Color(0.55f, 1f, 0.6f), 0.45f);
+            WeaponFx.Emit(WeaponFx.Sparks("Green"), b.center, ClientSettings.Reduced ? 6 : 16, Vector3.up);
+            Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), b.center, 0.8f, AudioDistance.Long);
+        }
+
+        // What the pluses spread over: the building's look, or round the lighthouse's lower floors.
+        private static Bounds MendBounds(int building, Vector3 at)
+        {
+            var go = building != 0 && BuildSystem.Instance ? BuildSystem.Instance.PieceObject(building) : null;
+            if (go) return BuildSystem.LookBounds(go); // (not a bubble tower's dome, or a repair tower's reach while building)
+            return building == 0 ? new Bounds(at + Vector3.up * 0.5f, new Vector3(2f, 3f, 2f) * LighthouseRadius) : new Bounds(at, Vector3.one * 1.4f);
+        }
+
+        private IEnumerator TetherRun(long key, Vector3 from, Vector3 to, bool surge)
+        {
+            var t = new Tether { From = from, To = to, Until = Time.time + TetherHold, Surge = surge, Glow = WeaponFx.Line("MendGlow", _mendGlow, 0f), Core = WeaponFx.Line("MendCore", _heal, 0f) };
+            t.Glow.positionCount = t.Core.positionCount = ArcPoints;
+            _tethers[key] = t;
+            var pts = new Vector3[ArcPoints];
+            float born = Time.time, sk = surge ? 1f : 0f;
+            while (t.Core && t.Glow && Time.time < t.Until + TetherFade)
+            {
+                float w = Mathf.Clamp01((Time.time - born) / 0.15f) * Mathf.Clamp01((t.Until + TetherFade - Time.time) / TetherFade)
+                          * (0.85f + 0.15f * Mathf.Sin((Time.time - born) * 8f)); // grows in, breathes, thins away when the mending stops
+                sk = Mathf.MoveTowards(sk, t.Surge ? 1f : 0f, Time.deltaTime * 4f); // a surge swells it, brighter at its heart
+                w *= 1f + 0.7f * sk;
+                var core = sk > 0.5f ? _surgeCore : _heal;
+                if (t.Core.sharedMaterial != core) t.Core.sharedMaterial = core;
+                for (int i = 0; i < ArcPoints; i++) pts[i] = MendArc(t.From, t.To, i / (ArcPoints - 1f));
+                t.Glow.SetPositions(pts); t.Core.SetPositions(pts);
+                t.Glow.widthMultiplier = 0.24f * w; t.Core.widthMultiplier = 0.06f * w;
+                yield return null;
+            }
+            if (_tethers.TryGetValue(key, out var now) && now == t) _tethers.Remove(key);
+            if (t.Glow) Destroy(t.Glow.gameObject);
+            if (t.Core) Destroy(t.Core.gameObject);
+        }
+
+        private IEnumerator Beads(Vector3 from, Vector3 to, Bounds body, bool lighthouse, bool surge)
+        {
+            int n = ClientSettings.Reduced ? 1 : surge ? 3 : 2;
+            const float gap = 0.15f;
+            var beads = new GameObject[n];
+            for (int i = 0; i < n; i++) beads[i] = Shape(PrimitiveType.Sphere, _heal);
+            for (float s = 0f; s < BeadFlight + gap * (n - 1); s += Time.deltaTime)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    if (!beads[i]) continue;
+                    float k = Mathf.Clamp01((s - gap * i) / BeadFlight);
+                    beads[i].transform.position = MendArc(from, to, k * k * (3f - 2f * k)); // eased out of the tower and into the building
+                    beads[i].transform.localScale = Vector3.one * (k <= 0f || k >= 1f ? 0f : 0.2f - 0.06f * i);
+                }
+                yield return null;
+            }
+            foreach (var b in beads) Done(b);
+            MendBurst(body, lighthouse);
+        }
+
+        // Green pluses floating up off the building's top (inside it they'd be hidden), or round the lighthouse; a few
+        // green sparks with them.
+        private static void MendBurst(Bounds b, bool lighthouse)
+        {
+            Vector3 e = b.extents, top = new Vector3(b.center.x, b.max.y, b.center.z), at = top;
+            for (int i = 0; i < 4; i++)
+            {
+                if (lighthouse) { float a = Random.value * Mathf.PI * 2f; at = b.center + new Vector3(Mathf.Cos(a) * LighthouseRadius, Random.Range(-0.5f, 1.5f), Mathf.Sin(a) * LighthouseRadius); }
+                else at = top + new Vector3(Random.Range(-e.x, e.x) * 0.8f, Random.Range(-0.3f, 0.2f), Random.Range(-e.z, e.z) * 0.8f);
+                WeaponFx.Emit(WeaponFx.Pluses, at, 1, velocity: Vector3.up * Random.Range(1f, 1.7f));
+            }
+            WeaponFx.Emit(WeaponFx.Sparks("Green"), lighthouse ? at : top, 4, Vector3.up);
         }
 
         private IEnumerator Arc(Vector3 from, Vector3 to, Material mat, float size, float flight, float height, bool blastAtEnd, string key = null, int level = 1)
@@ -630,11 +820,31 @@ namespace HtfFortress
                 WeaponFx.Emit(WeaponFx.Rings, at + Vector3.up * (0.5f + i * 0.25f), 1, Vector3.up, color: c, size: 4f + tier * 1.4f + i * 1.2f);
                 yield return new WaitForSeconds(0.06f);
             }
-            // A short beam of the best thing's colour, so a legendary chest is visible across the island.
-            var beam = WeaponFx.Line("ChestBeam", BossVfx.Glow(c, 4f + tier), 0.8f + tier * 0.35f);
-            beam.positionCount = 2; beam.SetPosition(0, at + Vector3.up * 0.3f); beam.SetPosition(1, at + Vector3.up * (7f + tier * 2f));
-            yield return new WaitForSeconds(0.3f);
-            if (beam) Object.Destroy(beam.gameObject);
+            // A beam of the best thing's colour, so a legendary chest is visible across the island: a bright thread in a
+            // see-through shaft, narrowing as it goes up, held a moment, then drawn in slowly and fading (Owen: "光太粗了 可以
+            // 細一點點 然後收的非線性慢一點透明一點": it was 0.8-1.85 m of solid glow, gone at once after 0.3 s).
+            float w = 0.4f + tier * 0.18f, alpha = 0.55f;
+            var shaft = WeaponFx.Line("ChestBeam", BossVfx.Wash(new Color(c.r, c.g, c.b, alpha)), w);
+            var core = WeaponFx.Line("ChestBeamCore", BossVfx.Glow(c, 4f + tier), w * 0.28f);
+            foreach (var lr in new[] { shaft, core })
+            {
+                lr.positionCount = 2; lr.SetPosition(0, at + Vector3.up * 0.3f); lr.SetPosition(1, at + Vector3.up * (7f + tier * 2f));
+                lr.widthCurve = AnimationCurve.Linear(0f, 1f, 1f, 0.45f);
+            }
+            var shaftMat = shaft.sharedMaterial;
+            yield return new WaitForSeconds(0.35f);
+            const float draw = 1.1f;
+            for (float s = 0f; s < draw && shaft && core; s += Time.deltaTime)
+            {
+                float k = s / draw, smooth = k * k * (3f - 2f * k);
+                shaft.widthMultiplier = w * (1f - smooth);
+                core.widthMultiplier = w * 0.28f * (1f - k) * (1f - k);
+                shaftMat.color = new Color(c.r, c.g, c.b, alpha * (1f - k) * (1f - k));
+                yield return null;
+            }
+            Object.Destroy(shaftMat);
+            if (shaft) Object.Destroy(shaft.gameObject);
+            if (core) Object.Destroy(core.gameObject);
         }
 
         // A real flamethrower cone instead of three balls: an expanding cone mesh plus a spray of short-lived embers.

@@ -250,40 +250,261 @@ namespace HtfFortress
         public EnemyKind Kind;
         // Its second form: posing is harder, the sway quicker, the aura thicker (set by BossLooks.Dress/Recolor).
         public bool Second;
-        private readonly List<(Transform bone, Quaternion rest, Vector3 axis, float phase)> _swing = new List<(Transform, Quaternion, Vector3, float)>();
+        private readonly List<(Transform bone, Quaternion rest, Vector3 axis, float phase, float lag)> _swing = new List<(Transform, Quaternion, Vector3, float, float)>();
         private Vector3 _last;
-        private float _speed, _nextAura, _t;
+        private float _speed, _nextAura, _t, _born;
         private BossSteed _steed;
+
+        public static BossBody Of(int id) => BossFx.BodyOf(id) is Transform t && t ? t.GetComponent<BossBody>() : null;
 
         private void Start()
         {
             _last = transform.position;
+            _born = Time.time;
+            _me = GetComponent<Creature>();
+            _grounded = Kind == EnemyKind.Warden || Kind == EnemyKind.Urchin || Kind == EnemyKind.Steed || Kind == EnemyKind.Stonefish;
+            _gait = BossVoice.GaitOf(Kind);
+            _growlAt = Time.time + Random.Range(12f, 18f); // (after its entrance)
             _steed = GetComponent<BossSteed>();
             if (_steed || GetComponent<BossEye>()) return; // a body of our own over the game's: it moves itself
             int i = 0;
             foreach (var j in GetComponentsInChildren<HingeJoint>())
-                _swing.Add((j.transform, j.transform.localRotation, j.axis, i++ * 0.8f));
+                _swing.Add((j.transform, j.transform.localRotation, j.axis, i * 0.8f, Kind == EnemyKind.Urchin ? 0f : 0.5f + 0.25f * i++));
             if (_swing.Count == 0)
                 foreach (var sk in GetComponentsInChildren<SkinnedMeshRenderer>())
                     foreach (var b in sk.bones.Where(b => b && b.name.StartsWith("leg")))
-                        _swing.Add((b, b.localRotation, Vector3.forward, i++ * Mathf.PI * 0.5f));
+                        _swing.Add((b, b.localRotation, Vector3.forward, i++ * Mathf.PI * 0.5f, 0f));
         }
 
         private void LateUpdate()
         {
-            float dt = Time.deltaTime;
+            float dt = Time.deltaTime, now = Time.time;
             if (dt <= 0f) return;
-            _speed = Mathf.Lerp(_speed, (transform.position - _last).magnitude / dt, 1f - Mathf.Exp(-4f * dt));
+            Vector3 step = transform.position - _last;
             _last = transform.position;
-            _t += dt * (2f + Mathf.Min(10f, _speed * 1.2f)) * (Second ? 1.25f : 1f);
+            bool jumped = step.sqrMagnitude > 64f; // a blink, a dive under the sea: not a move
+            if (!jumped) _speed = Mathf.Lerp(_speed, step.magnitude / dt, 1f - Mathf.Exp(-4f * dt));
+            if (!Frozen) _t += dt * (2f + Mathf.Min(10f, _speed * 1.2f)) * (Second ? 1.25f : 1f);
             float amp = Mathf.Lerp(12f, 28f, Mathf.Clamp01(_speed / 6f)) * (Second ? 1.35f : 1f);
-            foreach (var (bone, rest, axis, phase) in _swing)
-                if (bone) bone.localRotation = rest * Quaternion.AngleAxis(Mathf.Sin(_t + phase) * amp, axis);
+            // Fins and tails trail its turns: swung the other way as it turns, and after it as it stops.
+            Vector3 fwd = transform.forward.Flat();
+            float yaw = fwd.sqrMagnitude > 1e-4f ? Mathf.Atan2(fwd.x, fwd.z) * Mathf.Rad2Deg : _yaw;
+            _yawRate = jumped ? 0f : Mathf.Lerp(_yawRate, Mathf.DeltaAngle(_yaw, yaw) / dt, 1f - Mathf.Exp(-10f * dt));
+            _yaw = yaw;
+            float trail = Mathf.Clamp(-_yawRate * 0.06f, -20f, 20f);
+            foreach (var (bone, rest, axis, phase, lag) in _swing)
+                if (bone) bone.localRotation = (lag > 0f && bone.parent ? Quaternion.AngleAxis(trail * lag, bone.parent.InverseTransformDirection(Vector3.up)) : Quaternion.identity) * rest * Quaternion.AngleAxis(Mathf.Sin(_t + phase) * amp, axis);
             if (Time.time >= _nextAura)
             {
                 _nextAura = Time.time + (Second ? 0.08f : 0.12f);
                 Aura();
             }
+            if (!_measured) { if (now - _born >= 0.6f) Measure(); return; }
+            Feel(Mathf.Min(dt, 0.05f), step, jumped, now);
+        }
+
+        // ---------- how it carries itself (Owen: 「要感覺王不笨重 要靈活」) ----------
+        // The network moves its root; its parts (the root's children) are posed round a pivot on top of that: squashed as
+        // it lands and stretched while it rises or drops fast (a spring: it wobbles back), leaned into its turns and its
+        // speeding up, knocked back and flashed white when it's hit, held still a beat when its move is broken. Its feet
+        // thud as it walks and it lands with a thump. Visual only, on every screen.
+        private sealed class Part { public Transform T; public Vector3 Pos, Scale, PosedPos, PosedScale; public Quaternion Rot, PosedRot; public bool Posed; }
+        private readonly List<Part> _parts = new List<Part>();
+        private Renderer[] _skin = new Renderer[0];
+        private Creature _me;
+        private bool _grounded, _measured, _flashing;
+        private Vector3 _center, _vel, _acc, _hitAxis = Vector3.right;
+        private float _half, _size = 1f, _yaw, _yawRate, _squash, _squashVel, _fall, _hitTilt, _hitVel, _hitSum, _hitAt = -9f, _flashUntil, _freezeUntil, _top, _walked;
+        private int _hp = int.MinValue;
+        private BossVoice.Gait? _gait;
+        private float _growlAt, _criedAt = -9f;
+        private static readonly Dictionary<EnemyKind, float> MinionStep = new Dictionary<EnemyKind, float>();
+        private int Id => _me ? _me.ObjectId : 0;
+        private const float W = 16f, Damp = 0.32f, HitW = 30f;
+        private static MaterialPropertyBlock _white;
+
+        public bool Frozen => Time.time < _freezeUntil;
+
+        // Its move was broken: it hangs there a beat, white, then it's knocked loose (BossFx "broken").
+        public void Stagger()
+        {
+            _freezeUntil = Time.time + 0.14f;
+            Flash(0.14f);
+            _hitVel += 420f;
+            _squashVel -= 0.12f * W;
+        }
+
+        // Its parts as they were before they were posed (the host measures the body standing: Bosses.Stand). Only what is
+        // still as we left it goes back: anything else has been moved since, and that stands.
+        public void Unpose()
+        {
+            foreach (var part in _parts)
+            {
+                if (!part.T || !part.Posed) continue;
+                var t = part.T;
+                if (t.localPosition == part.PosedPos && t.localRotation == part.PosedRot && t.localScale == part.PosedScale)
+                { t.localPosition = part.Pos; t.localRotation = part.Rot; t.localScale = part.Scale; }
+                part.Posed = false;
+            }
+        }
+
+        private void OnDisable()
+        {
+            Unpose();
+            if (_flashing) Unflash();
+        }
+
+        // Once it has stood a moment (a skinned mesh's bounds only catch up when it's drawn): its parts, its skin, and its
+        // middle and half its height in its own space.
+        private void Measure()
+        {
+            _measured = true;
+            foreach (Transform c in transform) if (!c.GetComponent<BossGear>()) _parts.Add(new Part { T = c });
+            _skin = GetComponentsInChildren<Renderer>().Where(r => !(r is ParticleSystemRenderer) && !(r is LineRenderer) && !r.forceRenderingOff && !r.GetComponentInParent<BossGear>()).ToArray();
+            var b = BossLooks.WorldBounds(transform);
+            _center = transform.InverseTransformPoint(b.center);
+            _half = b.extents.y;
+            _size = Mathf.Max(1f, b.extents.x, b.extents.z);
+            _last = transform.position;
+        }
+
+        private void Feel(float dt, Vector3 step, bool jumped, float now)
+        {
+            if (jumped) { _vel = _acc = Vector3.zero; _fall = 0f; }
+            else
+            {
+                Vector3 v = Vector3.Lerp(_vel, Vector3.ClampMagnitude(step / dt, 40f), 1f - Mathf.Exp(-12f * dt));
+                _acc = Vector3.Lerp(_acc, (v - _vel) / dt, 1f - Mathf.Exp(-8f * dt));
+                _vel = v;
+            }
+            Vector3 mid = transform.TransformPoint(_center), foot = mid + Vector3.down * _half;
+            float above = foot.y - BossFx.Ground(foot);
+            // A landing: how fast it was coming down, the moment it stops on the ground.
+            if (_vel.y < -1f) _fall = Mathf.Max(_fall, -_vel.y);
+            else if (_fall > 0f)
+            {
+                if (_fall > 3.5f && above > -1f && above < 1.2f) Land(foot, _fall);
+                _fall = 0f;
+            }
+            // How it sounds on the move (BossVoice.GaitOf): feet on the ground (splashing in the surf), fins through the water,
+            // wings through the air. A swarm of minions shares a few steps between them.
+            if (_gait is BossVoice.Gait g && !jumped && _speed > 0.5f && (!g.Feet || above < 0.6f) && (_walked += step.Flat().magnitude) >= g.Stride)
+            {
+                _walked = 0f;
+                bool minion = BossVoice.Minion(Kind), due = !minion || !MinionStep.TryGetValue(Kind, out float next) || now >= next;
+                if (minion && due) MinionStep[Kind] = now + 0.3f;
+                bool wet = g.Feet && foot.y < WaterManager.GetWaterHeight(foot) + 0.2f;
+                if (due) BossAudio.Pitched(wet ? BossVoice.Splash : g.Clip, wet ? BossVoice.Splashes : g.N, g.Feet ? foot : mid, g.Vol, g.Pitch * Random.Range(0.94f, 1.06f));
+            }
+            // Now and then, while it's quiet, a growl of its own.
+            if (now >= _growlAt)
+            {
+                BossVoice.Say(transform, transform.position, Kind, Id, BossVoice.Call.Idle, Second);
+                _growlAt = now + Random.Range(7f, 13f);
+            }
+            Hurt(now, dt);
+            if (!Frozen)
+            {
+                float stretch = Mathf.Clamp(Mathf.Abs(_vel.y) * 0.01f, 0f, 0.14f) * (Kind == EnemyKind.Eye ? 0.5f : 1f);
+                _squashVel += (W * W * (stretch - _squash) - 2f * Damp * W * _squashVel) * dt;
+                _squash = Mathf.Clamp(_squash + _squashVel * dt, -0.3f, 0.3f);
+                _hitVel += (-HitW * HitW * _hitTilt - 2f * 0.4f * HitW * _hitVel) * dt;
+                _hitTilt = Mathf.Clamp(_hitTilt + _hitVel * dt, -12f, 12f);
+            }
+            if (_flashing && now >= _flashUntil) Unflash();
+            Pose(_grounded ? foot : mid);
+        }
+
+        // Down with a thump: squashed, dust, the ground shaking under it for whoever is near.
+        private void Land(Vector3 at, float impact)
+        {
+            if (Kind == EnemyKind.Eye || Kind == EnemyKind.Voxel || Kind == EnemyKind.Glitch || Kind == EnemyKind.Kraken || Kind == EnemyKind.Squadron) return; // they hover, or float in the surf
+            _squashVel -= Mathf.Min(0.22f, impact * 0.016f) * W;
+            float k = Mathf.Clamp01((impact - 3.5f) / 12f);
+            BossAudio.Sound(impact >= 8f ? "DeadPlayerImpactHard" : "DeadPlayerImpactMedium", at, Mathf.Lerp(0.5f, 0.9f, k), AudioDistance.Long);
+            if (impact >= 14f) BossAudio.SoundRandom("LavaWhaleLanding_0", 1, 3, at, 0.7f, AudioDistance.Long);
+            BossVfx.Dust(at, _size * 0.8f, 3 + Mathf.RoundToInt(5f * k));
+            BossMoves.Shake(at, Mathf.Lerp(0.08f, 0.45f, k));
+        }
+
+        // Hit (its health, as every screen sees it, going down): a white flash and a knock back from whoever is looking,
+        // bigger for a bigger hit. A stream of small ones adds up (and fades): it flashes as it adds up, never strobing.
+        private void Hurt(float now, float dt)
+        {
+            if (!_me) return;
+            int hp = _me._hp.Value;
+            if (_hp == int.MinValue || hp >= _hp) { _hp = hp; _top = Mathf.Max(_top, hp); return; }
+            _hitSum = _hitSum * Mathf.Exp(-2.8f * dt) + (_hp - hp);
+            _hp = hp;
+            if (now - _hitAt < 0.15f || _hitSum < Mathf.Max(1f, _top * 0.005f)) return;
+            float k = Mathf.Clamp01(_hitSum / Mathf.Max(1f, _top * 0.03f));
+            _hitSum = 0f;
+            _hitAt = now;
+            Flash(0.05f + 0.04f * k);
+            if (k >= 0.8f && now - _criedAt >= 5f) { _criedAt = now; BossVoice.Say(transform, transform.position, Kind, Id, BossVoice.Call.Hurt, Second); } // a big hit: it cries out
+            var cam = GameInfo.CurCamera;
+            Vector3 away = cam ? (transform.position - cam.transform.position).Flat() : -transform.forward.Flat();
+            if (away.sqrMagnitude > 1e-4f) _hitAxis = Vector3.Cross(Vector3.up, away.normalized);
+            _hitVel += 60f + 200f * k;
+        }
+
+        private void Flash(float seconds)
+        {
+            _flashUntil = Mathf.Max(_flashUntil, Time.time + seconds);
+            if (_flashing) return;
+            if (_white == null)
+            {
+                _white = new MaterialPropertyBlock();
+                _white.SetTexture("_Colors", Texture2D.whiteTexture);
+                _white.SetFloat("_Emission", 0.6f);
+            }
+            foreach (var r in _skin) if (r) r.SetPropertyBlock(_white);
+            _flashing = true;
+        }
+        private void Unflash()
+        {
+            foreach (var r in _skin) if (r) r.SetPropertyBlock(null);
+            _flashing = false;
+        }
+
+        // Its parts squashed toward `pivot` (along the world's up, keeping its bulk) and leaned: nose down as it speeds up
+        // (up as it brakes), banked into its turns (a flyer harder), tipped back where it's hit. Worked out in the root's
+        // own space, each part from where it was before it was posed (or where something else has moved it since).
+        private void Pose(Vector3 pivot)
+        {
+            Vector3 fwd = transform.forward.Flat();
+            fwd = fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward;
+            Vector3 right = Vector3.Cross(Vector3.up, fwd);
+            float m = Kind == EnemyKind.Urchin ? 0f : Kind == EnemyKind.Eye ? 0.4f : Kind == EnemyKind.Kraken ? 0.5f : 1f;
+            bool flyer = Kind == EnemyKind.Skyfish || Kind == EnemyKind.Squadron || Kind == EnemyKind.Koi;
+            float pitch = Mathf.Clamp(Vector3.Dot(_acc, fwd) * 0.5f, -7f, 7f) * m, roll = -Mathf.Clamp(Vector3.Dot(_acc, right) * 0.6f, -10f, 10f) * m * (flyer ? 1.4f : 1f);
+            Quaternion lean = Quaternion.AngleAxis(pitch, right) * Quaternion.AngleAxis(roll, fwd) * Quaternion.AngleAxis(_hitTilt, _hitAxis);
+            Quaternion inv = Quaternion.Inverse(transform.rotation), l = inv * lean * transform.rotation;
+            Vector3 pv = transform.InverseTransformPoint(pivot), u = inv * Vector3.up;
+            float sy = 1f + _squash, sx = 1f / Mathf.Sqrt(Mathf.Max(0.5f, sy));
+            foreach (var part in _parts)
+            {
+                var t = part.T;
+                if (!t) continue;
+                if (!part.Posed || t.localPosition != part.PosedPos || t.localRotation != part.PosedRot || t.localScale != part.PosedScale)
+                { part.Pos = t.localPosition; part.Rot = t.localRotation; part.Scale = t.localScale; }
+                Vector3 d = part.Pos - pv;
+                part.PosedPos = pv + l * (sx * d + (sy - sx) * Vector3.Dot(d, u) * u);
+                part.PosedRot = l * part.Rot;
+                part.PosedScale = Vector3.Scale(part.Scale, new Vector3(Stretch(part.Rot * Vector3.right, u, sx, sy), Stretch(part.Rot * Vector3.up, u, sx, sy), Stretch(part.Rot * Vector3.forward, u, sx, sy)));
+                t.localPosition = part.PosedPos;
+                t.localRotation = part.PosedRot;
+                t.localScale = part.PosedScale;
+                part.PosedRot = t.localRotation; // (as it was stored)
+                part.Posed = true;
+            }
+        }
+
+        // How much longer a part's axis `a` gets, squashed by `sy` along `u` and `sx` across.
+        private static float Stretch(Vector3 a, Vector3 u, float sx, float sy)
+        {
+            float du = Vector3.Dot(a, u);
+            return Mathf.Sqrt(sx * sx + (sy * sy - sx * sx) * du * du);
         }
 
         private void Aura()

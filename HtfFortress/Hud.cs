@@ -50,6 +50,28 @@ namespace HtfFortress
         public static TMP_FontAsset Font => AccessTools.Field(typeof(LocalizationManager), "_defaultFontAsset")?.GetValue(
             AccessTools.Field(typeof(LocalizationManager), "_instance")?.GetValue(null)) as TMP_FontAsset;
 
+        // One-off check, once a session (Owen saw 一 drawn as a blank on a turret card, 2026-10-26: the character is found, its
+        // space kept, nothing drawn): which font serves it, where its glyph sits in which atlas, and whether there's ink there.
+        private static bool _probed;
+        internal static void ProbeGlyphs()
+        {
+            if (_probed || !Font) return;
+            _probed = true;
+            foreach (char ch in "一二隻")
+            {
+                var c = TMP_FontAssetUtilities.GetCharacterFromFontAsset(ch, Font, true, FontStyles.Normal, FontWeight.Regular, out _);
+                var fa = c?.textAsset as TMP_FontAsset;
+                if (c?.glyph == null || !fa) { BuildSystem.Log.LogInfo($"glyph {ch}: not found"); continue; }
+                var g = c.glyph; var r = g.glyphRect;
+                var tex = g.atlasIndex < fa.atlasTextures.Length ? fa.atlasTextures[g.atlasIndex] : null;
+                float ink = -1f;
+                if (tex && tex.isReadable && r.width > 0 && r.height > 0)
+                    foreach (var px in tex.GetPixels(r.x, r.y, r.width, r.height)) ink = Mathf.Max(ink, px.a);
+                BuildSystem.Log.LogInfo($"glyph {ch}: {fa.name} atlas {g.atlasIndex + 1}/{fa.atlasTextures.Length} rect {r.x},{r.y} {r.width}x{r.height} "
+                                        + $"ink {ink:0.00} size {g.metrics.width:0}x{g.metrics.height:0} {tex?.format}");
+            }
+        }
+
         private static readonly Dictionary<string, Sprite> Sprites = new Dictionary<string, Sprite>();
         public static Sprite Sprite(string name)
         {
@@ -238,6 +260,7 @@ namespace HtfFortress
         }
 
         public static Color HealthColor(float f) => f > 0.6f ? Good : f > 0.3f ? Gold : Bad;
+        public static readonly Color GuardColor = new Color(0.82f, 1f, 0.86f); // an overheal guard: white-green
 
         // "[U] upgrade" -> the key drawn as a little key cap. Only for hint strings (rarity labels use brackets too).
         private static readonly Regex KeyRx = new Regex(@"\[([^\]\[]{1,14})\]");

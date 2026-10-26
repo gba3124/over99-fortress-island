@@ -1,0 +1,12 @@
+columns: Lv1, Lv2, Lv3, Lv4, Lv5, Lv6, Lv7, Lv8, Lv9, Lv10, Lv15; rows: 3/4
+Lv1: top 1.80 m, 2316 turret tris
+Lv2: top 1.82 m, 3076 turret tris
+Lv3: top 1.84 m, 3392 turret tris
+Lv4: top 1.86 m, 3736 turret tris
+Lv5: top 1.87 m, 4308 turret tris
+Lv6: top 1.89 m, 4440 turret tris
+Lv7: top 1.91 m, 4672 turret tris
+Lv8: top 1.92 m, 5048 turret tris
+Lv9: top 1.98 m, 5928 turret tris
+Lv10: top 2.00 m, 6128 turret tris
+Lv15: top 2.05 m, 6328 turret tris

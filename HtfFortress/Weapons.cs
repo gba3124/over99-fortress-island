@@ -20,7 +20,8 @@ namespace HtfFortress
     // the absorber adds the right button and R (Weapons.RightDown...).
     public struct WeaponFire : IBroadcast { public byte Phase; public Vector3 Origin; public Vector3 Dir; }
     // Host -> everyone: one player's laser heat (0..1) and the seconds until their weapon is ready again.
-    public struct WeaponState : IBroadcast { public int PlayerId; public Gear Gear; public float Heat; public float ReadyIn; }
+    // Ammo: what's left in the magazine (GearCatalog.Magazine); Reloading: ReadyIn is a reload.
+    public struct WeaponState : IBroadcast { public int PlayerId; public Gear Gear; public float Heat; public float ReadyIn; public byte Ammo; public bool Reloading; }
     // Host -> the hook's shooter: a missed hook yanks them to where it bit (a grapple, Owen: "鉤子把自己拉過去").
     public struct HookYank : IBroadcast { public Vector3 To; }
 
@@ -196,8 +197,8 @@ namespace HtfFortress
         {
             GenericWriter<WeaponFire>.SetWrite((w, v) => { w.WriteByte(v.Phase); w.WriteVector3(v.Origin); w.WriteVector3(v.Dir); });
             GenericReader<WeaponFire>.SetRead(r => new WeaponFire { Phase = r.ReadByte(), Origin = r.ReadVector3(), Dir = r.ReadVector3() });
-            GenericWriter<WeaponState>.SetWrite((w, v) => { w.WriteInt32(v.PlayerId); w.WriteByte((byte)v.Gear); w.WriteSingle(v.Heat); w.WriteSingle(v.ReadyIn); });
-            GenericReader<WeaponState>.SetRead(r => new WeaponState { PlayerId = r.ReadInt32(), Gear = (Gear)r.ReadByte(), Heat = r.ReadSingle(), ReadyIn = r.ReadSingle() });
+            GenericWriter<WeaponState>.SetWrite((w, v) => { w.WriteInt32(v.PlayerId); w.WriteByte((byte)v.Gear); w.WriteSingle(v.Heat); w.WriteSingle(v.ReadyIn); w.WriteByte(v.Ammo); w.WriteBoolean(v.Reloading); });
+            GenericReader<WeaponState>.SetRead(r => new WeaponState { PlayerId = r.ReadInt32(), Gear = (Gear)r.ReadByte(), Heat = r.ReadSingle(), ReadyIn = r.ReadSingle(), Ammo = r.ReadByte(), Reloading = r.ReadBoolean() });
             GenericWriter<HookYank>.SetWrite((w, v) => w.WriteVector3(v.To));
             GenericReader<HookYank>.SetRead(r => new HookYank { To = r.ReadVector3() });
         }
@@ -232,7 +233,7 @@ namespace HtfFortress
         // host
         // =====================================================================================================
 
-        private class Gun { public Gear Gear; public float ReadyAt, Heat, LastTick = -10f, RampStart, NextState, NumberDmg, NextNumber, Rounds; public bool Overheated; }
+        private class Gun { public Gear Gear; public float ReadyAt, Heat, LastTick = -10f, RampStart, NextState, NumberDmg, NextNumber, Rounds; public bool Overheated, Reloading; public int Loaded = -1; } // Loaded: -1 full
         private class Cloud { public Vector3 At; public float Radius, Until, Dps; public int Owner; public bool Legend; }
         private class Poison { public int Stacks, Owner; public float Until, NextStack, Dps, NextNumber; public bool Legend; }
         private class Vortex { public Vector3 At; public float Until, Dps, NextNumber, NumberDmg; public int Owner; public bool Legend; }
@@ -395,7 +396,7 @@ namespace HtfFortress
             Vector3 eye = who.CamObject ? who.CamObject.position : who.Transform.position + Vector3.up * 1.6f; // a friend's camera as the host sees it
             if ((o - eye).sqrMagnitude > 3f * 3f) o = eye; // shots start at the shooter
             if (g == Gear.Absorber) { AbsorberFire(who, f.Phase, o, d, r); return; }
-            if (f.Phase <= 2) FireAs(who, f.Phase, o, d, g, r);
+            if (f.Phase <= 3) FireAs(who, f.Phase, o, d, g, r); // 3: R, reload
         }
 
         // `who` fires `g` at rarity `r` (in hand, or copied by their absorber), with their own mods on that kind: power in the
@@ -411,6 +412,18 @@ namespace HtfFortress
             float reach = WeaponMods.ReachMult(vault.ModOf(key, g, WeaponMods.Reach));
             bool legend = r == Rarity.Legendary;
             var gun = GunOf(who, g);
+            int mag = GearCatalog.Magazine(g);
+            if (phase == 3)
+            {
+                // R: a magazine that isn't full is reloaded (the whole reload, as an empty one).
+                if (mag > 0 && gun.Loaded > 0 && gun.Loaded < mag && Time.time >= gun.ReadyAt)
+                {
+                    gun.ReadyAt = Time.time + GearCatalog.ReloadTime(g, GearCatalog.Cooldown(g, r)) * WeaponMods.TimeMult(rate);
+                    gun.Loaded = mag; gun.Reloading = true;
+                    SendState(who, gun);
+                }
+                return;
+            }
             if (g == Gear.Laser) { LaserTick(who, gun, phase, o, d, v, legend, r, rate, tr, reach); return; }
             if (g == Gear.WaterCannon) { WaterTick(who, gun, phase, o, d, v, legend, r, rate, tr, reach); return; }
             if (g == Gear.Gatling) { GatlingTick(who, gun, phase, o, d, v, legend, r, rate, tr, reach); return; }
@@ -418,6 +431,14 @@ namespace HtfFortress
             if (WeaponMods.Lingers(g)) v /= WeaponMods.TimeMult(rate); // fire rate: a cloud or a jellyfish stings faster (more of them wouldn't add: stacks and overlaps cap out)
             float cd = Fire(g, who, o, d, v, legend, r, WeaponMods.TraitAdd(g, tr), reach);
             if (cd < 0f) return;
+            gun.Reloading = false;
+            if (mag > 0)
+            {
+                // A magazine: twice as fast inside it, then the reload (GearCatalog.Magazine: the same damage a second).
+                if (gun.Loaded <= 0) gun.Loaded = mag;
+                if (--gun.Loaded > 0) cd *= GearCatalog.InMagazine;
+                else { cd = GearCatalog.ReloadTime(g, cd); gun.Loaded = mag; gun.Reloading = true; }
+            }
             gun.ReadyAt = Time.time + cd * WeaponMods.TimeMult(rate);
             SendState(who, gun);
             AutoTest.Count("weapon_" + g);
@@ -426,7 +447,8 @@ namespace HtfFortress
         private static bool Finite(Vector3 v) => !float.IsNaN(v.x + v.y + v.z) && !float.IsInfinity(v.x + v.y + v.z);
 
         private static void SendState(Player who, Gun gun) =>
-            InstanceFinder.ServerManager.Broadcast(who.Owner, new WeaponState { PlayerId = who.ObjectId, Gear = gun.Gear, Heat = gun.Heat, ReadyIn = Mathf.Max(0f, gun.ReadyAt - Time.time) });
+            InstanceFinder.ServerManager.Broadcast(who.Owner, new WeaponState { PlayerId = who.ObjectId, Gear = gun.Gear, Heat = gun.Heat, ReadyIn = Mathf.Max(0f, gun.ReadyAt - Time.time),
+                Ammo = (byte)Mathf.Clamp(gun.Reloading ? 0 : gun.Loaded < 0 ? GearCatalog.Magazine(gun.Gear) : gun.Loaded, 0, 255), Reloading = gun.Reloading });
 
         // A shot that isn't the laser. `trait`: what the shooter's trait mod adds (WeaponMods.TraitStep says to what); `reach`:
         // their range mod, times RangeOf. Returns how long until the weapon is ready again (negative: it didn't go off).
@@ -832,13 +854,46 @@ namespace HtfFortress
                 Vector3 d = Body(c) - at;
                 float fall = 1f - Mathf.Clamp01(Mathf.Sqrt(d.sqrMagnitude) / Mathf.Max(0.01f, radius));
                 Vector3 dir = d.Flat().sqrMagnitude > 0.01f ? d.Flat().normalized : Vector3.forward;
-                // The blast's knockback grows with its modded radius (Owen: the shove was stuck at the old distance).
+                // The blast's knockback grows with its modded radius (Owen: the shove was stuck at the old distance). Blown up into
+                // the air, 1.5 m at the rim to 4 m at the middle, as dynamite throws things (Owen: "火箭槍要有物理效果 跟炸藥一樣"):
+                // it only slid them along the ground.
                 float knock = Mathf.Clamp(radius / RocketRadius, 1f, 6f);
-                Siege.Instance.ServerPush(c, dir * (2f + 4f * fall) * knock * Perks.Knockback); // 2 m at the rim, 6 m at the middle, times radius and soul knockback
+                Siege.Instance.ServerPush(c, dir * (2f + 4f * fall) * knock * Perks.Knockback, 1.5f + 2.5f * fall); // 2 m at the rim, 6 m at the middle, times radius and soul knockback
                 Siege.Instance.Slow(c, 0.3f * fall, 0.5f);
             }
+            Blow(at, radius);
             Fx.Send(FxKind.Blast, at, at, 0, Mathf.RoundToInt(radius * 100f)); // the explosion grows with the modded radius
             AutoTest.Count("rocket_blast");
+        }
+
+        // Everything else in the blast flies off it as from the game's own dynamite (ExplosionManager.ServerExplode, with its
+        // ItemForce / BoatForce): the bodies and things lying about, the game's debris, boats. Live fish are thrown above (the
+        // host steers those), a lit stick is left be, and so are the players (a friend's every rocket would knock you down).
+        private static readonly HashSet<Item> _blown = new HashSet<Item>();
+        private static float _itemForce = -1f, _boatForce;
+        private static void Blow(Vector3 at, float radius)
+        {
+            if (_itemForce < 0f)
+            {
+                var info = Loot.ShopItems.Select(id => GameInfo.GetSpawnable(id) as Explosive).FirstOrDefault(e => e)?.GetExplosionInfo();
+                _itemForce = info != null ? info.ItemForce : 1000f;
+                _boatForce = info != null ? info.BoatForce : 1000f;
+            }
+            _blown.Clear();
+            foreach (var col in Physics.OverlapSphere(at, radius, GameInfo.AffectedByExplosionLayer))
+            {
+                if (RigidbodyManager.Debris.TryGetValue(col, out var debris) && debris) debris.AddExplosionForce(_itemForce, at + Vector3.down, radius);
+                if (BoatManager.ColToBoat.TryGetValue(col, out var boat) && boat && boat.HiddenPhysicsRig) boat.HiddenPhysicsRig.AddExplosionForce(_boatForce, at, radius, 2f);
+                var it = ItemManager.Get(col);
+                if (!it || !_blown.Add(it) || !it.Rig || !it.RigidbodySync || it.Holder || it.IsInInventory || it.Explosive || Swallow.IsGoing(it)
+                    || (it.Creature && !it.Creature.IsDead) || it.Rig.linearVelocity.sqrMagnitude > 25f * 25f) continue;
+                it.RigidbodySync.StartSimulateLocal();
+                Vector3 f = it.transform.position - at;
+                f.y += 2f;
+                it.Rig.AddForce(f.normalized * _itemForce);
+                it.WasInteractedWith();
+            }
+            AutoTest.Count("rocket_blew", _blown.Count);
         }
 
         // The pufferfish bursts: spines into everything round it, and two stacks of poison (which then works like the gas's).
@@ -1312,8 +1367,9 @@ namespace HtfFortress
                 UpdateNetView();
                 HandleNetMouse();
             }
-            else if (armed && !GearCatalog.IsGameGun(hg)) { HandleMouse(hg == Gear.Absorber); KickHeld(); } // the game's guns shoot themselves
+            else if (armed && !GearCatalog.IsGameGun(hg)) { HandleMouse(hg == Gear.Absorber); KickHeld(); if (hg != Gear.Absorber) ReloadKey(hg); } // the game's guns shoot themselves
             else if (_wasHolding) { Send(2); _wasHolding = false; }
+            HandsTick(armed && !_drawn ? hg : (Gear?)null);
             GatlingViews(armed && hg == Gear.Gatling && _wasHolding);
             if (armed && GearCatalog.IsGameGun(hg) && inHand is Weapon gun) WeaponMods.TopUp(gun); // a fresh one: its full, bigger magazine
             DrawHud(armed ? (hg, hr) : ((Gear, Rarity)?)null);
@@ -1398,6 +1454,7 @@ namespace HtfFortress
             bool can = mouse != null && Cursor.lockState == CursorLockMode.Locked && !ChatManager.IsTyping && !BuildSystem.Building && !Hud.ModalOpen;
             if (absorber) AbsorberKeys(can);
             bool down = can && mouse.leftButton.isPressed;
+            if (down && !_wasHolding) StopInspect(); // shooting puts the gun back in front
             if (down && (!_wasHolding || Time.time >= _nextSend))
             {
                 Send(_wasHolding ? (byte)1 : (byte)0);
@@ -1439,7 +1496,7 @@ namespace HtfFortress
         }
 
         // Heat and cooldown, weapon by weapon (you can carry several).
-        private readonly Dictionary<Gear, (float heat, float readyAt, float cooldown)> _mine = new Dictionary<Gear, (float, float, float)>();
+        private readonly Dictionary<Gear, (float heat, float readyAt, float cooldown, int ammo, bool reload)> _mine = new Dictionary<Gear, (float, float, float, int, bool)>();
 
         private void OnState(WeaponState s)
         {
@@ -1447,7 +1504,96 @@ namespace HtfFortress
             _mine.TryGetValue(s.Gear, out var st);
             st.heat = s.Heat;
             if (s.ReadyIn > 0.05f) { st.readyAt = Time.time + s.ReadyIn; st.cooldown = s.ReadyIn; }
+            st.ammo = s.Ammo; st.reload = s.Reloading;
             _mine[s.Gear] = st;
+            if (s.ReadyIn > 0.05f) ReloadLater(s.Gear, s.ReadyIn, s.Reloading);
+        }
+
+        // What's left in my magazine of `g` (a full one before its first shot, and once a reload is done).
+        private int AmmoOf(Gear g) => !_mine.TryGetValue(g, out var st) || (st.reload && Time.time >= st.readyAt) ? GearCatalog.Magazine(g) : st.ammo;
+
+        // ---------- reload and inspect: the hands of the pistol rig our weapons ride on (WeaponItems.Dress) ----------
+        // The game's own reload plays, stretched over a magazine's reload or over the end of a launcher's long cooldown (done
+        // just as it's ready); its inspect on R when there's nothing to reload (Owen's list: 換彈動畫, 彈匣, R 欣賞槍). The
+        // others see both at the game's own speed.
+        private static readonly AccessTools.FieldRef<Tool, Animation> AnimOf = AccessTools.FieldRefAccess<Tool, Animation>("_anim");
+        private static readonly AccessTools.FieldRef<Weapon, AudioSequence> ReloadSounds = AccessTools.FieldRefAccess<Weapon, AudioSequence>("_reloadAudioSeq");
+        private static readonly System.Reflection.MethodInfo InspectAnim = AccessTools.Method(typeof(Tool), "PlayInspectAnim");
+        private float _reloadAt = -1f, _reloadFor, _reloadEnds;
+        private Gear _reloadGear;
+        private Weapon _reloading;
+
+        // Launchers reload in their cooldown; the whistle, the conch, the boomerang and the held streams don't.
+        private static bool ReloadsInCooldown(Gear g) => g == Gear.PoisonGas || g == Gear.Hook || g == Gear.NetLauncher || g == Gear.JellyGun
+                                                         || g == Gear.PufferBomb || g == Gear.LobsterClaw || g == Gear.Whirlpool;
+
+        private void ReloadLater(Gear g, float readyIn, bool reload)
+        {
+            if (!WeaponItems.Held(Player.LocalPlayer, out var hg, out _) || hg != g) return;
+            if (reload) { _reloadAt = Time.time; _reloadFor = readyIn; }
+            else if (ReloadsInCooldown(g) && readyIn >= 1.2f)
+            {
+                var clip = HeldWeapon() is Weapon w && AnimOf(w) is Animation a && a ? a["Reload"] : null;
+                _reloadFor = Mathf.Min(readyIn, clip ? clip.length : 1.5f);
+                _reloadAt = Time.time + readyIn - _reloadFor;
+            }
+            else return;
+            _reloadGear = g;
+        }
+
+        private static Weapon HeldWeapon() => Player.LocalPlayer && Player.LocalPlayer.Holding ? Player.LocalPlayer.Holding.HeldItem as Weapon : null;
+
+        private void HandsTick(Gear? held)
+        {
+            if (_reloading && Time.time >= _reloadEnds) EndReload();
+            if (_reloadAt < 0f || Time.time < _reloadAt) return;
+            float left = _reloadFor - (Time.time - _reloadAt);
+            _reloadAt = -1f;
+            if (held == _reloadGear && left > 0.3f) PlayReload(left);
+        }
+
+        private void PlayReload(float seconds)
+        {
+            var w = HeldWeapon();
+            var anim = w ? AnimOf(w) : null;
+            var clip = anim ? anim["Reload"] : null;
+            if (!clip || w.IsAds) return; // aiming down the sights: it reloads all the same, unseen
+            EndReload();
+            clip.speed = clip.length / seconds;
+            anim.Stop();
+            anim.Play("Reload");
+            var sounds = ReloadSounds(w);
+            if (sounds != null) AudioSequenceManager.PlayPlayerSequence(sounds, Player.LocalPlayer, w.gameObject, clip.speed);
+            try { Server.Instance.ReloadWeapon(w); } catch { }
+            _reloading = w; _reloadEnds = Time.time + seconds;
+            AutoTest.Count("weapon_reload_anim");
+        }
+
+        private void EndReload()
+        {
+            var anim = _reloading ? AnimOf(_reloading) : null;
+            if (anim && anim["Reload"] is AnimationState clip) clip.speed = 1f;
+            _reloading = null;
+        }
+
+        // R: reload a magazine that isn't full (the host decides), else turn the gun over in your hands.
+        private void ReloadKey(Gear g)
+        {
+            var kb = Keyboard.current;
+            if (kb == null || !kb.rKey.wasPressedThisFrame || ChatManager.IsTyping || Hud.ModalOpen || Cursor.lockState != CursorLockMode.Locked) return;
+            int mag = GearCatalog.Magazine(g);
+            if (mag > 0 && AmmoOf(g) < mag) { if (!_mine.TryGetValue(g, out var st) || Time.time >= st.readyAt) Send(3); return; }
+            var w = HeldWeapon();
+            var anim = w ? AnimOf(w) : null;
+            if (!anim || w.IsAds || anim.IsPlaying("Reload") || anim.IsPlaying("Inspect")) return;
+            try { InspectAnim?.Invoke(w, new object[] { true }); AutoTest.Count("weapon_inspect"); } catch { }
+        }
+
+        private void StopInspect()
+        {
+            var w = HeldWeapon();
+            var anim = w ? AnimOf(w) : null;
+            if (anim && anim.IsPlaying("Inspect")) { anim.Stop(); anim.Play("Idle"); }
         }
 
         // ---------- HUD: name, keys and a bar (laser heat, or the cooldown) while the weapon is out ----------
@@ -1455,6 +1601,7 @@ namespace HtfFortress
         private UnityEngine.UI.Image _hud, _hudPic;
         private TextMeshProUGUI _hudText;
         private Hud.Bar _hudBar;
+        private TextMeshProUGUI _hudAmmo; // a magazine: what's left in it, or that it's reloading
         private float _hudShownAt = -10f;
         private (Gear, Rarity)? _hudShownGear;
         private bool _hudCompact;
@@ -1487,6 +1634,7 @@ namespace HtfFortress
                 _hudPic = Hud.PictureSlot(_hud.transform, new Vector2(0f, 0.5f), new Vector2(10f, 0f), new Vector2(58f, 58f));
                 _hudText = Hud.Label(_hud.transform, "", 21f, new Vector2(0.5f, 1f), new Vector2(HudPic / 2f, -8f), new Vector2(1200f, 32f), TextAlignmentOptions.Top);
                 _hudBar = Hud.Bar.Make(_hud.transform, new Vector2(0.5f, 0f), new Vector2(HudPic / 2f, 12f), new Vector2(400f, 10f), Hud.Accent);
+                _hudAmmo = Hud.Label(_hud.transform, "", 16f, new Vector2(1f, 0f), new Vector2(-12f, 5f), new Vector2(110f, 24f), TextAlignmentOptions.Right, Hud.Gold, bold: true, pivot: new Vector2(1f, 0f));
             }
             _hud.gameObject.SetActive(true);
             if (_drawn) { Hud.ShowPicture(_hudPic, "GearBigNet"); NetHud(); return; }
@@ -1501,7 +1649,8 @@ namespace HtfFortress
             // Its name and keys, then what it does at this rarity (with your mods), and a legendary's special.
             var vault = Loot.Instance ? Loot.Instance.ClientVault : null;
             string banner = null;
-            string text = Hud.Keys($"<color=#{GearCatalog.Hex(r)}><b>{GearCatalog.Name(g)}</b></color>　{L10n.T(g == Gear.Absorber ? "absorberKeys" : "weaponKeys")}")
+            string keys = g == Gear.Absorber ? "absorberKeys" : GearCatalog.IsGameGun(g) ? "weaponKeysGun" : GearCatalog.Magazine(g) > 0 ? "weaponKeysMag" : "weaponKeys";
+            string text = Hud.Keys($"<color=#{GearCatalog.Hex(r)}><b>{GearCatalog.Name(g)}</b></color>　{L10n.T(keys)}")
                           + $"\n<size=78%><color=#c9d1db>{(g == Gear.Absorber && vault != null ? AbsorberLines(r, out banner) : vault != null ? vault.EffectFor(Loot.MyKey, g, r) : GearCatalog.Effect(g, r))}</color></size>"
                           + (vault != null && WeaponMods.Summary(vault, Loot.MyKey, g) is string mods && mods.Length > 0 ? $"\n<size=78%><color={Hud.Hex(Hud.Gold)}>{L10n.T("modCard", mods)}</color></size>" : "")
                           + (r == Rarity.Legendary ? $"\n<size=78%><color=#{GearCatalog.Hex(r)}>★ {L10n.T("gearLegend" + g)}</color></size>" : "");
@@ -1551,7 +1700,17 @@ namespace HtfFortress
                 bool hot = left > 0f;
                 _hudBar.Set(hot ? 1f : st.heat, hot ? Hud.Bad : Color.Lerp(Hud.Good, Hud.Gold, st.heat));
             }
-            else _hudBar.Set(left > 0f ? 1f - left / Mathf.Max(0.1f, st.cooldown) : 1f, left > 0f ? Hud.Accent : Hud.Good);
+            else _hudBar.Set(left > 0f ? 1f - left / Mathf.Max(0.1f, st.cooldown) : 1f, left > 0f ? (st.reload ? Hud.Gold : Hud.Accent) : Hud.Good);
+            // A magazine: the bar steps aside for what's left in it.
+            int mag = GearCatalog.Magazine(g);
+            _hudBar.Back.rectTransform.sizeDelta = new Vector2(mag > 0 ? 320f : 400f, 10f);
+            _hudBar.Back.rectTransform.anchoredPosition = new Vector2(HudPic / 2f - (mag > 0 ? 40f : 0f), 12f);
+            _hudAmmo.gameObject.SetActive(mag > 0);
+            if (mag > 0)
+            {
+                string ammo = st.reload && left > 0f ? L10n.T("weaponReloading") : AmmoOf(g) + " / " + mag;
+                if (_hudAmmo.text != ammo) _hudAmmo.text = ammo;
+            }
         }
 
         // ---------- effects (every client) ----------
@@ -1654,7 +1813,7 @@ namespace HtfFortress
                     if (e.PieceId == 0) break; // still spinning up
                     Vector3 aim = e.To - from;
                     StartCoroutine(GatlingVolley(from, e.To, e.PieceId));
-                    if (Time.time >= _nextGatlingSound) { _nextGatlingSound = Time.time + 0.07f; Fx.SoundRandom("SMGFireOutside_V", 1, 4, from, 0.5f); }
+                    if (Time.time >= _nextGatlingSound) { _nextGatlingSound = Time.time + 0.07f; Fx.Rapid("SMGFireOutside_V", 1, 4, from, 0.5f); }
                     WeaponFx.Game("PistolFire", from, aim.normalized);
                     WeaponFx.Emit(WeaponFx.Sparks("Gold"), e.To, Mathf.Min(e.PieceId, 8), -aim.normalized + Vector3.up * 0.5f);
                     break;

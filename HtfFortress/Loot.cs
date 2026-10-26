@@ -980,9 +980,13 @@ namespace HtfFortress
         }
 
         // Host: the record lives in the save's vault, so test saves and practice rounds don't touch the real one.
-        // Souls: every ten waves cleared past 99, on the way to a new record. Paid back at the keeper to skip waves (small).
-        // The keeper's permanent tree: each level costs 15% more; effects multiply (see VaultData.DamageMult etc).
-        public static int SoulUpgradeCost(int kind, int level) => Mathf.RoundToInt(new[] { 10, 5, 5, 8, 8, 12, 8, 12, 12 }[kind] * Mathf.Pow(1.15f, Mathf.Max(0, level)));
+        // Souls: every ten waves of a new record (SoulReward), and every run that ends for real a soul for each four waves it
+        // held (RunSouls; without it a save stops gaining at its first wall). Spent on the keeper's permanent tree: each level
+        // costs 15% more (crit a flat 2), effects multiply (see VaultData.DamageMult etc).
+        public static int SoulUpgradeCost(int kind, int level) => kind == 1 ? 2 : Mathf.RoundToInt(new[] { 10, 5, 5, 8, 8, 12, 8, 12, 12 }[kind] * Mathf.Pow(1.15f, Mathf.Max(0, level)));
+        // The lines that stop: crit at 100%, the discount at 90% off.
+        public static int SoulMaxLevel(int kind) => kind == 1 ? 50 : kind == 5 ? 22 : int.MaxValue;
+        public static int RunSouls(int cleared) => Mathf.Max(0, cleared) / 4;
         // What one soul line is giving right now, for the keeper's rows (no hidden maths: every line says its current value).
         public static string SoulNow(int kind, int lvl)
         {
@@ -994,7 +998,7 @@ namespace HtfFortress
                 case 2: return "+" + (10 * lvl) + "%";
                 case 3: return "×" + Mathf.Pow(1.15f, lvl).ToString("0.00");
                 case 4: return "×" + Mathf.Pow(1.15f, lvl).ToString("0.00");
-                case 5: return "-" + (10 * lvl) + "%";
+                case 5: return "-" + pct(1f - VaultData.DiscountAt(lvl)) + "%";
                 case 6: return "×" + Mathf.Pow(1.10f, lvl).ToString("0.00");
                 case 7: return "+" + (25 * lvl) + "%";
                 default: return "+" + (10 * lvl) + "%";
@@ -1011,12 +1015,13 @@ namespace HtfFortress
             EnsureLoaded();
             if (kind < 0 || kind > 8) return false;
             int lvl = SoulLevel(Vault, kind), cost = SoulUpgradeCost(kind, lvl);
-            if (Vault.Souls < cost) return false;
+            if (Vault.Souls < cost || lvl >= SoulMaxLevel(kind)) return false;
             Vault.Souls -= cost;
+            Vault.SoulsSpent += cost;
             switch (kind)
             {
                 case 0: Vault.SoulDmg++; break;
-                case 1: Vault.SoulCrit = Mathf.Min(50, Vault.SoulCrit + 1); break; // +2% a level, up to 100%
+                case 1: Vault.SoulCrit++; break; // +2% a level, up to 100%
                 case 2: Vault.SoulCoins++; break;
                 case 3: Vault.SoulScales++; break;
                 case 4: Vault.SoulCore++; break;
@@ -1034,6 +1039,25 @@ namespace HtfFortress
             if (wave <= 0) return 0;
             if (wave >= 100) return Mathf.RoundToInt(100f * Mathf.Pow(1.15f, (wave - 100) / 10f)); // the OVER 99 payout
             return Mathf.Max(1, (wave / 10) * 5); // every earlier 10-wave record: 5, 10, ... 45
+        }
+        // The keeper's reset: the whole tree's souls back. Between runs only, or the discount could be worn for the build and
+        // swapped for damage before the fight.
+        public static bool CanResetTree => !(FortressPlugin.Instance && FortressPlugin.Instance.Running);
+        public int ServerResetTree()
+        {
+            if (!InstanceFinder.IsServerStarted || !CanResetTree) return 0;
+            EnsureLoaded();
+            int back = Vault.ResetTree();
+            SaveVault();
+            BuildSystem.Log.LogInfo($"keeper tree reset: +{back} souls (have {Vault.Souls})");
+            AutoTest.Count("soul_reset");
+            return back;
+        }
+        public void ServerAddSouls(int n)
+        {
+            EnsureLoaded();
+            Vault.Souls += n;
+            SaveVault();
         }
         public bool ServerRecord(int waves)
         {
@@ -1055,6 +1079,15 @@ namespace HtfFortress
             EnsureLoaded();
             Vault.Wins.Add((System.DateTime.Now.ToString("yyyy-MM-dd"), team));
             SaveVault();
+        }
+
+        // Test menu: back to a new save's vault, this one copied to fortress-backups first (no copy, no wipe).
+        public bool ServerResetVault()
+        {
+            EnsureLoaded();
+            if (!Snapshot("reset")) return false;
+            ServerWipeVaultForTest();
+            return true;
         }
 
         // Auto-test: start from an empty vault.

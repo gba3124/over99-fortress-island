@@ -55,6 +55,11 @@ gatestone = mat("IslGateStone", (0.5, 0.49, 0.46), force=True)  # ground faces o
 cord = mat("IslCord", (0.66, 0.56, 0.4), force=True)
 sanddrift = mat("IslSandDrift", (0.76, 0.66, 0.47), force=True)  # the sand and wet-sand tones again, for mounds (closed shapes:
 wetdrift = mat("IslWetDrift", (0.6, 0.52, 0.38), force=True)     # tests/Headless wants the ground materials on the open ground sheet only)
+# The plaza's warmer flagstones and its compass rose's dark points; the old gate's ivy (dark, on the walls) and rusted iron.
+flagC = mat("IslFlagC", (0.63, 0.57, 0.48), force=True)
+roseD = mat("IslRoseDark", (0.37, 0.38, 0.41), force=True)
+ivy = mat("IslIvy", (0.22, 0.36, 0.17), force=True)
+rust = mat("IslRust", (0.44, 0.28, 0.19), force=True)
 # The wreck's own materials (its own OBJ and collider, see shipwreck()).
 wwood = mat("WreckWood", (0.47, 0.33, 0.21), force=True)
 wdark = mat("WreckDark", (0.27, 0.17, 0.11), force=True)
@@ -126,13 +131,17 @@ VILLAGE = [(-8.0, -17.0, 3.7), (5.5, -16.8, 2.8), (6.2, -10.8, 3.2), (0.5, -18.5
 VILLAGE_PATHS = [(-1.0, -17.0, -6.0, -17.0), (1.0, -16.8, 3.8, -16.8), (1.0, -10.8, 4.0, -10.8)]
 
 
-def near_village_path(x, z, width=0.85):
+def village_d(x, z):  # distance to the nearest footpath's centre line
+    best = 99.0
     for x0, z0, x1, z1 in VILLAGE_PATHS:
         dx, dz = x1 - x0, z1 - z0
         t = max(0.0, min(1.0, ((x - x0) * dx + (z - z0) * dz) / (dx * dx + dz * dz)))
-        if math.hypot(x - (x0 + dx * t), z - (z0 + dz * t)) < width:
-            return True
-    return False
+        best = min(best, math.hypot(x - (x0 + dx * t), z - (z0 + dz * t)))
+    return best
+
+
+def near_village_path(x, z, width=0.85):
+    return village_d(x, z) < width
 
 
 def village_flat(x, z):
@@ -163,32 +172,64 @@ def height(x, z):
     return max(-4.0, y + n * 0.4 * max(0.0, 1.0 - (r - 19.5) / 6.0))
 
 
-def ground_mat(x, z, y):
-    r = math.hypot(x, z)
-    if r < 6.0:
-        return grout  # under the flagstones (the plaza paving below)
+# The ground's colours: each a field that is negative where it applies, tried in order (the first that applies wins).
+def jit(x, z):  # the edges wander, no straight cut
+    return noise.noise(Vector((x * 0.45, z * 0.45, 9.0))) * 0.6
+
+
+def lane(x, z):
+    return lane_d(x, z, math.hypot(x, z))
+
+
+def beach_w(x, z):
+    return 1.4 + (math.hypot(x, z) - 19.5) * 0.05
+
+
+def f_gate(x, z, y):  # the gate's threshold, paved
     along, across = gate_frame(x, z)
-    if abs(along) < 1.5 and abs(across) < 3.2:
-        return gatestone  # the gate's threshold, paved
-    d = lane_d(x, z, r)
-    j = noise.noise(Vector((x * 0.45, z * 0.45, 9.0))) * 0.6  # the edges wander, no straight cut
-    if r < 19.5:
-        if d < 0.55:
-            return pathwet
-        if d < 1.5 + j * 0.4 or near_village_path(x, z):
-            return path
-        if d < 2.2 + j or near_village_path(x, z, 1.35):
-            return pathedge
-        return grass2 if noise.noise(Vector((x * 0.15, z * 0.15, 5.0))) > 0.25 else grass
-    w = 1.4 + (r - 19.5) * 0.05
-    if r < 26.5:
-        if d < 0.5:
-            return pathwet
-        if d < w + j * 0.4:
-            return path
-        if d < w + 0.8 + j:
-            return wet
-    return wet if -1.6 < y < -0.6 else sand
+    return max(abs(along) - 1.5, abs(across) - 3.2)
+
+
+def f_rut(x, z, y):  # a road's trodden middle
+    return lane(x, z) - 0.55
+
+
+def f_road(x, z, y):
+    return min(lane(x, z) - 1.5 - jit(x, z) * 0.4, village_d(x, z) - 0.85)
+
+
+def f_dust(x, z, y):  # dust where a road meets the grass
+    return min(lane(x, z) - 2.2 - jit(x, z), village_d(x, z) - 1.35)
+
+
+def f_grass2(x, z, y):
+    return 0.25 - noise.noise(Vector((x * 0.15, z * 0.15, 5.0)))
+
+
+def f_beach_rut(x, z, y):
+    return lane(x, z) - 0.5
+
+
+def f_beach_road(x, z, y):
+    return lane(x, z) - beach_w(x, z) - jit(x, z) * 0.4
+
+
+def f_beach_damp(x, z, y):  # damp sand either side of a road on the beach
+    return lane(x, z) - beach_w(x, z) - 0.8 - jit(x, z)
+
+
+def f_tide(x, z, y):  # wet sand by the waterline
+    return max(-1.6 - y, y + 0.6)
+
+
+def ground_layers(r_out):  # for the ring of faces out to r_out: [(field, material)] and the material left over
+    if r_out <= 6.0:
+        return [], grout  # under the flagstones (the plaza paving below)
+    if r_out <= 19.5:
+        return [(f_gate, gatestone), (f_rut, pathwet), (f_road, path), (f_dust, pathedge), (f_grass2, grass2)], grass
+    if r_out <= 26.5:
+        return [(f_gate, gatestone), (f_beach_rut, pathwet), (f_beach_road, path), (f_beach_damp, wet), (f_tide, wet)], sand
+    return [(f_gate, gatestone), (f_tide, wet)], sand
 
 
 island = Builder("FortressIsland", MATS)
@@ -196,30 +237,121 @@ bm = island.bm
 KEEP = bm.faces.layers.int.new("keep")  # the ground sheet: its faces are wound to face up, and stay that way
 RINGS = [0.0, 0.8, 1.6, 2.5, 3.5, 4.5, 5.5, 6.0] + [6.0 + 0.9 * i for i in range(1, 16)] + [19.5 + 1.0 * i for i in range(1, 12)] + [31.0 + 2.0 * i for i in range(1, 8)]
 SEG = 144
+# Each grid face is cut where those fields cross zero (found on its edges by bisection), so a road's edge runs smooth instead
+# of stepping cell by cell (Owen: 「土路顆粒感還是有點重」). A cut point sits on the edge it cuts, at that edge's own height, so
+# the ground keeps its shape; a point on an edge two faces share is made once and used by both.
+P = []  # points (x, z, y), game coordinates
+ON = {}  # point -> (grid edge (a, b) with a < b, how far along it) for the points cut into the grid's edges
+EDGE_PTS = {}  # grid edge -> the points cut into it
+CUT, FV = {}, {}
+
+
+def pt(x, z, y):
+    P.append((x, z, y))
+    return len(P) - 1
+
+
+def on_edge(p, q):  # (grid edge, p's and q's places along it) when the segment p-q runs along one, else None
+    ep, eq = ON.get(p), ON.get(q)
+    if ep is None and eq is None:  # two grid points next to each other on a face
+        return (min(p, q), max(p, q)), float(p > q), float(q > p)
+    if ep is None:
+        return (eq[0], float(p == eq[0][1]), eq[1]) if p in eq[0] else None
+    if eq is None:
+        return (ep[0], ep[1], float(q == ep[0][1])) if q in ep[0] else None
+    return (ep[0], ep[1], eq[1]) if ep[0] == eq[0] else None
+
+
+def val(p, f):
+    if (p, f) not in FV:
+        FV[p, f] = f(*P[p])
+    return FV[p, f]
+
+
+def cut(p, q, f):  # the point between p and q where field f changes sign
+    a, b = min(p, q), max(p, q)
+    if (a, b, f) not in CUT:
+        (xa, za, ya), (xb, zb, yb) = P[a], P[b]
+        at = lambda s: (xa + (xb - xa) * s, za + (zb - za) * s, ya + (yb - ya) * s)
+        lo, hi, ina = 0.0, 1.0, val(a, f) < 0
+        for _ in range(14):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if (f(*at(mid)) < 0) == ina else (lo, mid)
+        s = (lo + hi) / 2
+        c = pt(*at(s))
+        e = on_edge(a, b)
+        if e:
+            ON[c] = (e[0], e[1] + (e[2] - e[1]) * s)
+            EDGE_PTS.setdefault(e[0], []).append(c)
+        CUT[a, b, f] = c
+    return CUT[a, b, f]
+
+
+def split(poly, f):  # a convex polygon's parts inside and outside field f (either may be None)
+    ins = [val(p, f) < 0 for p in poly]
+    if all(ins):
+        return poly, None
+    if not any(ins):
+        return None, poly
+    if sum(ins[i] != ins[i - 1] for i in range(len(poly))) > 2:  # crossed twice (a saddle): whole, by its middle
+        x, z, y = (sum(P[p][n] for p in poly) / len(poly) for n in range(3))
+        return (poly, None) if f(x, z, y) < 0 else (None, poly)
+    inside, outside = [], []
+    for i, p in enumerate(poly):
+        (inside if ins[i] else outside).append(p)
+        if ins[i] != ins[(i + 1) % len(poly)]:
+            c = cut(p, poly[(i + 1) % len(poly)], f)
+            inside.append(c)
+            outside.append(c)
+    return inside, outside
+
+
 grid = []
 for r in RINGS:
     row = []
     for i in range(SEG):
         a = i * TAU / SEG
         x, z = r * math.cos(a), r * math.sin(a)
-        y = height(x, z)
-        row.append(bm.verts.new(G(x, y, z)))
+        row.append(pt(x, z, height(x, z)))
         if r == 0.0:
             break
     grid.append(row)
+pieces = []
 for j in range(1, len(grid)):
     A, B = grid[j - 1], grid[j]
+    layers, rest = ground_layers(RINGS[j])
     for i in range(SEG):
         k = (i + 1) % SEG
-        if len(A) == 1:
-            vs = (A[0], B[i], B[k])
-        else:
-            vs = (A[i], B[i], B[k], A[k])
-        f = bm.faces.new(vs)  # inner, outer, outer next, inner next: counter-clockwise from above, so it faces up
+        todo = [[A[0], B[i], B[k]] if len(A) == 1 else [A[i], B[i], B[k], A[k]]]  # inner, outer, outer next, inner next: counter-clockwise from above, so it faces up
+        for f, m in layers:
+            left = []
+            for poly in todo:
+                inside, outside = split(poly, f)
+                if inside:
+                    pieces.append((inside, m))
+                if outside:
+                    left.append(outside)
+            todo = left
+        pieces += [(poly, rest) for poly in todo]
+V = [bm.verts.new(G(x, y, z)) for x, z, y in P]
+for poly, m in pieces:
+    full = []  # with the points the face across an edge cut into it (where the two use different fields): no T-junctions
+    for i, p in enumerate(poly):
+        full.append(p)
+        e = on_edge(p, poly[(i + 1) % len(poly)])
+        if e:
+            E, t0, t1 = e
+            full += sorted((c for c in EDGE_PTS.get(E, ()) if min(t0, t1) < ON[c][1] < max(t0, t1)), key=lambda c: ON[c][1], reverse=t1 < t0)
+    if len(full) == len(poly):
+        faces = [[V[p] for p in full]]
+    else:  # points in a row along an edge: fanned from the middle, so triangulating can't leave flat slivers facing anywhere
+        x, z, y = (sum(P[p][n] for p in full) / len(full) for n in range(3))
+        mid = bm.verts.new(G(x, y, z))
+        faces = [[mid, V[full[i]], V[full[(i + 1) % len(full)]]] for i in range(len(full))]
+    for vs in faces:
+        f = bm.faces.new(vs)
         f[KEEP] = 1
-        c = sum((v.co for v in vs), Vector()) / len(vs)
-        gx, gz, gy = -c.x, -c.y, c.z
-        f.material_index = MATS.index(ground_mat(gx, gz, gy))
+        f.material_index = MATS.index(m)
 
 # ---------- rocks: cliffs between the beaches, layered, grassy tops; sea stacks offshore ----------
 def rock_blob(cx, cz, w, h, d, yaw, base=None):
@@ -437,13 +569,103 @@ for r, off, size in ((22.4, 0.6, 1.9), (25.4, -1.0, 2.2), (23.4, 4.6, 1.3), (26.
         else:
             island.cone(0.09, 0.0, 0.12, G(sx, sy + 0.05, sz), shell, segs=6)
 
-# ---------- the south-east beach: the old gate the lane runs through: two pillars footed in the slope, a ring arch of
-# voussoirs broken short of the right pillar, a ruined wall running from each pillar toward the cliffs, a paved threshold,
-# the fallen stones beside the pillars (off the lane), flagstones lost down the lane ----------
+MATS += [flagC, roseD, ivy, rust]  # the island's own (the wreck, built above, keeps its list and its .mtl)
+
+
+# ---------- stonework, for the old gate and the plaza paving below: flat stones cut to an outline, dressed blocks, wedges, leaves ----------
+def area(poly):  # of an outline (game x, z): > 0 when it runs counter-clockwise seen from above
+    return sum(poly[i - 1][0] * poly[i][1] - poly[i][0] * poly[i - 1][1] for i in range(len(poly))) / 2.0
+
+
+def inset(poly, d):  # the outline moved in by d (each corner along its bisector, so both its edges move d)
+    s = 1.0 if area(poly) > 0 else -1.0
+    out = []
+    for i, (x1, z1) in enumerate(poly):
+        (x0, z0), (x2, z2) = poly[i - 1], poly[(i + 1) % len(poly)]
+        a, b = Vector((x1 - x0, z1 - z0)).normalized(), Vector((x2 - x1, z2 - z1)).normalized()
+        na, nb = Vector((-a.y, a.x)) * s, Vector((-b.y, b.x)) * s
+        k = d / max(0.35, 1.0 + na.dot(nb))
+        out.append((x1 + (na.x + nb.x) * k, z1 + (na.y + nb.y) * k))
+    return out
+
+
+def slab(poly, top, m, bev=0.02, base=None):
+    # A flat stone cut to an outline (game x, z): up from `base` (under the ground) to `top` (a height, or a function of x, z),
+    # its top edges chamfered: in by bev, down by 0.6 bev (half that on a sliver too small for it, none on a smaller one).
+    tf = top if callable(top) else (lambda x, z: top)
+    a, inner, b = area(poly), poly, 0.0
+    for bb in (bev, bev * 0.5):
+        q = inset(poly, bb)
+        if area(q) * a > 0 and abs(area(q)) > 0.3 * abs(a):
+            inner, b = q, bb
+            break
+    lo = base if base is not None else min(tf(x, z) for x, z in poly) - 0.08
+    rings = [[G(x, lo, z) for x, z in poly]] + ([[G(x, tf(x, z) - b * 0.6, z) for x, z in poly]] if b else [])
+    loft(island, rings + [[G(x, tf(x, z), z) for x, z in inner]], m)
+
+
+def dressed(mtx, size, m, bev=0.035, chip=None):
+    # A dressed block: a box (size along its own x, y, z; mtx puts its middle) with every edge chamfered; chip = (sx, sy, depth)
+    # knocks off its top corner on that side (x, y signs), that deep.
+    r = bmesh.ops.create_cube(bm, size=1.0, matrix=mtx @ Matrix.Diagonal((*size, 1.0)))
+    new = r["verts"]
+    if bev:
+        new = bmesh.ops.bevel(bm, geom=new + list({e for v in new for e in v.link_edges}), offset=bev, segments=1, affect="EDGES", clamp_overlap=True)["verts"]
+    for f in {f for v in new for f in v.link_faces}:
+        f.material_index = MATS.index(m)
+    if chip:
+        sx, sy, depth = chip
+        corner = mtx @ Vector((sx * size[0] / 2, sy * size[1] / 2, size[2] / 2))
+        d = mtx.to_3x3() @ Vector((-sx, -sy, -1.0)).normalized()
+        for v in new:
+            k = (v.co - corner).dot(d)
+            if k < depth:
+                v.co += d * (depth - k)
+
+
+def wedge(poly, depth, m, mtx, bev=0.03):  # a stone with outline poly (its own y, z) and depth along its x, every edge chamfered
+    inner = inset(poly, bev)
+    loft(island, [[mtx @ Vector((x, p, q)) for p, q in pts] for x, pts in ((-depth / 2, inner), (-depth / 2 + bev, poly), (depth / 2 - bev, poly), (depth / 2, inner))], m)
+
+
+def card(pts, m, facing=None, two=False):
+    # A thin flat thing (a leaf, a grass blade): one face turned to `facing` (a direction), or two back to back when it
+    # hangs in the air. Kept as wound (finish() would turn single faces any way it likes).
+    for side in ((1, -1) if two else (1,)):
+        f = bm.faces.new([bm.verts.new(p) for p in (pts if side > 0 else pts[::-1])])
+        f.normal_update()
+        if facing is not None and f.normal.dot(facing) * side < 0:
+            f.normal_flip()
+        f[KEEP] = 1
+        f.material_index = MATS.index(m)
+
+
+def leaf(at, nrm, up, s, m, two=False):  # a diamond leaf s long on a surface facing nrm (or hanging), its tip toward up
+    n = Vector(nrm).normalized()
+    u = (Vector(up) - n * Vector(up).dot(n)).normalized()
+    w, at = n.cross(u), Vector(at)
+    card([at, at + u * s * 0.4 + w * s * 0.3 + n * 0.01, at + u * s, at + u * s * 0.4 - w * s * 0.3 + n * 0.01], m, n, two)
+
+
+def moss_on(cx, cz, y, r, m=moss, k=7):  # a cushion of moss on a flat top: a lumpy outline r across, 1.5 cm thick
+    a0 = rng.uniform(0, TAU)
+    pts = [(cx + math.cos(a0 + i * TAU / k) * r * rng.uniform(0.6, 1.0), cz + math.sin(a0 + i * TAU / k) * r * rng.uniform(0.6, 1.0)) for i in range(k)]
+    slab(pts, y + 0.015, m, bev=0.01, base=y - 0.01)
+
+
+# ---------- the south-east beach: the old gate the lane runs through. Two piers of dressed stone (a footing down into the slope,
+# a weathered base, seven courses laid one block, two along or two across, a capital: band, bell with dentils, abacus) under a
+# ring of chamfered voussoirs with a stepped back and a carved keystone, broken off short of the right pier, whose abacus has
+# split (half of it down in the sand with two fallen voussoirs and rubble). Ruined walls of coursed blocks stepping down toward
+# the cliffs; iron pintles where the doors hung, a strap rusting on one and what's left of a door against the left wall; ivy up
+# the left pier, vines hanging from the arch, moss on the tops; a threshold of a long sill and worn flagstones, flagstones lost
+# down the lane. The lane through it stays clear and flush. Its own random numbers: the island's go on as the old gate left
+# them (below), so the harbour and the plants stay put. ----------
 gx, gz = GX, GZ
 gyL, gyR = height(gx - tx * 3.4, gz - tz * 3.4), height(gx + tx * 3.4, gz + tz * 3.4)
 gy = max(gyL, gyR)
 ALONG = (math.cos(ge), math.sin(ge))  # seaward along the lane
+rng, _rng = random.Random(1909), rng
 
 
 def gate_block(x, y, z, w, d, h, m, yaw, rx=0.0, ry=0.0):
@@ -454,93 +676,294 @@ def gate_pt(along, up, across):  # game coordinates of a point in the gate's fra
     return (gx + ALONG[0] * along + tx * across, up, gz + ALONG[1] * along + tz * across)
 
 
-# Two weathered pillars: a footing down into the slope (each side's own ground), seven slightly different courses, a capital.
-for side, own in ((-1, gyL), (1, gyR)):
-    px, pz = gx + tx * side * 3.4, gz + tz * side * 3.4
-    foot0, foot1 = own - 0.6, gy + 0.24
-    gate_block(px, (foot0 + foot1) / 2, pz, 1.8, 1.6, foot1 - foot0, stone, ge)
-    gate_block(px, gy + 0.30, pz, 1.55, 1.38, 0.16, dark, ge)
-    for k in range(7):
-        y = gy + 0.40 + k * 0.43
-        w = 1.34 - k * 0.055 + rng.uniform(-0.04, 0.04)
-        d = 1.26 - k * 0.05 + rng.uniform(-0.03, 0.03)
-        gate_block(px + rng.uniform(-0.035, 0.035), y, pz + rng.uniform(-0.035, 0.035),
-                   w, d, 0.40, stone if k % 3 else rock, ge + rng.uniform(-0.035, 0.035),
-                   rng.uniform(-0.012, 0.012), rng.uniform(-0.012, 0.012))
-        gate_block(px, y + 0.205, pz, w + 0.035, d + 0.035, 0.012, dark, ge)
-    gate_block(px, gy + 3.46, pz, 1.55, 1.42, 0.18, stone, ge)
-    # A few chips and a dark crack down the seaward face.
-    gate_block(px + tx * side * 0.72, gy + 1.55, pz + tz * side * 0.72, 0.035, 0.10, 1.8, dark, ge)
-    for k in range(3):
-        gate_block(px + tx * side * 0.70, gy + 0.85 + k * 0.9, pz + tz * side * 0.70, 0.06, 0.12, 0.18, dark, ge)
-
-# The arch: a ring of voussoirs lofted round the curve (one stone per segment, shade alternating), from the left pillar over
-# the top and down to a broken end short of the right pillar, which has lost its share. Rings run across the lane (tx) and up.
-RI, RO, AD = 2.9, 3.85, 0.84
-spring = gy + 3.52
+GF = Matrix(((-ALONG[0], -tx, 0, 0), (-ALONG[1], -tz, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)))  # the frame's axes (along, across, up) in Blender
+ALONG_B, ACROSS_B, UP_B = G(ALONG[0], 0, ALONG[1]), G(tx, 0, tz), Vector((0, 0, 1))
 
 
-def arch_ring(t):
-    cs, sn = math.cos(t), math.sin(t)
-    pts = []
-    for rad, s in ((RI, -AD / 2), (RO, -AD / 2), (RO, AD / 2), (RI, AD / 2)):
-        pts.append(G(*gate_pt(s, spring + rad * sn, rad * cs)))
-    return pts
+def gm(along, up, across, yaw=0.0, tip=0.0, roll=0.0):  # a place in the gate's frame: turned about up, tipped about across, rolled about along
+    return Matrix.Translation(G(*gate_pt(along, up, across))) @ GF @ Matrix.Rotation(yaw, 4, "Z") @ Matrix.Rotation(tip, 4, "Y") @ Matrix.Rotation(roll, 4, "X")
 
 
-def arch(t0, t1, n):
-    ts = [t0 + (t1 - t0) * k / n for k in range(n + 1)]
-    loft(island, [arch_ring(t) for t in ts], stone, mf=lambda i, j: rock if i % 2 else stone)
-
-
-arch(math.pi, 0.62, 13)   # from the left pillar over the crown to the break
-x, y, z = gate_pt(0.0, spring + (RI + RO) / 2 + 0.04, 0.0)
-gate_block(x, y, z, 0.9, AD + 0.2, RO - RI + 0.22, stone, ge)  # the keystone, proud of the ring
-
-# A ruined wall running from each pillar toward the cliffs: courses stepping down to rubble, footed below the sand.
-for side in (-1, 1):
-    heights = (2.1, 1.65, 1.15, 0.65)
-    for k, h in enumerate(heights):
-        across = side * (3.4 + 0.67 + 0.5 + k * 1.0)
-        bx, _, bz = gate_pt(0.0, 0.0, across)
-        base = min(height(bx + tx * d, bz + tz * d) for d in (-0.5, 0.0, 0.5)) - 0.35
-        courses = max(1, round(h / 0.42))
-        for c in range(courses):
-            y = base + 0.42 * (c + 0.5)
-            x, _, z = gate_pt(rng.uniform(-0.03, 0.03), 0.0, across + rng.uniform(-0.04, 0.04))
-            gate_block(x, y, z, 1.0 - 0.02 * c, 0.95 - 0.04 * c, 0.4, stone if (c + k) % 2 else rock, ge + rng.uniform(-0.03, 0.03))
-        if k == 0:  # a mossy cap where the wall meets the pillar
-            x, _, z = gate_pt(0.0, 0.0, across)
-            gate_block(x, base + 0.42 * courses + 0.04, z, 0.9, 0.7, 0.08, moss, ge)
-    for k in range(3):  # rubble where the wall gives out, sunk into the sand
-        across = side * (3.4 + 0.67 + 0.5 + len(heights) * 1.0 + rng.uniform(-0.2, 1.2))
-        x, _, z = gate_pt(rng.uniform(-0.9, 0.9), 0.0, across)
-        w, d, h = rng.uniform(0.5, 0.8), rng.uniform(0.45, 0.7), rng.uniform(0.3, 0.42)
-        gate_block(x, height(x, z) + h * 0.3, z, w, d, h, rock if k % 2 else stone, rng.uniform(0, TAU), rng.uniform(-0.08, 0.08), rng.uniform(-0.08, 0.08))
-
-# Fallen voussoirs beside the right pillar's seaward foot (off the lane, half in the sand), one by the left.
-for across, along, m in ((4.9, 1.3, stone), (5.6, 2.2, rock), (4.6, 2.9, stone), (6.3, 1.6, rock), (-5.0, 1.8, rock)):
+def gground(along, across):
     x, _, z = gate_pt(along, 0.0, across)
-    gate_block(x, height(x, z) + 0.2, z, 0.7, 0.82, 0.5, m, rng.uniform(0, TAU), rng.uniform(-0.1, 0.1), rng.uniform(-0.1, 0.1))
+    return height(x, z)
 
-# The threshold: flagstones through the gate, a kerb either side; and stones of the old causeway lost down the lane,
-# flush with the sand (this beach's own look: old masonry, as the north has the wreck's timbers and the west its shells).
-for i in range(-2, 3):
-    for j in range(-3, 4):
-        x, _, z = gate_pt(i * 0.6, 0.0, j * 0.8)
-        gate_block(x, height(x, z) + 0.01, z, 0.54, 0.74, 0.09, (flagA, stone, flagB)[(i + j) % 3], ge + rng.uniform(-0.03, 0.03))
+
+def crack(pts, nrm, m=iron):  # a dark crack zigzagging over a face: pts (along, up, across), pressed into the face along nrm
+    for a, b in zip(pts, pts[1:]):
+        island.beam(G(*gate_pt(*a)) + nrm * 0.004, G(*gate_pt(*b)) + nrm * 0.004, 0.011, m, segs=4)
+
+
+STONE = (flagA, flagA, flagB, flagB, flagC, rock)  # the gate's dressed stone (the plaza's flagstones came from the same quarry)
+DAMP = (kerb, rock, flagB)                                  # its foot, darker where the sand keeps it wet
+COURSES = (0.44, 0.38, 0.42, 0.36, 0.40, 0.38, 0.38)        # the shaft from gy + 0.44 to gy + 3.2
+SPRING = gy + 3.62                                          # the capital's top, where the arch springs
+
+
+def pier_face(up):  # how far seaward a pier's seaward face is at height up (footing, base, the courses narrowing)
+    if up < gy + 0.14:
+        return 0.93
+    if up < gy + 0.44:
+        return 0.81
+    y = gy + 0.44
+    for k, h in enumerate(COURSES):
+        if up < y + h:
+            return 0.657 - 0.01 * k
+        y += h
+    return 0.68
+
+for side, own in ((-1, gyL), (1, gyR)):
+    c = side * 3.4
+    foot0 = own - 0.55
+    dressed(gm(0.0, (foot0 + gy + 0.14) / 2, c), (1.86, 1.68, gy + 0.14 - foot0), kerb, bev=0.05)
+    dressed(gm(0.0, gy + 0.29, c), (1.62, 1.46, 0.3), rock, bev=0.085, chip=(1, -side, 0.09) if side > 0 else None)
+    y = gy + 0.44
+    for k, h in enumerate(COURSES):
+        w, d = 1.32 - 0.02 * k, 1.22 - 0.02 * k
+        kind = (k + (side > 0)) % 3
+        s = rng.uniform(-0.14, 0.14)
+        parts = [(0.0, 0.0, w, d)] if kind == 0 else (
+            [((-w / 2 + s) / 2, 0.0, w / 2 + s, d), ((w / 2 + s) / 2, 0.0, w / 2 - s, d)] if kind == 1 else
+            [(0.0, (-d / 2 + s) / 2, w, d / 2 + s), (0.0, (d / 2 + s) / 2, w, d / 2 - s)])
+        for pa, pc, pw, pd in parts:
+            m = rng.choice(DAMP if k < 2 else STONE)
+            chip = (rng.choice((-1, 1)), rng.choice((-1, 1)), rng.uniform(0.06, 0.11)) if rng.random() < 0.3 else None
+            if side > 0 and k == 6 and pa > 0.0:  # the right pier's top course: its seaward block has lost a corner
+                chip = (1, 1, 0.16)
+            dressed(gm(pa, y + h / 2, c + pc + rng.uniform(-0.012, 0.012)), (pw - 0.006, pd - 0.006, h - 0.004), m, bev=0.035, chip=chip)
+        y += h
+    # The capital: a band, a bell flaring out under the abacus with dentils round it, the abacus (the right one split, its
+    # seaward half fallen: below).
+    dressed(gm(0.0, gy + 3.24, c), (1.36, 1.26, 0.08), flagB, bev=0.02)
+    loft(island, [[G(*gate_pt(w2 / 2 if sa > 0 and side < 0 else 0.12 if sa > 0 else -w2 / 2, yy, c + sc * d2 / 2)) for sa, sc in ((1, 1), (-1, 1), (-1, -1), (1, -1))]
+                  for w2, d2, yy in ((1.27, 1.17, gy + 3.28), (1.42, 1.32, gy + 3.39), (1.5, 1.4, gy + 3.46))], flagA)  # (the right one's seaward half went with the abacus)
+    for sa in ((-1, 1) if side < 0 else (-1,)):  # dentils on the faces seen down the lane
+        for i in range(6):
+            gate_block(*gate_pt(sa * 0.73, gy + 3.405, c + (i - 2.5) * 0.21), 0.07, 0.11, 0.07, flagB, ge)
+    if side < 0:
+        dressed(gm(0.0, gy + 3.54, c), (1.66, 1.56, 0.16), flagA, bev=0.035)
+        moss_on(*[gate_pt(-0.2, 0, c - 0.3)[i] for i in (0, 2)], gy + 3.62, 0.5)
+    else:
+        dressed(gm(-0.43, gy + 3.53, c, tip=0.09), (0.8, 1.56, 0.16), flagA, bev=0.035, chip=(1, 1, 0.12))
+crack([(pier_face(u), u, a) for u, a in ((gy + 3.12, 3.28), (gy + 2.75, 3.52), (gy + 2.45, 3.34), (gy + 2.05, 3.62), (gy + 1.8, 3.5))], ALONG_B)
+
+# The arch: fifteen voussoirs over the half circle (seven the keystone), every other one longer at the back; from the left
+# pier over the crown to the break: voussoirs 12-14 have fallen, 11 has slipped on its joint. Each a chamfered wedge with a
+# joint either side; outlines in the arch's plane (across, up).
+RI, AD, NV = 2.9, 0.84, 15
+AM = Matrix.Translation(G(gx, 0.0, gz)) @ GF  # (along, across, up) -> Blender
+
+
+def vous(k, g=0.0125):  # voussoir k's outline: its joints at the ends of its share of the half circle, each g into the stone
+    t0, t1 = math.pi * (1 - k / NV), math.pi * (1 - (k + 1) / NV)
+    ro = 4.12 if k == 7 else 3.8 + (0.14 if k % 2 else 0.0)
+    return [(r * math.cos(t) + sd * g * math.sin(t), SPRING + r * math.sin(t) - sd * g * math.cos(t))
+            for r, t, sd in ((RI, t0, 1), (ro, t0, 1), (ro, t1, -1), (RI, t1, -1))]
+
+
+for k in range(12):
+    poly = vous(k)
+    if k == 11:  # broken off across, slipped on its joint with voussoir 10 and sagging
+        t0, D = math.pi * (1 - 11 / NV), math.pi / NV
+        poly = poly[:2] + [(r * math.cos(t0 - f * D), SPRING + r * math.sin(t0 - f * D)) for r, f in ((3.55, 0.45), (3.2, 0.8), (RI, 0.62))]
+        (px, py), q = poly[0], -0.08
+        poly = [(px + (x - px) * math.cos(q) - (y - py) * math.sin(q), py + (x - px) * math.sin(q) + (y - py) * math.cos(q) - 0.035) for x, y in poly]
+    if k == 7:  # the keystone: deeper than the ring, standing proud of both faces, sunk a little with the years
+        poly = [(x, y - 0.03) for x, y in poly]
+    wedge(poly, AD + (0.16 if k == 7 else 0.0), flagA if k == 7 else rng.choice(STONE), AM)
+# A star carved on the keystone, both faces (the compass rose's, at the lighthouse).
+kc = SPRING + (RI + 4.12) / 2 - 0.03
+star = [((0.19 if i % 2 == 0 else 0.065) * math.sin(i * math.pi / 4), kc + (0.19 if i % 2 == 0 else 0.065) * math.cos(i * math.pi / 4)) for i in range(8)]
+for sa in (-1, 1):
+    loft(island, [[AM @ Vector((sa * a, p, q)) for p, q in star] for a in (0.49, 0.525)], flagB)
+# Cracks: down from the break through voussoir 10, and over the left pier's seaward face.
+crack([(AD / 2, SPRING + r * math.sin(t), r * math.cos(t)) for r, t in ((3.77, 0.95), (3.48, 0.91), (3.22, 0.96), (2.93, 0.93))], ALONG_B)
+crack([(pier_face(u), u, a) for u, a in ((gy + 2.95, -3.15), (gy + 2.55, -3.32), (gy + 2.3, -3.1), (gy + 1.85, -3.26), (gy + 1.5, -3.05))], ALONG_B)
+# Moss over the crown, where the rain sits.
+for k in (6, 7, 8):
+    t = math.pi * (1 - (k + 0.5) / NV)
+    ro = 4.12 - 0.03 if k == 7 else 3.8 + (0.14 if k % 2 else 0.0)
+    pts = [(rng.uniform(-0.32, -0.18), t + 0.07), (rng.uniform(0.18, 0.32), t + 0.07), (rng.uniform(0.15, 0.3), t - 0.07), (rng.uniform(-0.3, -0.15), t - 0.07)]
+    loft(island, [[AM @ Vector((a, (ro + dr) * math.cos(tt), SPRING + (ro + dr) * math.sin(tt))) for a, tt in pts] for dr in (-0.012, 0.008)], moss)
+
+# Ruined walls from each pier toward the cliffs: courses of blocks of all lengths stepping down to rubble, footed under the sand;
+# moss on some of the tops, a block slid off here and there.
+WALL = []  # (side, across, length, bottom, height, slid seaward)
+for side in (-1, 1):
+    x0, x1 = 4.07, 8.1
+    base = min(gground(a, side * u * 0.25) for u in range(int(x0 * 4), int(x1 * 4) + 1) for a in (-0.43, 0.43)) - 0.3
+    tops, y, ci = [], base, 0
+    while y < base + 2.5:
+        h = rng.uniform(0.33, 0.42)
+        u = x0
+        first = rng.uniform(0.3, 0.55) if ci % 2 else rng.uniform(0.55, 0.9)
+        row = []
+        while u < x1 - 0.12:
+            L = min(first if u == x0 else rng.uniform(0.45, 0.9), x1 - u)
+            uc = u + L / 2
+            limit = base + 2.4 - 1.65 * (uc - x0) / (x1 - x0) + rng.uniform(-0.18, 0.12)
+            if y + h > gground(0.0, side * uc) - 0.05 and y + h <= limit and rng.random() > 0.06:
+                row.append((uc, L))
+            u += L
+        for uc, L in row:
+            slid = rng.uniform(0.05, 0.1) if y + h > base + 1.2 and rng.random() < 0.12 else 0.0
+            dressed(gm(slid, y + h / 2, side * uc, rng.uniform(-0.012, 0.012) + (rng.uniform(-0.09, 0.09) if slid else 0.0)),
+                    (0.86, L - 0.008, h - 0.004), rng.choice(DAMP if y < base + 0.6 else STONE), bev=0.035,
+                    chip=(rng.choice((-1, 1)), rng.choice((-1, 1)), rng.uniform(0.06, 0.12)) if rng.random() < 0.25 else None)
+            WALL.append((side, uc, L, y, h, slid))
+        tops.append((y + h, row))
+        y += h
+        ci += 1
+    for i, (yt, row) in enumerate(tops):  # moss on the blocks nothing sits on
+        above = tops[i + 1][1] if i + 1 < len(tops) else []
+        for uc, L in row:
+            if not any(abs(uc - u2) < (L + L2) / 2 - 0.1 for u2, L2 in above) and rng.random() < 0.55:
+                moss_on(*[gate_pt(rng.uniform(-0.15, 0.15), 0, side * uc)[i] for i in (0, 2)], yt, min(0.4, L * 0.45))
+    for k in range(4):  # where the wall gives out: blocks sunk in the sand
+        u = x1 + rng.uniform(0.0, 1.5)
+        a = rng.uniform(-0.9, 0.9)
+        w, d, h = rng.uniform(0.45, 0.75), rng.uniform(0.4, 0.65), rng.uniform(0.3, 0.42)
+        dressed(gm(a, gground(a, side * u) + h * 0.05, side * u, rng.uniform(0, TAU), rng.uniform(-0.12, 0.12), rng.uniform(-0.12, 0.12)),
+                (w, d, h), rng.choice(STONE), bev=0.03, chip=(1, 1, 0.08) if k % 2 else None)
+
+# What fell: the right abacus's seaward half and voussoirs 12 and 13 beside the right pier's seaward foot (off the lane), half in
+# the sand with sand blown against them, chips of 14 round them; one block by the left pier.
+x, _, z = gate_pt(1.6, 0, 4.85)
+dressed(gm(1.6, height(x, z) + 0.02, 4.85, 0.5, 0.18, 0.1), (0.8, 1.56, 0.16), flagA, bev=0.035, chip=(-1, 1, 0.1))
+moss_on(*[gate_pt(1.75, 0, 4.6)[i] for i in (0, 2)], height(x, z) + 0.12, 0.3)
+for k, al, ac, yaw, tip, roll in ((12, 2.5, 5.75, 1.2, 1.45, 0.1), (13, 1.2, 6.4, -0.5, 0.06, -math.pi * (1 - 14 / NV))):  # face down; on its joint
+    poly = vous(k)
+    cx, cy = sum(p for p, _ in poly) / 4, sum(q for _, q in poly) / 4
+    poly = [(p - cx, q - cy) for p, q in poly]
+    low = AD / 2 if abs(tip) > 1.0 else -min(p * math.sin(roll) + q * math.cos(roll) for p, q in poly)
+    x, _, z = gate_pt(al, 0, ac)
+    wedge(poly, AD, rng.choice(STONE), gm(al, height(x, z) + low - 0.3, ac, yaw, tip, roll), bev=0.03)
+for k in range(6):
+    al, ac = rng.uniform(0.9, 3.4), rng.uniform(4.4, 6.9)
+    x, _, z = gate_pt(al, 0, ac)
+    s = rng.uniform(0.2, 0.36)
+    dressed(gm(al, height(x, z) + s * 0.2, ac, rng.uniform(0, TAU), rng.uniform(-0.3, 0.3), rng.uniform(-0.3, 0.3)),
+            (s * rng.uniform(1.0, 1.6), s, s * rng.uniform(0.6, 0.9)), rng.choice(STONE), bev=0.025, chip=(1, -1, s * 0.4))
+x, _, z = gate_pt(1.8, 0, -5.0)
+dressed(gm(1.8, height(x, z) + 0.1, -5.0, 0.7, 0.08, -0.1), (0.7, 0.82, 0.5), rock, bev=0.035, chip=(1, 1, 0.1))
+for al, ac, w, d, h, yaw in ((1.9, 5.25, 0.55, 0.8, 0.2, 0.4), (1.5, 6.6, 0.45, 0.65, 0.16, 1.1), (2.0, -5.25, 0.45, 0.6, 0.15, 0.2)):
+    x, _, z = gate_pt(al, 0, ac)
+    drift(x, z, w, d, h, ge + yaw)
+
+# Where the doors hung: two iron pintles on each pier's face to the lane; on the left one's lower pintle a broken strap rusts.
+for side in (-1, 1):
+    fc = side * (3.4 - 0.6)
+    for yy in (gy + 0.8, gy + 2.5):
+        gate_block(*gate_pt(-0.45, yy, fc - side * 0.012), 0.16, 0.03, 0.13, iron, ge)
+        gate_block(*gate_pt(-0.45, yy, fc - side * 0.07), 0.045, 0.12, 0.045, iron, ge)
+        island.cyl(0.022, 0.16, G(*gate_pt(-0.45, yy + 0.05, fc - side * 0.125)), iron, segs=6)
+eye = Vector(G(*gate_pt(-0.45, gy + 0.86, -2.8 + 0.125)))
+torus(island, eye, (0, 0, 1), 0.04, 0.012, rust, segs=8, tsegs=4)
+island.beam(eye + G(0.0, -0.02, 0.0) + ACROSS_B * 0.04, eye + G(0.0, -0.62, 0.0) + ACROSS_B * 0.16 - ALONG_B * 0.12, 0.016, rust, segs=4)
+# What's left of a door: four planks on two rusted straps, one board broken short, propped against the left wall's seaward face.
+lean = 0.3
+foot = min(gground(0.86, -5.05 - i * 0.19) for i in range(4)) - 0.08
+for i, hgt in enumerate((1.45, 1.52, 1.1, 1.48)):
+    dressed(gm(0.86 - math.sin(lean) * hgt / 2, foot + math.cos(lean) * hgt / 2, -5.05 - i * 0.19, tip=-lean), (0.05, 0.17, hgt), wwood if i % 2 else wdark, bev=0.008)
+for yy in (0.3, 0.95):
+    dressed(gm(0.86 - math.sin(lean) * yy + math.cos(lean) * 0.037, foot + math.cos(lean) * yy + math.sin(lean) * 0.037, -5.33, tip=-lean), (0.025, 0.8, 0.07), rust, bev=0.0)
+
+# Ivy: stems wandering up the left pier's seaward face (the wall's foot to the capital, one over onto the arch's face), a smaller
+# one up the right pier's inland face, leaves clustered either side of each; more spilling down the right wall's seaward face;
+# vines hanging from the arch, tapering, a few white flowers on them.
+def ivy_run(pts, at, nrm, spread=0.09, step=0.06):
+    # leaves along a stem through pts (up, across), at(up, across) the point on the face (Blender), nrm the face's normal
+    for (u0, a0), (u1, a1) in zip(pts, pts[1:]):
+        n = max(1, int(math.hypot(u1 - u0, a1 - a0) / step))
+        for i in range(n):
+            u, a = u0 + (u1 - u0) * i / n, a0 + (a1 - a0) * i / n
+            for _ in range(rng.choice((1, 2, 2))):
+                du, da = rng.uniform(-spread, spread) * 0.4, rng.uniform(-spread, spread)
+                leaf(at(u + du, a + da), nrm, UP_B + ACROSS_B * rng.uniform(-0.9, 0.9) + nrm * 0.0, rng.uniform(0.12, 0.17), ivy if rng.random() < 0.55 else vkit.leaf)
+
+
+def wander(u0, a0, u1, a1, n, amp):  # a stem from (u0, a0) to (u1, a1) in n kinks, wandering amp either side
+    return [(u0 + (u1 - u0) * i / n, a0 + (a1 - a0) * i / n + (rng.uniform(-amp, amp) if 0 < i < n else 0.0)) for i in range(n + 1)]
+
+
+seaL = lambda u, a: G(*gate_pt(pier_face(u) + 0.006, u, max(-3.99, min(-2.82, a))))
+low = max(gyL + 0.04, gy - 0.05)
+ivy_run(wander(low, -3.95, gy + 3.15, -3.45, 7, 0.12), seaL, ALONG_B)
+ivy_run(wander(low, -3.62, gy + 2.1, -3.05, 5, 0.1), seaL, ALONG_B)
+ivy_run(wander(low, -3.2, gy + 0.95, -2.95, 3, 0.06), seaL, ALONG_B, spread=0.07)
+archL = lambda u, a: G(*gate_pt(AD / 2 + 0.012, u, a))
+ivy_run([(SPRING + r * math.sin(t), r * math.cos(t)) for r, t in ((3.35, math.pi), (3.4, math.pi * 0.95), (3.3, math.pi * 0.9), (3.45, math.pi * 0.84), (3.35, math.pi * 0.79))], archL, ALONG_B, spread=0.12)
+landR = lambda u, a: G(*gate_pt(-pier_face(u) - 0.006, u, max(2.82, min(3.99, a))))
+ivy_run(wander(max(gyR + 0.04, gy - 0.05), 3.9, gy + 1.85, 3.55, 4, 0.1), landR, -ALONG_B, spread=0.08)
+for side, uc, L, y, h, slid in WALL:  # spilling down the right wall's seaward face from its top, thinning out lower down
+    if side > 0 and uc < 6.6:
+        for i in range(int(L * h * 30)):
+            up = y + h * (1.0 - rng.random() ** 1.8)
+            if up > gground(0.43 + slid, uc) + 0.08 and rng.random() < 0.85:
+                leaf(G(*gate_pt(0.43 + slid + 0.004, up, uc + rng.uniform(-L / 2 + 0.06, L / 2 - 0.06))), ALONG_B, -UP_B + ACROSS_B * rng.uniform(-0.6, 0.6),
+                     rng.uniform(0.12, 0.17), ivy if rng.random() < 0.5 else vkit.leaf)
+for k, al, length in ((1, 0.1, 0.6), (2, -0.2, 1.1), (3, 0.15, 1.5), (4, -0.25, 0.7), (5, 0.05, 1.85), (6, -0.3, 0.5), (8, 0.25, 1.2),
+                      (9, -0.1, 1.55), (10, 0.2, 0.8), (3, -0.32, 0.45), (8, -0.28, 0.6)):
+    t = math.pi * (1 - (k + rng.uniform(0.3, 0.7)) / NV)
+    top = Vector(G(*gate_pt(al, SPRING + RI * math.sin(t) - 0.015, RI * math.cos(t))))
+    for i in range(5):  # a clump where it hangs from, flat on the stone's underside
+        leaf(top + ALONG_B * rng.uniform(-0.12, 0.12) + ACROSS_B * rng.uniform(-0.1, 0.1), -UP_B, ALONG_B * rng.uniform(-1, 1) + ACROSS_B * rng.uniform(-1, 1),
+             rng.uniform(0.12, 0.16), vkit.leaf)
+    n = int(length / 0.065)
+    sway = rng.uniform(0, TAU)
+    for i in range(n):
+        p = top - UP_B * (i * 0.065) + (ALONG_B * math.sin(sway + i * 0.45) + ACROSS_B * math.cos(sway + i * 0.3)) * 0.03 * i ** 0.5
+        for j in range(1 if i % 3 else 2):
+            a = sway + i * 2.4 + j * math.pi
+            out = ALONG_B * math.cos(a) + ACROSS_B * math.sin(a)
+            leaf(p, out, -UP_B + out * 0.9, 0.16 - 0.06 * i / n, vkit.leaf, two=True)
+        if i % 6 == 4 and k in (3, 5, 9):
+            vkit.ball(island, Frame(p + ALONG_B * 0.04), 0.03, (0, 0, 0), vkit.petalC)
+
+# The threshold: a long sill across the gate (in two, cracked) and worn flagstones either side, flush with the ground (the lane
+# runs over it), joints showing the paving under them; stones of the old causeway lost down the lane, half in the sand.
+def gpoly(a0, a1, c0, c1):
+    return [(p[0], p[2]) for p in (gate_pt(a0, 0, c0), gate_pt(a1, 0, c0), gate_pt(a1, 0, c1), gate_pt(a0, 0, c1))]
+
+
+def flush(dy=0.022):
+    return lambda x, z: height(x, z) + dy
+
+
+J2 = 0.022
+slab(gpoly(-0.34 + J2, 0.34 - J2, -2.56, 0.28 - J2), flush(), flagB, bev=0.025)
+slab(gpoly(-0.34 + J2, 0.34 - J2, 0.28 + 0.008, 2.56), flush(0.016), flagB, bev=0.02)
+for a0, a1 in ((0.34, 0.86), (0.86, 1.42), (-0.86, -0.34), (-1.42, -0.86)):
+    c = -2.56
+    while c < 2.5:
+        L = min(rng.uniform(0.45, 0.85), 2.56 - c)
+        if 2.56 - c - L < 0.3:
+            L = 2.56 - c
+        sink = 0.012 if rng.random() < 0.15 else 0.0
+        slab(gpoly(a0 + J2, a1 - J2, c + J2, c + L - J2), flush(0.022 - sink + rng.uniform(-0.004, 0.004)), rng.choice((flagA, flagB, flagC, stone)), bev=0.025)
+        c += L
 for i, r in enumerate((23.6, 24.4, 25.3, 26.0, 26.9, 27.6, 23.9, 25.7)):
     a = math.radians(lane_angle(GAPS[2], r))
     off = rng.choice((-1, 1)) * rng.uniform(1.0, 2.0)
     x, z = r * math.cos(a) - math.sin(a) * off, r * math.sin(a) + math.cos(a) * off
-    gate_block(x, height(x, z) - 0.04, z, rng.uniform(0.5, 0.7), rng.uniform(0.45, 0.6), 0.14, flagB if i % 2 else stone, rng.uniform(0, TAU))
+    w, d, yaw = rng.uniform(0.25, 0.35), rng.uniform(0.22, 0.3), rng.uniform(0, TAU)
+    pts = [(x + math.cos(yaw) * u * w - math.sin(yaw) * v * d, z + math.sin(yaw) * u * w + math.cos(yaw) * v * d) for u, v in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+    tilt = (rng.uniform(-0.05, 0.05), rng.uniform(-0.05, 0.05))
+    slab(pts, lambda x2, z2, x=x, z=z, t=tilt: height(x, z) + 0.01 + t[0] * (x2 - x) + t[1] * (z2 - z), flagB if i % 2 else stone, bev=0.025)
 
-# Moss at the feet on the north side and a little vine over one shoulder.
-for x, z, s in ((gx - tx * 3.0, gz - tz * 3.0, 0.8), (gx + tx * 2.8, gz + tz * 2.8, 0.55)):
-    gate_block(x, height(x, z) + 0.08, z, s, s * 0.7, 0.10, moss, ge)
-for k in range(4):
-    gate_block(gx - tx * 3.4, spring + 0.35 + k * 0.45, gz - tz * 3.4, 0.10, 0.12, 0.32, moss, ge + k * 0.35,
-               rng.uniform(-0.12, 0.12), rng.uniform(-0.12, 0.12))
+# Moss and grass at the piers' feet.
+for al, ac, s in ((-1.25, -3.6, 0.45), (-1.2, 3.3, 0.35), (1.25, -4.1, 0.3)):
+    x, _, z = gate_pt(al, 0, ac)
+    moss_on(x, z, height(x, z) + 0.005, s)
+rng = _rng
+for _ in range(280):  # what the old gate drew from the island's random numbers (sizes, places, a side for each of the
+    rng.random()      # lost flagstones), drawn and dropped so the harbour's planks and buoys and the plants keep their places
+for _ in range(8):
+    rng.choice((-1, 1))
+    for _ in range(4):
+        rng.random()
+for _ in range(8):
+    rng.random()
 
 # ---------- the terraces: stone-walled platforms between the lanes, steps toward the lighthouse ----------
 for a, r in TERRACES:
@@ -650,21 +1073,253 @@ for a in (120.0, 0.0):  # benches facing the lighthouse
     bx2, bz2 = 6.6 * math.cos(math.radians(a)), 6.6 * math.sin(math.radians(a))
     vkit.bench(island, Frame(G(bx2, height(bx2, bz2), bz2), a + 90.0))
 
-# ---------- the plaza paving: flagstones in rings round the lighthouse, mortar between, a kerb at the edge and round the
-# lighthouse's foot (Owen: the big grey wedges looked odd). Its own random numbers, so the rest of the island stays put. ----------
+# ---------- the plaza paving round the lighthouse: a ring of dark plinth stones at the tower's foot; a compass rose (cream points
+# with slate halves, the north one red like the tower's stripes) inside a dark band with a brass ring; two courses of flagstones
+# of all lengths in four tones, joints skewed, big stones across both (the lamps stand on three), some chipped or cracked, a
+# marker with a brass N to the north, three iron drains; a kerb of worn stones, setts outside it in the grass and the paths; moss
+# and grass in the joints. Each stone is cut from an exact tiling, pulled in half a joint, so the mortar (the ground, IslGrout)
+# shows 3 cm down between them. The tops stay within a centimetre or so of 1.23: people and fish walk on it. Its own random
+# numbers, so the rest of the island stays put. ----------
 pr = random.Random(1908)
-edges = [1.15 + 0.6 * i for i in range(9)]  # 1.15 .. 5.95
-gap = 0.03  # half the mortar line
-for i in range(len(edges) - 1):
-    r0, r1 = edges[i] + gap, edges[i + 1] - gap
-    n = max(8, round(TAU * (r0 + r1) / 2 / 0.8))
-    off = pr.uniform(0, TAU / n)  # joints staggered ring to ring
-    for k in range(n):
-        a0, a1 = off + TAU * k / n, off + TAU * (k + 1) / n
-        corners = [(r0, a0 + gap / r0), (r1, a0 + gap / r1), (r1, a1 - gap / r1), (r0, a1 - gap / r0)]
-        top = PLAZA_Y + pr.uniform(0.025, 0.035)
-        m = kerb if i in (0, len(edges) - 2) else (rock if pr.random() < 0.06 else flagA if pr.random() < 0.65 else flagB)
-        loft(island, [[G(r * math.cos(a), y, r * math.sin(a)) for r, a in corners] for y in (PLAZA_Y - 0.02, top)], m)
+TOP = PLAZA_Y + 0.03
+J = 0.022  # half a joint
+PLANTERS = [math.radians(30 + k * 60) for k in range(6) if ang_diff(30 + k * 60, 270.0) >= 25]  # as placed above
+LAMPS = [math.radians(a) for a in (60.0, 180.0, 300.0)]
+
+
+def polar(r, a):
+    return (r * math.cos(a), r * math.sin(a))
+
+
+def arc(r, a0, a1, step=0.5):  # round the lighthouse at radius r from angle a0 to a1, points at most `step` apart
+    n = max(1, math.ceil(abs(a1 - a0) * r / step))
+    return [polar(r, a0 + (a1 - a0) * i / n) for i in range(n + 1)]
+
+
+def ring_tile(r0, r1, a0, a1, s0=0.0, s1=0.0):  # between radii r0, r1 and the joints at a0, a1 (each turned on by s outside)
+    return arc(r0, a0 - s0, a1 - s1) + arc(r1, a1 + s1, a0 + s0)
+
+
+def under_planter(x, z, pad=0.0):  # on a planter's footprint (1.5 m by 0.9, its long side along (-cos p, sin p): Frame's yaw), pad round it
+    for p in PLANTERS:
+        dx, dz = x - 5.6 * math.cos(p), z - 5.6 * math.sin(p)
+        if abs(-dx * math.cos(p) + dz * math.sin(p)) < 0.75 + pad and abs(dx * math.sin(p) + dz * math.cos(p)) < 0.45 + pad:
+            return True
+    return False
+
+
+def corners(poly):  # the outline's real corners (where it turns more than 25 degrees)
+    out = []
+    for i in range(len(poly)):
+        a = Vector(poly[i]) - Vector(poly[i - 1])
+        b = Vector(poly[(i + 1) % len(poly)]) - Vector(poly[i])
+        if a.length > 1e-6 and b.length > 1e-6 and a.angle(b) > 0.45:
+            out.append(i)
+    return out
+
+
+def knock(poly, i, d):  # corner i knocked off, d along each of its edges
+    p, a, b = Vector(poly[i]), Vector(poly[i - 1]) - Vector(poly[i]), Vector(poly[(i + 1) % len(poly)]) - Vector(poly[i])
+    pa, pb = p + a.normalized() * min(d, a.length * 0.45), p + b.normalized() * min(d, b.length * 0.45)
+    return poly[:i] + [tuple(pa), tuple(pb)] + poly[i + 1:]
+
+
+def cracked(poly):  # the two pieces either side of a crack (with a kink in it) from the longest edge to the far side
+    n = len(poly)
+    i = max(range(n), key=lambda k: (Vector(poly[(k + 1) % n]) - Vector(poly[k])).length)
+    A = Vector(poly[i]).lerp(Vector(poly[(i + 1) % n]), pr.uniform(0.3, 0.7))
+    j = max((k for k in range(n) if k != i), key=lambda k: ((Vector(poly[k]) + Vector(poly[(k + 1) % n])) / 2 - A).length)
+    B = Vector(poly[j]).lerp(Vector(poly[(j + 1) % n]), pr.uniform(0.3, 0.7))
+    K = (A + B) / 2 + Vector((A.y - B.y, B.x - A.x)).normalized() * pr.uniform(-0.07, 0.07)
+    one = [tuple(A)] + [poly[k % n] for k in range(i + 1, (j if j > i else j + n) + 1)] + [tuple(B), tuple(K)]
+    two = [tuple(B)] + [poly[k % n] for k in range(j + 1, (i if i > j else i + n) + 1)] + [tuple(A), tuple(K)]
+    return one, two
+
+
+LAID = []  # (outline, how weathered 0..1) of every paving stone: where the moss and grass go after
+
+
+def lay(tile, m, wear=0.5, bev=0.022, top=None, j=J):
+    # One paving stone from its tile: pulled in half a joint, its top within a few mm of TOP and tipped a hair; now and then a
+    # corner knocked off, or cracked across (the halves settled a little differently).
+    poly = inset(tile, j)
+    cs = corners(poly)
+    if cs and pr.random() < 0.12 * wear:
+        poly = knock(poly, pr.choice(cs), pr.uniform(0.07, 0.13))
+    parts = [inset(q, 0.007) for q in cracked(poly)] if pr.random() < 0.08 * wear and abs(area(poly)) > 0.18 else [poly]
+    for k, q in enumerate(parts):
+        cx, cz = sum(x for x, _ in q) / len(q), sum(z for _, z in q) / len(q)
+        reach = max(math.hypot(x - cx, z - cz) for x, z in q)  # tipped at most 6 mm at its far corner, whatever its size
+        t0, dx, dz = TOP + pr.uniform(-0.004, 0.004) - 0.005 * k, pr.uniform(-0.0042, 0.0042) / reach, pr.uniform(-0.0042, 0.0042) / reach
+        tf = top if top is not None else (lambda x, z, t0=t0, cx=cx, cz=cz, dx=dx, dz=dz: t0 + dx * (x - cx) + dz * (z - cz))
+        slab(q, tf, m, bev=bev if len(parts) == 1 else 0.012)
+        LAID.append((q, wear))
+
+
+def pick(*weighted):  # a material from (material, weight) pairs
+    r = pr.random() * sum(w for _, w in weighted)
+    for m, w in weighted:
+        r -= w
+        if r <= 0:
+            return m
+    return weighted[-1][0]
+
+
+FIELD = ((flagA, 0.38), (flagB, 0.3), (flagC, 0.17), (vkit.stone, 0.1), (rock, 0.05))
+DARK = ((kerb, 0.6), (vkit.stone2, 0.4))
+MID = ((flagB, 0.6), (vkit.stone, 0.4))
+
+# The plinth ring at the lighthouse's foot (the tower's octagon reaches 1.08).
+RIN = 1.75
+off = pr.uniform(0, TAU)
+for k in range(12):
+    lay(ring_tile(1.1, RIN, off + k * TAU / 12, off + (k + 1) * TAU / 12), pick(*DARK), wear=0.8, bev=0.03)
+
+# The compass rose: eight points (the four winds out to the band, the four between shorter), each in two halves either side of
+# its axis; the stones between them split where two points meet; a brass ring round it in the joint to the band.
+RC, RD, RV, BAND0, BAND1 = 3.72, 3.05, 2.25, 3.72, 4.0
+for k in range(8):
+    t, t2 = k * math.pi / 4, (k + 1) * math.pi / 4
+    R, R2, v = (RC if k % 2 == 0 else RD), (RC if k % 2 else RD), t + math.pi / 8
+    for sd in (-1, 1):
+        w = t + sd * math.pi / 8
+        lay([polar(RIN, t), polar(R, t), polar(RV, w)] + arc(RIN, w, t, 0.4)[:-1],
+            (vkit.roofr if k == 2 else roseD) if sd < 0 else vkit.cream, wear=0.2, j=0.018)
+    tip2 = [polar(R2, t2)] if R2 < BAND0 else []
+    lay([polar(R, t)] + ([polar(BAND0, t)] if R < BAND0 else []) + arc(BAND0, t, v, 0.4)[1:] + [polar(RV, v)], pick(*MID), wear=0.4, j=0.018)
+    lay([polar(RV, v)] + arc(BAND0, v, t2, 0.4) + tip2, pick(*MID), wear=0.4, j=0.018)
+for k in range(16):
+    a0, a1 = k * TAU / 16, (k + 1) * TAU / 16
+    slab(arc(BAND0 + 0.016, a0, a1, 0.4) + arc(BAND0 - 0.016, a1, a0, 0.4), TOP - 0.003, vkit.brass, bev=0.0, base=PLAZA_Y - 0.01)
+off = pr.uniform(0, TAU)
+for k in range(24):
+    lay(ring_tile(BAND0, BAND1, off + k * TAU / 24, off + (k + 1) * TAU / 24), pick(*DARK), wear=0.3, bev=0.02)
+
+# The field: two courses (R0..RM, RM..R1) of stones of all lengths, joints skewed; big stones across both (one under each lamp);
+# the north marker (a cream stone with a brass N, read from the lighthouse) in the inner course, three drains in the outer.
+R0, RM, R1 = BAND1, 4.66, 5.35
+windows = [(math.pi / 2, 0.31 / 4.33, "north")] + [(math.radians(a), 0.42 / 5.0, "drain") for a in (0.0, 120.0, 240.0)] + \
+          [(a, 0.45 / RM, "big") for a in LAMPS]
+for _ in range(80):
+    if len(windows) == 11:
+        break
+    c, hw = pr.uniform(0, TAU), pr.uniform(0.38, 0.5) / RM
+    if all(ang_diff(math.degrees(c), math.degrees(w[0])) > math.degrees(hw + w[1] + 0.45 / RM) for w in windows):
+        windows.append((c, hw, "big"))
+windows.sort()
+
+
+def fill(r0, r1, a0, a1):  # a course's stones between two windows: joints at random lengths, each skewed a little
+    rm = (r0 + r1) / 2
+    cuts, a = [(a0, 0.0)], a0
+    while True:
+        a += pr.uniform(0.48, 1.05) / rm
+        if a > a1 - 0.4 / rm:
+            break
+        cuts.append((a, pr.uniform(-0.035, 0.035) / rm))
+    cuts.append((a1, 0.0))
+    for (c0, s0), (c1, s1) in zip(cuts, cuts[1:]):
+        lay(ring_tile(r0, r1, c0, c1, s0, s1), pick(*FIELD), wear=0.6 if r1 < R1 else 1.0)
+
+
+for course, (r0, r1) in enumerate(((R0, RM), (RM, R1))):
+    mine = [w for w in windows if w[2] == "big" or w[2] == ("north" if course == 0 else "drain")]
+    for i, (c, hw, kind) in enumerate(mine):
+        c1, hw1, _ = mine[(i + 1) % len(mine)]
+        fill(r0, r1, c + hw, c1 - hw1 + (TAU if i == len(mine) - 1 else 0.0))
+        tn = Vector((-math.sin(c), math.cos(c)))  # along the course (seen from the lighthouse, to the left)
+        if kind == "big" and course == 0:
+            lay(ring_tile(R0, R1, c - hw, c + hw), pick(*FIELD), wear=1.0)
+        elif kind == "north":  # the N: up its left side, down across, up its right (the same either way up)
+            lay(ring_tile(r0, r1, c - hw, c + hw), vkit.cream, wear=0.0, top=TOP)
+            for (u0, v0), (u1, v1) in (((-0.14, 0.1), (0.14, 0.1)), ((0.14, 0.1), (-0.14, -0.1)), ((-0.14, -0.1), (0.14, -0.1))):
+                p0, p1 = Vector(polar(4.33 + u0, c)) + tn * v0, Vector(polar(4.33 + u1, c)) + tn * v1
+                n = (p1 - p0).normalized()
+                w = Vector((-n.y, n.x)) * 0.022
+                slab([tuple(p0 - n * 0.02 + w), tuple(p0 - n * 0.02 - w), tuple(p1 + n * 0.02 - w), tuple(p1 + n * 0.02 + w)], TOP + 0.004, vkit.brass, bev=0.0, base=TOP - 0.02)
+        elif kind == "drain":  # a stone either side of an iron grate over a dark slot
+            rc = (r0 + r1) / 2
+            g = 0.17 / rc
+            lay(ring_tile(r0, r1, c - hw, c - g), pick(*FIELD), wear=1.0)
+            lay(ring_tile(r0, r1, c + g, c + hw), pick(*FIELD), wear=1.0)
+            at = lambda u, v, rc=rc, c=c, tn=tn: tuple(Vector(polar(rc + u, c)) + tn * v)
+            hu, hv = (r1 - r0) / 2 - J, 0.17 - J
+            slab([at(-hu, -hv), at(hu, -hv), at(hu, hv), at(-hu, hv)], PLAZA_Y + 0.006, iron, bev=0.0, base=PLAZA_Y - 0.02)
+            for u0, v0, u1, v1 in ((-hu, -hv, hu, -hv + 0.03), (-hu, hv - 0.03, hu, hv), (-hu, -hv, -hu + 0.03, hv), (hu - 0.03, -hv, hu, hv)) + \
+                    tuple((-hu + 0.03, v - 0.012, hu - 0.03, v + 0.012) for v in (-0.075, -0.025, 0.025, 0.075)):
+                slab([at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)], TOP - 0.004, iron, bev=0.004, base=PLAZA_Y)
+
+# The kerb: stones of all lengths, their outer corners worn round; setts outside it in the grass (some lost) and two rows across
+# each path where it comes in.
+K0, K1 = R1, 5.95
+a = start = pr.uniform(0, TAU)
+while a < start + TAU - 0.01:
+    q0, a = a, min(a + pr.uniform(0.7, 1.15) / 5.65, start + TAU)
+    if start + TAU - a < 0.5 / 5.65:
+        a = start + TAU
+    tile = ring_tile(K0, K1, q0, a)
+    n0 = len(arc(K0, q0, a))
+    lay(knock(knock(tile, len(tile) - 1, pr.uniform(0.04, 0.08)), n0, pr.uniform(0.04, 0.08)), pick(*DARK), wear=0.7, bev=0.032)
+mouths = [math.radians(lane_angle(g, 6.2)) for g in GAPS + [DOCK]]
+
+
+def in_mouth(a):
+    return any(ang_diff(math.degrees(a), math.degrees(c)) < math.degrees(1.6 / 6.2) for c in mouths)
+
+
+GAPPED = []  # where a sett is missing (grass grows there)
+for r0, r1, mouth_only in ((K1 + 0.02, K1 + 0.3, False), (K1 + 0.33, K1 + 0.61, True)):
+    a = start = pr.uniform(0, TAU)
+    while a < start + TAU - 0.03:
+        q0, a = a, min(a + pr.uniform(0.22, 0.32) / r0, start + TAU)
+        mid = (q0 + a) / 2
+        x, z = polar((r0 + r1) / 2, mid)
+        if (mouth_only and not in_mouth(mid)) or under_planter(x, z, 0.08):
+            continue
+        if not in_mouth(mid) and pr.random() < 0.22:
+            GAPPED.append((x, z))
+            continue
+        poly = inset(ring_tile(r0, r1, q0, a), 0.016)
+        top = max(height(px, pz) for px, pz in poly) + 0.008
+        slab(poly, top, pick((rock, 0.45), (kerb, 0.3), (vkit.stone2, 0.25)), bev=0.02, base=top - 0.1)
+
+
+# Moss along some joints (more toward the grass, and at the tower's shady north foot); tufts of grass where joints meet and along
+# the setts (drawn only: VkLeaf isn't solid, nothing trips on them).
+def tuft(x, z, y, h=0.1):
+    if under_planter(x, z, 0.05) or any(math.hypot(x - 4.6 * math.cos(l), z - 4.6 * math.sin(l)) < 0.32 for l in LAMPS):
+        return
+    for _ in range(pr.choice((3, 4))):
+        a, lean, hh = pr.uniform(0, TAU), pr.uniform(0.25, 0.6), h * pr.uniform(0.6, 1.25)
+        w = (math.cos(a + math.pi / 2) * 0.016, math.sin(a + math.pi / 2) * 0.016)
+        card([G(x - w[0], y - 0.01, z - w[1]), G(x + w[0], y - 0.01, z + w[1]), G(x + math.cos(a) * hh * lean, y + hh, z + math.sin(a) * hh * lean)], vkit.leaf, two=True)
+
+
+for poly, wear in LAID:
+    cx, cz = sum(x for x, _ in poly) / len(poly), sum(z for _, z in poly) / len(poly)
+    r = math.hypot(cx, cz)
+    shade = 0.6 if r < 2.0 and cz > 0.3 else 0.0  # the north side of the tower's foot, out of the sun
+    if pr.random() < 0.3 * wear + shade:
+        i = pr.randrange(len(poly))
+        p, q = Vector(poly[i]), Vector(poly[(i + 1) % len(poly)])
+        if (q - p).length > 0.18 and abs(((p + q) / 2).length - BAND0) > 0.06 and not under_planter(*((p + q) / 2)):
+            n = Vector(((q - p).y, -(q - p).x)).normalized() * (1 if area(poly) > 0 else -1)  # out of the stone
+            u0, u1 = sorted((pr.uniform(0.0, 0.6), pr.uniform(0.4, 1.0)))
+            a0, a1 = p.lerp(q, u0) + n * J, p.lerp(q, u1) + n * J
+            m0, m1 = a0.lerp(a1, 0.3), a0.lerp(a1, 0.7)
+            w0, w1 = n * pr.uniform(0.016, 0.028), n * pr.uniform(0.016, 0.028)  # a streak filling the joint, creeping onto the stones' edges
+            slab([tuple(a0), tuple(m0 - w0), tuple(m1 - w1), tuple(a1), tuple(m1 + w1), tuple(m0 + w0)], PLAZA_Y + 0.02, moss, bev=0.005, base=PLAZA_Y - 0.01)
+    if (r > 4.5 and pr.random() < 0.2 * wear) or (shade and pr.random() < 0.35):
+        i = pr.choice(corners(poly) or [0])
+        p = Vector(poly[i])
+        out = (p - Vector((cx, cz))).normalized()
+        tuft(p.x + out.x * J, p.y + out.y * J, PLAZA_Y)
+for x, z in GAPPED[::2]:
+    tuft(x, z, height(x, z), 0.12)
+for k in range(24):  # in the grass just outside the setts
+    x, z = polar(K1 + pr.uniform(0.38, 0.6), pr.uniform(0, TAU))
+    if not in_mouth(math.atan2(z, x)):
+        tuft(x, z, height(x, z), 0.13)
 
 ob = island.finish()
 
@@ -717,6 +1372,15 @@ for x, y, z in TOPS:  # small pines on the cliff tops and sea stacks
     add("PineTreeSmall", x, y, z, rng.uniform(1.0, 1.5))
 for x, y, z, r in POOLS:
     decor.append(f"Pool {x:.2f} {y:.2f} {z:.2f} 0 {r:.2f}")
+
+
+def under_gate_stone(x, z):  # where the gate's walls or a fallen voussoir now lie (dropped after, so the rest stay put)
+    al, ac = gate_frame(x, z)
+    return any(abs(al - slid) < 0.45 and abs(ac - side * uc) < L / 2 for side, uc, L, _, _, slid in WALL) or \
+        any(math.hypot(al - a, ac - c) < 0.55 for a, c in ((1.2, 6.4), (2.5, 5.75), (1.6, 4.85), (1.8, -5.0)))
+
+
+decor = [d for d in decor if not under_gate_stone(float(d.split()[1]), float(d.split()[3]))]
 with open(OUT_DECOR, "w") as fh:
     fh.write("# kind x y z yaw scale  (island-local game coordinates; Pool: a tide pool, scale = its radius)\n")
     fh.write("\n".join(decor) + "\n")
@@ -806,6 +1470,7 @@ if PREVIEW:
     shot("island_dock_head", G(-4.0, 2.6, -27.5), G(0.0, 0.7, -22.5), lens=28)
     shot("island_signpost", G(-1.4, 2.7, -17.6), G(spx, 1.7, spz), lens=34)
     shot("island_lanes", G(0.0, 26.0, -14.0), G(0.0, 0.0, 10.0), lens=30)
+    shot("island_lane_eye", G(2.0, 2.9, -3.5), G(0.0, 0.9, -20.0), lens=20)  # a player at the plaza's edge looking down the dock road
     shot("island_vault_front", G(-1.2, 3.2, -15.6), G(-8.0, 2.2, -17.0), lens=30)
     shot("island_smithy_front", G(1.6, 2.5, -10.2), G(6.2, 1.9, -10.8), lens=35)
     for i, gap in enumerate(GAPS + [DOCK]):

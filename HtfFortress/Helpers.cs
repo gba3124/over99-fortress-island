@@ -11,7 +11,8 @@ using UnityEngine;
 namespace HtfFortress
 {
     // Host -> everyone, ten times a second: one of the stall's helpers. State 0 idle, 1 off to a fish, 2 off to the stall,
-    // 3 knocked out, 255 gone. Kind 0 villager, 1 seagull.
+    // 3 knocked out, 4 at the coffee break (a mug in hand), 5 a seagull sitting in its nest, 6 at the coffee break and the
+    // one talking, 255 gone. Kind 0 villager, 1 seagull.
     public struct HelperView { public byte Id; public Vector3 Pos; public float Yaw; public byte Load, Cap, Hp, State, Kind; }
     // The same, all the ones that changed this tick in ONE message: thirty helpers used to be up to 300 little broadcasts a
     // second, each with its own header and its own trip through FishNet.
@@ -26,8 +27,9 @@ namespace HtfFortress
     // between rounds as well (hired any time at the stall). Faster legs, bigger baskets and the oven (their fish are sold
     // grilled, worth half again) are bought at the stall too; all of it is kept with the save. Fish that catch one hurt it:
     // knocked out, it drops what it carried and comes back from the stall a while later. It keeps away from fish if it can.
-    // All decided on the host; every client draws them from HelperView (a villager in one of the game's outfits, Person.cs, walking with a
-    // basket of fish held out in front when carrying).
+    // With nothing to pick up the villagers have a coffee together at one of the island's rest spots and the seagulls sit in
+    // their nests (Rest). All decided on the host; every client draws them from HelperView (a villager in one of the game's
+    // outfits, Person.cs, walking with a basket of fish held out in front when carrying).
     public class Helpers : MonoBehaviour
     {
         public static Helpers Instance;
@@ -101,11 +103,14 @@ namespace HtfFortress
         // =====================================================================================================
 
         // Goal: what it's going for, a body (Creature) or a Loot.Lying key.
-        private class Hand { public byte Id; public Vector3 Pos, GoalPos; public float Yaw, TargetY, Hp = 1f, KoUntil; public int Load, Value; public object Goal; public byte State; public readonly List<object> Plan = new List<object>();
+        // RestAt / RestYaw: where it goes and which way it faces with nothing to do (Rest); Resting once it got there; Perch: a
+        // seagull's nest, come down onto from above.
+        private class Hand { public byte Id; public Vector3 Pos, GoalPos, RestAt; public float Yaw, TargetY, Hp = 1f, KoUntil, RestYaw; public int Load, Value; public object Goal; public byte State; public bool HasRest, Resting, Perch; public readonly List<object> Plan = new List<object>();
             public bool Gull => Id > HumanHelpers; }
         private readonly List<Hand> _hands = new List<Hand>();
         private float _last, _nextSend;
         private int _lastCap = 2;
+        private Vector3 _islandAt; // where the island was last think: it moves off the next island you sail to
 
         // Bought at the stall, round or not, as far as the crew's money goes.
         public bool ServerBuy(byte what)
@@ -140,15 +145,23 @@ namespace HtfFortress
         private static readonly RaycastHit[] GroundHits = new RaycastHit[16];
         private static float Ground(Vector3 p)
         {
-            float y = WaterManager.GetWaterHeight(p);
+            float sea = WaterManager.GetWaterHeight(p), y = sea;
             int n = Physics.RaycastNonAlloc(new Vector3(p.x, p.y + 1.2f, p.z), Vector3.down, GroundHits, 30f, GameInfo.LevelLayer, QueryTriggerInteraction.UseGlobal);
             for (int i = 0; i < n; i++)
-            {
-                string name = GroundHits[i].collider.gameObject.name;
-                if (name.StartsWith("FortressPiece") || name == "FortressCore") continue;
-                y = Mathf.Max(y, GroundHits[i].point.y);
-            }
-            return y;
+                if (Walked(GroundHits[i])) y = Mathf.Max(y, GroundHits[i].point.y);
+            if (y > sea) return y;
+            // Nothing under it but the sea, and the island's ground over it (it got under there somehow): back up onto the lowest
+            // ground above it, not a roof over that. From under the ground the ray above never saw it, so it stayed down for good.
+            n = Physics.RaycastNonAlloc(new Vector3(p.x, p.y + 40f, p.z), Vector3.down, GroundHits, 40f, GameInfo.LevelLayer, QueryTriggerInteraction.Ignore);
+            float up = float.MaxValue;
+            for (int i = 0; i < n; i++)
+                if (Walked(GroundHits[i]) && GroundHits[i].point.y > y) up = Mathf.Min(up, GroundHits[i].point.y);
+            return up < float.MaxValue ? up : y;
+        }
+        private static bool Walked(RaycastHit hit)
+        {
+            string name = hit.collider.gameObject.name;
+            return !name.StartsWith("FortressPiece") && name != "FortressCore";
         }
 
         // Reused every think (ten times a second): the fish positions, what's lying about, and who is already after what.
@@ -165,16 +178,18 @@ namespace HtfFortress
         // Ten times a second, not every frame: thirty of them each looking over every fish and every body on the island, and a
         // ray down each, was the host's frame time in a big late wave. The views glide between (ClientTick).
         private float _nextThink;
+        // A new body or drop is seen within IdleThink (and sent within SendEvery): resting helpers are back at work well inside 2 s.
+        public const float IdleThink = 0.5f, BusyThink = 0.25f, SendEvery = 0.1f;
         private void ServerTick()
         {
             if (Time.time < _nextThink) return;
             // Idle helpers do not need to scan the island five times a second. Busy ones (carrying / walking to a body /
-            // walking home) keep the faster 4 Hz; everyone standing at the stall drops to 2 Hz.
-            float gap = 0.5f;
+            // knocked out) keep the faster 4 Hz; everyone idle (on a break, in a nest, on the way there) drops to 2 Hz.
+            float gap = IdleThink;
             for (int i = 0; i < _hands.Count; i++)
             {
                 var h = _hands[i];
-                if (h.Load > 0 || h.Goal != null || h.State != 0) { gap = 0.25f; break; }
+                if (h.Load > 0 || h.Goal != null || h.State == 3) { gap = BusyThink; break; }
             }
             _nextThink = Time.time + gap;
             float dt = Mathf.Min(0.3f, Time.time - _last);
@@ -183,6 +198,16 @@ namespace HtfFortress
             var v = Loot.Instance ? Loot.Instance.Vault : null;
             bool on = island && island.Exists && Siege.Instance && v != null && FortressNet.Instance; // round or not
             int want = on ? Mathf.Clamp(v.Helpers, 0, MaxHelpers) : 0;
+            // The island was put down somewhere else (between rounds): they come along, where they were on it. Left behind,
+            // they walked a kilometre over the sea and up its cliffs at sea level, and stayed under its ground (Owen: "開局有些
+            // 小幫手在水底").
+            if (on)
+            {
+                Vector3 moved = island.Center - _islandAt;
+                if (moved.sqrMagnitude > 1f)
+                    foreach (var h in _hands) { h.Pos += moved; h.GoalPos += moved; h.RestAt += moved; }
+                _islandAt = island.Center;
+            }
             _goneViews.Clear();
             while (_hands.Count > want)
             {
@@ -286,7 +311,116 @@ namespace HtfFortress
                 // Position is advanced every frame by ServerGlide: walking in 0.25-0.5 s steps was the visible stutter.
                 h.TargetY = Ground(h.Pos) + (h.Gull ? GullFly : 0f);
             }
+            Rest(island);
             Broadcast(cap);
+        }
+
+        // ---------- nothing to pick up: a coffee for the villagers, the nest for the seagulls ----------
+
+        // The idle villagers stand round in a ring at one of FortressIsland.RestSpots (another one each break, one with no fish
+        // near it as they set off; with none, they wait by the stall as they used to till there is), a mug each, one talking at
+        // a time while the others turn to them. Each seagull flies back to a nest of its own and sits in it. PlanNearest runs
+        // first, so anything to pick up takes them straight back to work.
+        public const float NestSeat = 0.075f, GullBelly = 0.19f, NestAbove = 1.4f, LighthouseTop = 6.4f, LighthouseClear = 2.4f;
+        // NestSeat: the bowl over the nest's bottom (GullNest.obj) where a gull's belly goes, GullBelly that under its root
+        // (SeagullSit.obj at 0.95); it comes down onto it from NestAbove, and stays LighthouseTop over the lighthouse's foot
+        // (the lantern's top at 6.25 m) within LighthouseClear of its middle.
+        public static float CircleRadius(int n) => n < 2 ? 0f : Mathf.Max(0.5f, 0.48f / Mathf.Sin(Mathf.PI / n));
+        // Slot k of n round a rest spot (from its middle): evenly round it, a pair side on to where they're seen from (yaw), an
+        // odd one out on the far side facing that way, four turned off square (square on, two stood right behind the other
+        // two). Neighbours stand 0.96 m apart.
+        public static Vector3 CircleSlot(float yaw, int n, int k)
+        {
+            float a = (SlotBase(yaw, n) + 360f * k / Mathf.Max(1, n)) * Mathf.Deg2Rad, r = CircleRadius(n);
+            return new Vector3(Mathf.Sin(a) * r, 0f, Mathf.Cos(a) * r);
+        }
+        private static float SlotBase(float yaw, int n) => yaw + 180f + (n == 2 ? 90f : n == 4 ? 22.5f : 0f);
+        private static float Around(Vector3 d, float from) => Mathf.Repeat(Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg - from, 360f);
+
+        private readonly List<Hand> _resting = new List<Hand>(HumanHelpers);
+        private int _restSpot = -1;
+        private bool _onBreak;
+        private byte _talker;
+        private float _nextTurn;
+        private void Rest(FortressIsland island)
+        {
+            _resting.Clear();
+            foreach (var h in _hands)
+            {
+                if (h.State != 0) { h.HasRest = h.Resting = false; continue; } // working or knocked out
+                if (!h.Gull) { _resting.Add(h); continue; }
+                var nest = island.GullNests.Count > 0 ? island.GullNests[(h.Id - HumanHelpers - 1) % island.GullNests.Count] : null;
+                if (!nest) { h.RestAt = Home(island, h.Id); h.RestYaw = h.Yaw; h.HasRest = true; h.Perch = false; continue; } // no nests: about the stall, as before
+                Vector3 seat = nest.TransformPoint(0f, NestSeat, 0f), ahead = nest.forward;
+                h.RestAt = new Vector3(seat.x, seat.y - GullBelly, seat.z);
+                h.RestYaw = Mathf.Atan2(ahead.x, ahead.z) * Mathf.Rad2Deg;
+                h.HasRest = h.Perch = true;
+                h.Resting = (h.RestAt - h.Pos).sqrMagnitude < 0.03f * 0.03f;
+                if (h.Resting) h.State = 5;
+            }
+            int n = _resting.Count, spots = FortressIsland.RestSpots.Length;
+            if (n == 0) { _onBreak = false; _talker = 0; return; }
+            if (!_onBreak || _restSpot < 0)
+            {
+                int was = _restSpot; // -1 at first
+                _restSpot = -1;
+                for (int k = 1; k <= spots && _restSpot < 0; k++)
+                    if (!Danger(island.Center + FortressIsland.RestSpots[(was + k) % spots].at)) _restSpot = (was + k) % spots;
+                _onBreak = true;
+            }
+            if (_restSpot < 0)
+            {
+                foreach (var h in _resting)
+                {
+                    h.RestAt = Home(island, h.Id);
+                    h.RestYaw = Mathf.Atan2(island.MarketPos.x - h.RestAt.x, island.MarketPos.z - h.RestAt.z) * Mathf.Rad2Deg;
+                    h.HasRest = true; h.Resting = false;
+                }
+                _talker = 0;
+                return;
+            }
+            // Each to the slot round the ring nearest where it is: sorted by the way round they are, then the turn of the ring
+            // that walks them least (one leaving or joining, the others just close up).
+            var (at, yaw) = FortressIsland.RestSpots[_restSpot];
+            Vector3 c = island.Center + at;
+            float from = SlotBase(yaw, n);
+            _resting.Sort((p, q) => Around(p.Pos - c, from).CompareTo(Around(q.Pos - c, from)));
+            int shift = 0;
+            float least = float.MaxValue;
+            for (int s = 0; s < n; s++)
+            {
+                float walk = 0f;
+                for (int k = 0; k < n; k++) walk += Mathf.Abs(Mathf.DeltaAngle(Around(_resting[k].Pos - c, from), 360f * ((k + s) % n) / n));
+                if (walk < least) { least = walk; shift = s; }
+            }
+            int sitting = 0;
+            bool talkerIn = false;
+            for (int k = 0; k < n; k++)
+            {
+                var h = _resting[k];
+                Vector3 slot = CircleSlot(yaw, n, (k + shift) % n);
+                if (h.HasRest && (h.RestAt - (c + slot)).Flat().sqrMagnitude > 3f * 3f) h.Resting = false; // the ring moved off: mug down
+                h.RestAt = c + slot;
+                h.RestYaw = n < 2 ? yaw : Mathf.Atan2(-slot.x, -slot.z) * Mathf.Rad2Deg;
+                h.HasRest = true;
+                h.Resting |= (h.RestAt - h.Pos).Flat().sqrMagnitude < 0.3f * 0.3f;
+                if (h.Resting) { sitting++; talkerIn |= h.Id == _talker; }
+            }
+            if (sitting < 2) _talker = 0;
+            else if (Time.time >= _nextTurn || (_talker != 0 && !talkerIn))
+            {
+                // Someone else's turn to talk; now and then nobody's, for a breath.
+                byte was = _talker;
+                _talker = 0;
+                if (was == 0 || Random.value > 0.2f)
+                {
+                    int pick = Random.Range(0, sitting - (talkerIn ? 1 : 0));
+                    foreach (var h in _resting)
+                        if (h.Resting && h.Id != was && pick-- == 0) { _talker = h.Id; break; }
+                }
+                _nextTurn = Time.time + (_talker == 0 ? Random.Range(1.5f, 3f) : Random.Range(3.5f, 7f));
+            }
+            foreach (var h in _resting) h.State = (byte)(!h.Resting ? 0 : h.Id == _talker ? 6 : 4);
         }
 
 
@@ -372,22 +506,40 @@ namespace HtfFortress
             float speed = Speed(v.HelperSpeed);
             float dt = Mathf.Min(0.1f, Time.deltaTime);
             bool any = false;
+            Vector3 lighthouse = island.LighthousePos;
             foreach (var h in _hands)
             {
                 if (h.State == 3) continue;
                 Vector3 goal;
+                bool rest = false;
                 if (h.Goal != null) { h.State = 1; goal = h.GoalPos; }
                 else if (h.Load > 0) { h.State = 2; goal = island.CounterPos; }
-                else { h.State = 0; goal = Home(island, h.Id); }
+                else if (h.HasRest) { goal = h.RestAt; rest = true; }
+                else continue; // just done: where to rest comes with the next think
                 Vector3 to = (goal - h.Pos).Flat();
                 float d = to.magnitude;
-                if (d > 0.3f)
+                float wantY = h.TargetY;
+                bool climb = false;
+                if (h.Gull)
+                {
+                    // Over the lighthouse, never through it; down onto a nest from above it, and up off it before going anywhere.
+                    // There (a lantern, a roof, a lamp about) it goes straight up first; elsewhere it climbs as it flies, as ever.
+                    bool tower = (h.Pos - lighthouse).Flat().sqrMagnitude < LighthouseClear * LighthouseClear;
+                    if (tower) wantY = Mathf.Max(wantY, lighthouse.y + LighthouseTop);
+                    if (rest && h.Perch) wantY = d < 0.05f ? goal.y : Mathf.Max(wantY, goal.y + NestAbove);
+                    climb = (tower || h.Perch && (rest || (h.RestAt - h.Pos).Flat().sqrMagnitude < 1f)) && wantY - h.Pos.y > 0.5f;
+                }
+                if (d > (rest ? 0.02f : 0.3f) && !climb)
                 {
                     h.Pos += to / d * Mathf.Min(d, speed * (h.Gull ? GullSpeed : 1f) * dt);
                     h.Yaw = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
                     any = true;
                 }
-                float wantY = h.TargetY;
+                else if (rest && d < 1.5f && Mathf.Abs(Mathf.DeltaAngle(h.Yaw, h.RestYaw)) > 0.5f)
+                {
+                    h.Yaw = Mathf.MoveTowardsAngle(h.Yaw, h.RestYaw, 300f * dt); // round to face the ring, or out of the nest
+                    any = true;
+                }
                 if (Mathf.Abs(h.Pos.y - wantY) > 0.001f)
                 {
                     h.Pos.y = Mathf.MoveTowards(h.Pos.y, wantY, (h.Gull ? 6f : 8f) * dt);
@@ -405,7 +557,7 @@ namespace HtfFortress
         private void Broadcast(int cap)
         {
             if (Time.time < _nextSend) return;
-            _nextSend = Time.time + 0.1f;
+            _nextSend = Time.time + SendEvery;
             _batch.Clear();
             foreach (var h in _hands)
             {
@@ -479,7 +631,7 @@ namespace HtfFortress
         }
 
         // Auto-test: where they are and what they carry.
-        public string DebugState() => string.Join(", ", _hands.Select(h => $"#{h.Id} {(new[] { "idle", "fetching", "selling", "down" })[Mathf.Min(3, (int)h.State)]} {h.Load} fish ({h.Value}) hp {h.Hp:0.00}"));
+        public string DebugState() => string.Join(", ", _hands.Select(h => $"#{h.Id} {(new[] { "idle", "fetching", "selling", "down", "coffee", "nest", "talking" })[Mathf.Min(6, (int)h.State)]} {h.Load} fish ({h.Value}) hp {h.Hp:0.00}"));
         public int DebugCount => _hands.Count;
         // Auto-test: what helper 1's body is made of on this screen.
         public string DebugBody() => _views.TryGetValue(1, out var v) && v.Person
@@ -500,7 +652,8 @@ namespace HtfFortress
         // every client: a villager walking about, a net bag of fish when it carries some, its name, load and health
         // =====================================================================================================
 
-        private class View { public Transform Root, Bag; public Person Person; public Vector3 Pos, Shown; public float Yaw, Seen, Walk; public byte Load, Cap, Hp, State;
+        // Fly / Sit / Head: a seagull's flying body, and its body and head sitting in the nest.
+        private class View { public Transform Root, Bag, Fly, Sit, Head; public Person Person; public Vector3 Pos, Shown; public float Yaw, Seen, Walk, LookYaw, LookPitch, CalledAt = -9f; public int Called; public byte Load, Cap, Hp, State;
             public bool Gull; }
         private readonly Dictionary<byte, View> _views = new Dictionary<byte, View>();
         public int ViewCount => _views.Count;
@@ -515,10 +668,18 @@ namespace HtfFortress
                 root.position = s.Pos;
                 if (s.Kind == 1)
                 {
-                    // A seagull (tools/make_seagull.py): the same villager slot past HumanHelpers, but it flies.
+                    // A seagull (tools/make_seagull.py): the same villager slot past HumanHelpers, but it flies. In its nest it sits,
+                    // wings folded, its head (a model of its own, on the neck) free to look about.
                     var gull = Models.Attach("Seagull", root, new Vector3(0.7f, 0.2f, 0.7f), new Vector3(0f, 0.3f, 0f), shadows: false, share: false);
                     gull.transform.localScale = Vector3.one * 0.95f;
-                    v = _views[s.Id] = new View { Root = root, Gull = true, Shown = s.Pos };
+                    var sit = Models.Attach("SeagullSit", root, new Vector3(0.22f, 0.2f, 0.5f), new Vector3(0f, 0.3f, 0f), shadows: false, share: false).transform;
+                    sit.localScale = Vector3.one * 0.95f;
+                    var head = new GameObject("Head").transform;
+                    head.SetParent(sit, false);
+                    head.localPosition = GullNeck;
+                    Models.Attach("SeagullHead", head, new Vector3(0.15f, 0.14f, 0.16f), new Vector3(0f, 0.045f, 0.055f), shadows: false, share: false);
+                    sit.gameObject.SetActive(false);
+                    v = _views[s.Id] = new View { Root = root, Gull = true, Shown = s.Pos, Fly = gull.transform, Sit = sit, Head = head };
                 }
                 else
                 {
@@ -563,6 +724,7 @@ namespace HtfFortress
                     bool near = (v.Shown - cam.transform.position).sqrMagnitude < 120f * 120f;
                     if (v.Root.gameObject.activeSelf != near) v.Root.gameObject.SetActive(near);
                 }
+                if ((v.Pos - v.Shown).sqrMagnitude > 25f * 25f) v.Shown = v.Pos; // put down elsewhere (the island moved, back up after a knockout): no flight there
                 Vector3 before = v.Shown;
                 v.Shown = Vector3.Lerp(v.Shown, v.Pos, 1f - Mathf.Exp(-12f * Time.deltaTime));
                 float moving = (v.Shown - before).Flat().magnitude / Mathf.Max(1e-4f, Time.deltaTime);
@@ -571,19 +733,38 @@ namespace HtfFortress
                 var face = Quaternion.Euler(0f, v.Yaw, 0f);
                 if (v.Gull)
                 {
-                    // Seagulls fly: a little bob and bank, no walking bones.
-                    v.Root.position = v.Shown + Vector3.up * (0.10f * Mathf.Sin(Time.time * 3.5f + id));
-                    v.Root.rotation = Quaternion.Slerp(v.Root.rotation,
-                        face * Quaternion.Euler(0f, 0f, Mathf.Sin(Time.time * 2.6f + id) * 8f), 1f - Mathf.Exp(-8f * Time.deltaTime));
+                    bool nested = v.State == 5;
+                    if (v.Sit && v.Sit.gameObject.activeSelf != nested) { v.Sit.gameObject.SetActive(nested); v.Fly.gameObject.SetActive(!nested); }
+                    if (nested)
+                    {
+                        v.Root.position = v.Shown;
+                        v.Root.rotation = Quaternion.Slerp(v.Root.rotation, face, 1f - Mathf.Exp(-8f * Time.deltaTime));
+                        Nesting(v, id, cam);
+                    }
+                    else
+                    {
+                        // Seagulls fly: a little bob and bank, no walking bones.
+                        v.Root.position = v.Shown + Vector3.up * (0.10f * Mathf.Sin(Time.time * 3.5f + id));
+                        v.Root.rotation = Quaternion.Slerp(v.Root.rotation,
+                            face * Quaternion.Euler(0f, 0f, Mathf.Sin(Time.time * 2.6f + id) * 8f), 1f - Mathf.Exp(-8f * Time.deltaTime));
+                    }
                 }
                 else
                 {
-                    // Walking (legs and arms swing, a little waddle), the basket held out in front; flat on its back when knocked out.
+                    // Walking (legs and arms swing, a little waddle), the basket held out in front; flat on its back when knocked out;
+                    // a mug in hand at the coffee break.
                     v.Root.position = v.Shown;
                     v.Root.rotation = Quaternion.Slerp(v.Root.rotation, down ? face * Quaternion.Euler(-80f, 0f, 0f) : face * Quaternion.Euler(0f, 0f, moving > 0.2f ? Mathf.Sin(v.Walk) * 4f : 0f), 1f - Mathf.Exp(-10f * Time.deltaTime));
                     // Posed every frame up close; further off, ten times a second is plenty (up to thirty bodies of bones).
                     bool near = !cam || (v.Shown - cam.transform.position).sqrMagnitude < 45f * 45f;
-                    if (v.Person && (near || (Time.frameCount + id) % 6 == 0)) v.Person.Pose(v.Walk, down ? 0f : Mathf.Clamp01(moving / 2.5f), carrying, 0f, 0f, down ? -20f : 0f);
+                    bool coffee = v.State == 4 || v.State == 6;
+                    if (v.Person && (near || (Time.frameCount + id) % 6 == 0))
+                    {
+                        float lift = 0f, talk = 0f, nod = 0f, shake = 0f;
+                        if (coffee) Chat(v, id, out lift, out talk, out nod, out shake);
+                        v.Person.HoldCup(coffee, MugColors[(id - 1) % MugColors.Length]);
+                        v.Person.Pose(v.Walk, down ? 0f : Mathf.Clamp01(moving / 2.5f), carrying, 0f, coffee ? v.LookYaw + shake : 0f, down ? -20f : coffee ? v.LookPitch + nod : 0f, coffee, lift, talk);
+                    }
                     if (v.Bag)
                     {
                         if (v.Bag.gameObject.activeSelf != carrying) v.Bag.gameObject.SetActive(carrying);
@@ -593,6 +774,75 @@ namespace HtfFortress
             }
             for (int i = 0; i < _gone.Count; i++) Drop(_gone[i]);
             DrawPlates();
+        }
+
+        // Each villager's own enamel mug; where a seagull's head sits on its neck (tools/make_seagull.py's NECK).
+        private static readonly Color[] MugColors = { new Color(0.84f, 0.3f, 0.24f), new Color(0.27f, 0.5f, 0.74f), new Color(0.92f, 0.76f, 0.3f), new Color(0.38f, 0.64f, 0.42f), new Color(0.9f, 0.86f, 0.76f) };
+        private static readonly Vector3 GullNeck = new Vector3(0f, 0.37f, 0.15f);
+
+        // A steady 0..1 for (a, b): the same pair always gives the same number.
+        private static float Hash(int a, int b)
+        {
+            uint h = (uint)(a * 73856093) ^ (uint)(b * 19349663);
+            h ^= h >> 13; h *= 0x5bd1e995; h ^= h >> 15;
+            return (h & 0xffffff) / 16777216f;
+        }
+
+        // The coffee break's small talk, on this screen's own clock (the host says who rests and who talks): the mug up 15-25
+        // degrees every 3-6 s, held a second, down again; whoever talks nods or shakes its head as it goes; the others turn to
+        // them (a nod now and then), and once in a while one looks off into the distance.
+        private void Chat(View v, byte id, out float lift, out float talk, out float nod, out float shake)
+        {
+            float t = Time.time + id * 1.37f, every = 3f + 3f * Hash(id, 1);
+            int n = Mathf.FloorToInt(t / every);
+            float u = t - n * every;
+            lift = (15f + 10f * Hash(id, n)) * Mathf.SmoothStep(0f, 1f, u < 1.4f ? u / 0.4f : (1.8f - u) / 0.4f);
+            View talker = null;
+            foreach (var o in _views.Values)
+                if (o.State == 6 && !o.Gull && (o.Shown - v.Shown).Flat().sqrMagnitude < 3f * 3f) { talker = o; break; }
+            int b = Mathf.FloorToInt(t / 1.6f), w = Mathf.FloorToInt((t + 3f) / 9f);
+            float k = t / 1.6f - b, inW = t + 3f - w * 9f;
+            float yaw = 0f, pitch = 0f;
+            talk = nod = shake = 0f;
+            if (Hash(id, w + 50) < 0.35f && inW > 2f && inW < 4.6f) { yaw = (Hash(id, w + 70) < 0.5f ? -1f : 1f) * (55f + 25f * Hash(id, w + 90)); pitch = -6f; }
+            else if (talker == v)
+            {
+                talk = Mathf.PerlinNoise(t * 1.7f, id * 3.1f) > 0.38f ? 1f : 0f; // words, and the gaps between them
+                float act = Hash(id, b + 200);
+                if (act < 0.4f) nod = 9f * Mathf.Sin(k * Mathf.PI * 4f) * (1f - k);
+                else if (act < 0.7f) shake = 14f * Mathf.Sin(k * Mathf.PI * 5f) * (1f - k);
+            }
+            else if (talker != null)
+            {
+                Vector3 to = talker.Shown - v.Shown;
+                yaw = Mathf.Clamp(Mathf.DeltaAngle(v.Yaw, Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg), -75f, 75f);
+                if (Hash(id, b + 300) < 0.2f) nod = 5f * Mathf.Sin(k * Mathf.PI * 2f) * (1f - k);
+            }
+            else yaw = (Hash(id, Mathf.FloorToInt(t / 3f) + 30) - 0.5f) * 70f; // nobody talking: looking round
+            float ease = 1f - Mathf.Exp(-5f * Time.deltaTime);
+            v.LookYaw = Mathf.LerpAngle(v.LookYaw, yaw, ease);
+            v.LookPitch = Mathf.Lerp(v.LookPitch, pitch, ease);
+        }
+
+        // In its nest: looks one way and the other, shakes its feathers out now and then, and calls now and then (the game's own
+        // gull cries), each gull on its own clock.
+        private static void Nesting(View v, byte id, Camera cam)
+        {
+            float t = Time.time + id * 7.3f, callEvery = 11f + 9f * Hash(id, 2), ruffleEvery = 9f + 7f * Hash(id, 3);
+            int beat = Mathf.FloorToInt(t / 2.3f), call = Mathf.FloorToInt(t / callEvery);
+            if (call != v.Called)
+            {
+                v.Called = call;
+                v.CalledAt = Time.time;
+                if (cam && (v.Shown - cam.transform.position).sqrMagnitude < 40f * 40f) Fx.SoundRandom("Seagull_V", 1, 9, v.Shown, 0.45f, AudioDistance.Short);
+            }
+            float up = Time.time - v.CalledAt < 1f ? Mathf.Sin((Time.time - v.CalledAt) * Mathf.PI) : 0f; // its beak up as it calls
+            float look = up > 0f || Hash(id, beat) < 0.3f ? 0f : (Hash(id, beat + 500) - 0.5f) * 120f;
+            v.LookYaw = Mathf.LerpAngle(v.LookYaw, look, 1f - Mathf.Exp(-6f * Time.deltaTime));
+            v.Head.localRotation = Quaternion.Euler(-45f * up, v.LookYaw, 0f);
+            float r = Mathf.Repeat(t + 4f, ruffleEvery), puff = r < 0.6f ? Mathf.Sin(r / 0.6f * Mathf.PI) : 0f;
+            v.Sit.localScale = new Vector3(0.95f * (1f + 0.12f * puff), 0.95f * (1f + 0.08f * puff), 0.95f);
+            v.Sit.localRotation = Quaternion.Euler(0f, 0f, 7f * puff * Mathf.Sin(r * 40f));
         }
 
         // Over each: "Helper 2/4" and, when hurt, its health.

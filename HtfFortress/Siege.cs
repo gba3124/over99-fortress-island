@@ -62,7 +62,12 @@ namespace HtfFortress
         private RectTransform _top;
         private GameObject _roundGroup;
         private TextMeshProUGUI _waveText, _hpText, _enemyText, _coinText, _phaseText, _titleText, _bossText;
-        private Hud.Bar _hpBar, _bossBar;
+        private Hud.Bar _hpBar, _bossBar, _bossUnder;
+        private TextMeshProUGUI _bossCount;
+        private int _bossBars, _bossBarsOf;
+        private float _barFlashUntil;
+        // A boss's bars, the last one red: each a different colour from the one under it.
+        private static readonly Color[] BarColours = { Hud.Bad, new Color(1f, 0.62f, 0.25f), new Color(0.95f, 0.42f, 0.78f), new Color(0.62f, 0.47f, 1f) };
         private Image _phaseBox, _bossBox;
         private int _lastCoreHp; private float _hpFlashUntil;
         private NetworkManager _registeredOn;
@@ -178,7 +183,7 @@ namespace HtfFortress
         // Everything remembered about this round's fish.
         private void ClearFish()
         {
-            _walkers.Clear(); _nextAttack.Clear(); _progress.Clear(); _stuckTries.Clear(); _blockedSince.Clear(); _flank.Clear(); _slow.Clear(); _airborne.Clear(); _freezeNext.Clear();
+            _walkers.Clear(); _fuse.Clear(); _nextAttack.Clear(); _progress.Clear(); _stuckTries.Clear(); _blockedSince.Clear(); _flank.Clear(); _slow.Clear(); _airborne.Clear(); _freezeNext.Clear();
             _carry.Clear(); _nextHop.Clear(); _nextHeal.Clear(); _hidden.Clear(); _dug.Clear();
             _nextSpit.Clear(); _nextMove.Clear(); _spitterBorn.Clear(); _decoys.Clear(); _bubbled.Clear(); _reeled.Clear();
         }
@@ -340,7 +345,13 @@ namespace HtfFortress
             if (FortressPlugin.Showcase.Contains(fish)) { fish.Rig.isKinematic = true; return true; } // test gallery: stand still
             if (!_server.Active || !_walkers.Contains(fish)) return false;
             if (FortressPlugin.Frozen) { Halt(fish.Rig); return true; } // test key F11
-            if (fish.IsDead) { _walkers.Remove(fish); return false; }
+            if (fish.IsDead) { _walkers.Remove(fish); _fuse.Remove(fish); return false; }
+            if (_fuse.TryGetValue(fish, out var lit))
+            {
+                Halt(fish.Rig);
+                if (Time.time >= lit.at) { _fuse.Remove(fish); Explode(fish, lit.dmg, lit.building); }
+                return true;
+            }
             if (IsBubbled(fish) || _reeled.Contains(fish)) return true; // floating in a bubble, or on a hook line
             Enemies.Instance.TryGet(fish, out var tag);
             var stats = Enemies.StatsOf(tag);
@@ -421,7 +432,7 @@ namespace HtfFortress
             Player prey = Prey(pos, tag.Kind);
             if (prey && tag.Kind == EnemyKind.Bomber && (prey.Transform.position - pos).sqrMagnitude < 1.8f * 1.8f)
             {
-                Explode(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage), atBuilding: false);
+                Light(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage), atBuilding: false);
                 return true;
             }
             bool decoyed = DecoyNear(pos, out var duck);
@@ -442,7 +453,7 @@ namespace HtfFortress
             {
                 // Pecking at a rubber duck. A bomber blows itself up on it.
                 Halt(rig);
-                if (tag.Kind == EnemyKind.Bomber) Explode(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage), atBuilding: false);
+                if (tag.Kind == EnemyKind.Bomber) Light(fish, Mathf.RoundToInt(WalkerDamage.Value * stats.Damage), atBuilding: false);
                 AutoTest.Count("decoyed");
                 return true;
             }
@@ -616,31 +627,37 @@ namespace HtfFortress
         // the first wall or turret on the way, so nobody reels fish into the fort. `onWater`: a spitter stays on the surface.
         private readonly HashSet<Creature> _reeled = new HashSet<Creature>();
 
-        public void ServerPull(Creature c, Vector3 to, float seconds, bool onWater = false)
+        public void ServerPull(Creature c, Vector3 to, float seconds, bool onWater = false, float lift = 1.2f)
         {
             if (!(c is Creature fish) || fish.IsDead || !fish.Rig || _reeled.Contains(c) || IsBubbled(c)) return;
             Vector3 from = fish.transform.position;
             to = StopAtWall(from, to);
             if (onWater) to.y = WaterManager.GetWaterHeight(to);
             else if (Loot.Ground(to + Vector3.up * 4f, 12f, out var g)) to = g + Vector3.up * 0.4f;
-            StartCoroutine(Reel(fish, from, to, seconds));
+            StartCoroutine(Reel(fish, from, to, seconds, lift));
         }
 
-        private System.Collections.IEnumerator Reel(Creature fish, Vector3 from, Vector3 to, float seconds)
+        // lift: how high it goes on the way. Blown up high (a rocket), it turns head over tail once in the air.
+        private System.Collections.IEnumerator Reel(Creature fish, Vector3 from, Vector3 to, float seconds, float lift)
         {
             _reeled.Add(fish);
             var rig = fish.Rig;
             bool wasKinematic = rig.isKinematic;
             rig.isKinematic = true;
+            Quaternion was = rig.rotation;
+            Vector3 along = (to - from).Flat();
+            bool flip = lift > 2f && along.sqrMagnitude > 0.01f;
+            Vector3 axis = flip ? Vector3.Cross(Vector3.up, along.normalized) : Vector3.right;
             for (float t = 0f; t < seconds && fish && !fish.IsDead; t += Time.deltaTime)
             {
-                rig.MovePosition(Vector3.Lerp(from, to, t / seconds) + Vector3.up * Mathf.Sin(t / seconds * Mathf.PI) * 1.2f);
+                rig.MovePosition(Vector3.Lerp(from, to, t / seconds) + Vector3.up * Mathf.Sin(t / seconds * Mathf.PI) * lift);
+                if (flip) rig.MoveRotation(Quaternion.AngleAxis(360f * t / seconds, axis) * was);
                 Synced(fish);
                 yield return null;
             }
             _reeled.Remove(fish);
             if (!fish) yield break;
-            if (!fish.IsDead) { rig.position = to; fish.transform.position = to; Synced(fish); }
+            if (!fish.IsDead) { rig.position = to; fish.transform.position = to; if (flip) { rig.rotation = was; fish.transform.rotation = was; } Synced(fish); }
             if (!wasKinematic) { rig.isKinematic = false; rig.linearVelocity = Vector3.zero; }
         }
 
@@ -669,10 +686,13 @@ namespace HtfFortress
         }
 
         // Conch: shove a fish along the ground (not a spitter out in the deep).
-        public void ServerPush(Creature c, Vector3 push)
+        // lift > 0: thrown up that high on the way (a blast), not hopped along the ground.
+        public void ServerPush(Creature c, Vector3 push, float lift = 0f)
         {
             if (!c || push.sqrMagnitude < 0.01f || (Enemies.Instance.TryGet(c, out var tag) && tag.Kind == EnemyKind.Spitter)) return;
-            ServerPull(c, c.transform.position + new Vector3(push.x, 0f, push.z), 0.25f);
+            Vector3 to = c.transform.position + new Vector3(push.x, 0f, push.z);
+            if (lift > 0f) ServerPull(c, to, 0.4f + 0.1f * lift, lift: lift);
+            else ServerPull(c, to, 0.25f);
         }
 
         // Conch: a blast of sound breaks the move a boss is winding up (Bosses).
@@ -864,6 +884,12 @@ namespace HtfFortress
 
         private static void Halt(Rigidbody rig) => rig.linearVelocity = new Vector3(0f, rig.linearVelocity.y, 0f);
 
+        // Bites on buildings also keep up with the fish's health from wave 20 on (Owen: 怪打建築加上後期係數): towers grow
+        // x1.25 health a level, and a bite that grew only +8% a wave left a tower of the wave's level standing through 41 bites
+        // at wave 10 but 963 at wave 100. With this it's 55-90 from wave 20 on (x1 to 20, x3.2 at 50, x17 at 100). The
+        // lighthouse and players keep the plain bite: neither grows with the wave.
+        public static float Late(int wave) => Mathf.Pow(Mathf.Max(1f, FortressPlugin.HpMult(wave) / FortressPlugin.HpMult(20)), 0.6f);
+
         private void TryAttack(RunningFish fish, Collider wall, EnemyTag tag, EnemyStats stats)
         {
             if (!InstanceFinder.IsServerStarted) return;
@@ -872,12 +898,13 @@ namespace HtfFortress
             _nextAttack[fish] = Time.time + AttackInterval;
             _progress[fish] = (fish.transform.position, Time.time); // attacking counts as progress
             int dmg = Mathf.RoundToInt(WalkerDamage.Value * stats.Damage * (1f + 0.08f * Mathf.Max(0, _server.Wave - 1))); // hits harder each wave
-            if (tag.Kind == EnemyKind.Bomber) { Explode(fish, dmg); return; }
+            if (tag.Kind == EnemyKind.Bomber) { Light(fish, dmg); return; }
             if (wall)
             {
-                BuildSystem.Instance.ServerDamage(wall, Mathf.RoundToInt(dmg * stats.WallMult));
+                int bite = Mathf.RoundToInt(dmg * stats.WallMult * Late(_server.Wave));
+                BuildSystem.Instance.ServerDamage(wall, bite);
                 AutoTest.Count("walker_hit_piece");
-                if (Perks.TeamLegend(Gear.Rebar)) { fish.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(dmg * stats.WallMult * 0.3f))); AutoTest.Count("legend_thorns"); Perks.Proc(Gear.Rebar, fish.transform.position); } // legendary: walls bite back
+                if (Perks.TeamLegend(Gear.Rebar)) { fish.ServerChangeHp(Mathf.Max(1, Mathf.RoundToInt(bite * 0.3f))); AutoTest.Count("legend_thorns"); Perks.Proc(Gear.Rebar, fish.transform.position); } // legendary: walls bite back
             }
             else { DamageCore(Mathf.Max(1, dmg / 2)); AutoTest.Count("walker_hit_core"); } // the lighthouse is sturdier than a wall
         }
@@ -974,12 +1001,24 @@ namespace HtfFortress
         // Bomber: blows up on whatever stopped it. On a wall or the lighthouse every piece (and the core) around takes it; on a
         // person or a decoy duck only the people round it do (Owen: 「塔和地板卡到人」: one that ran into a player on the fort
         // blew up the floor and the tower they stood by).
+        // It lights its fuse first: half a second of red flashing and hissing, standing still, so it can still be shot or
+        // walked away from (Owen's list: 自爆魚 0.5 秒引信). Killed meanwhile, it never goes off.
+        public const float FuseTime = 0.5f;
+        private readonly Dictionary<RunningFish, (float at, int dmg, bool building)> _fuse = new Dictionary<RunningFish, (float, int, bool)>();
+        private void Light(RunningFish fish, int dmg, bool atBuilding = true)
+        {
+            if (_fuse.ContainsKey(fish)) return;
+            _fuse[fish] = (Time.time + FuseTime, dmg, atBuilding);
+            Fx.Send(FxKind.Fuse, fish.transform.position, fish.transform.position, fish.ObjectId);
+            AutoTest.Count("bomber_lit");
+        }
+
         private void Explode(RunningFish fish, int dmg, bool atBuilding = true)
         {
             Vector3 at = fish.transform.position + Vector3.up * 0.5f;
             if (atBuilding)
             {
-                BuildSystem.Instance.ServerDamageArea(at, 3.5f, dmg);
+                BuildSystem.Instance.ServerDamageArea(at, 3.5f, Mathf.RoundToInt(dmg * Late(_server.Wave)));
                 if ((at - _server.CorePos).sqrMagnitude < 4.5f * 4.5f) DamageCore(dmg / 2);
             }
             HurtPlayersAround(at, 3.5f, PlayerDamage(35));
@@ -1045,7 +1084,7 @@ namespace HtfFortress
         {
             yield return new WaitForSeconds(Fx.SpitFlight);
             if (!_server.Active) yield break;
-            BuildSystem.Instance.ServerDamageArea(at, 1.6f, dmg);
+            BuildSystem.Instance.ServerDamageArea(at, 1.6f, Mathf.RoundToInt(dmg * Late(_server.Wave)));
             if ((at - _server.CorePos).sqrMagnitude < 2.5f * 2.5f) DamageCore(dmg);
             HurtPlayersAround(at, 2f, PlayerDamage(15));
         }
@@ -1326,7 +1365,15 @@ namespace HtfFortress
                     int left = _view.BossCrashIn;
                     string crash = left > 0 ? $"  <size=75%><color={Hud.Hex(left <= 30 ? Hud.Bad : Hud.Muted)}>{L10n.T("bossCrashIn", left / 60, (left % 60).ToString("00"))}</color></size>" : "";
                     _bossText.text = L10n.T("bossName" + (EnemyKind)_view.BossKind) + crash;
-                    _bossBar.Set((float)_view.BossHp / _view.BossMax);
+                    // Its health in Bosses.Bars bars (Owen: 「王會是血量xN 然後一條一條打掉」): the top one drains over the next
+                    // one's colour, the count of bars left beside it; a bar broken flashes white.
+                    float f = (float)_view.BossHp / _view.BossMax;
+                    int bars = Bosses.BarsLeft(f);
+                    if (bars < _bossBars && _view.BossMax == _bossBarsOf) _barFlashUntil = Time.time + 0.18f;
+                    _bossBars = bars; _bossBarsOf = _view.BossMax;
+                    _bossUnder.Set(bars > 1 ? 1f : 0f, BarColours[(bars + 2) % BarColours.Length] * 0.7f);
+                    _bossBar.Set(bars > 0 ? f * Bosses.Bars - (bars - 1) : 0f, Time.time < _barFlashUntil ? Color.white : BarColours[(bars + 3) % BarColours.Length]);
+                    _bossCount.text = bars > 1 ? "×" + bars : "";
                 }
             }
             else if (_view.BossMax <= 0 && _bossBox.gameObject.activeSelf) _bossBox.gameObject.SetActive(false);
@@ -1372,7 +1419,10 @@ namespace HtfFortress
             _phaseText = Hud.Label(_phaseBox.transform, "", 22f, C, Vector2.zero, new Vector2(1400f, 42f), TextAlignmentOptions.Center);
             _bossBox = Hud.Box(root, new Vector2(0.5f, 1f), new Vector2(0f, -136f), new Vector2(660f, 46f), Hud.Panel, 16f);
             _bossText = Hud.Label(_bossBox.transform, "", 22f, L, new Vector2(18f, 0f), new Vector2(190f, 40f), TextAlignmentOptions.Left, Hud.Bad, bold: true);
-            _bossBar = Hud.Bar.Make(_bossBox.transform, L, new Vector2(206f, 0f), new Vector2(436f, 18f), Hud.Bad);
+            _bossUnder = Hud.Bar.Make(_bossBox.transform, L, new Vector2(206f, 0f), new Vector2(386f, 18f), Hud.Bad);
+            _bossBar = Hud.Bar.Make(_bossBox.transform, L, new Vector2(206f, 0f), new Vector2(386f, 18f), Hud.Bad);
+            _bossBar.Back.color = Color.clear; // the bar under it shows through
+            _bossCount = Hud.Label(_bossBox.transform, "", 22f, L, new Vector2(598f, 0f), new Vector2(56f, 40f), TextAlignmentOptions.Left, Hud.Ink, bold: true);
             return true;
         }
 

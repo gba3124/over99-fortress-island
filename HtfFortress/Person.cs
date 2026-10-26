@@ -25,8 +25,13 @@ namespace HtfFortress
         };
         private static readonly string[] HelperClothes = { "_swampLady", "_tourist", "_scaredGuyInShorts", "_jacob", "_archer", "_andrei", "_gunStoreClerc", "_scientist" };
 
-        private Transform _body, _head, _armUL, _armLL, _armUR, _armLR, _legUL, _legLL, _legUR, _legLR, _mouth;
+        private Transform _body, _head, _armUL, _armLL, _armUR, _armLR, _legUL, _legLL, _legUR, _legLR, _mouth, _handR, _cup;
         private Transform[] _eyes = new Transform[0];
+        // The middle of the right hand on Hand_R (measured off the game's hand mesh), and CoffeeCup.obj's handle from its origin:
+        // the mug is held by its handle there, upright, its body toward the person's middle. The game's people have hands about
+        // 1.4 times ours: the mug is drawn as much bigger (8.5 cm across in a helper's hand).
+        private static readonly Vector3 Palm = new Vector3(0.005f, 0.083f, 0.006f), CupGrip = new Vector3(0.055f, 0.047f, 0f);
+        private const float CupScale = 1.3f;
         private readonly Dictionary<Transform, Quaternion> _rest = new Dictionary<Transform, Quaternion>();
         private Vector3 _bodyRest;
         // The old models (no game body): a model per part, each turning about its joint.
@@ -110,6 +115,7 @@ namespace HtfFortress
             _body = B("Body"); _head = B("Head"); _mouth = B("MouthLower");
             _armUL = B("ArmUpper_L"); _armLL = B("ArmLower_L"); _armUR = B("ArmUpper_R"); _armLR = B("ArmLower_R");
             _legUL = B("LegUpper_L"); _legLL = B("LegLower_L"); _legUR = B("LegUpper_R"); _legLR = B("LegLower_R");
+            _handR = B("Hand_R");
             _eyes = new[] { B("Eye_L"), B("Eye_R") }.Where(e => e).ToArray();
             if (!_body || !_head || !_armUL || !_armUR || !_legUL || !_legUR) { Destroy(body); return false; }
             Stand(body.GetComponentsInChildren<SkinnedMeshRenderer>(true).FirstOrDefault(r => r.sharedMesh && r.sharedMesh.name == "CharacterHead"));
@@ -176,12 +182,26 @@ namespace HtfFortress
         }
         private void Reset(Transform b) { if (b && _rest.TryGetValue(b, out var rest)) b.localRotation = rest; }
 
+        // A mug in the right hand at the helpers' coffee break (Helpers.Rest), in its enamel `color`; Pose holds it up in front.
+        public void HoldCup(bool on, Color color)
+        {
+            if (!on) { if (_cup && _cup.gameObject.activeSelf) _cup.gameObject.SetActive(false); return; }
+            if (!_cup)
+            {
+                var hand = _handR ? _handR : _oArmR ? _oArmR : transform;
+                _cup = Models.Attach("CoffeeCup", hand, new Vector3(0.08f, 0.09f, 0.08f), new Vector3(0f, 0.045f, 0f), shadows: false).transform;
+                if (_cup.GetComponent<Renderer>() is Renderer r) Models.Recolor(r, 0, color);
+            }
+            if (!_cup.gameObject.activeSelf) _cup.gameObject.SetActive(true);
+        }
+
         // walk: the stride's phase (radians), stride 0..1 how hard it walks; carry: both hands out in front (a basket);
         // wave 0..1: the right hand up and waving (and the mouth going: they wave while they talk); lookYaw / lookPitch:
-        // the head (degrees, pitch down positive).
-        public void Pose(float walk, float stride, bool carry, float wave, float lookYaw, float lookPitch)
+        // the head (degrees, pitch down positive); cup: the right hand holds the mug up in front, `lift` degrees higher (a
+        // sip); talk 0..1: the mouth going.
+        public void Pose(float walk, float stride, bool carry, float wave, float lookYaw, float lookPitch, bool cup = false, float lift = 0f, float talk = 0f)
         {
-            if (!_body) { PoseModelled(walk, stride, carry, wave, lookYaw, lookPitch); return; }
+            if (!_body) { PoseModelled(walk, stride, carry, wave, lookYaw, lookPitch, cup, lift); return; }
             foreach (var b in _rest.Keys) Reset(b);
             float swing = Mathf.Sin(walk) * 30f * stride;
             // Legs: forward is a turn back about x; the knee bends on the leg that's lifting.
@@ -198,6 +218,12 @@ namespace HtfFortress
                 Turn(_armUL, swing * 0.8f, Vector3.right); Turn(_armUR, -swing * 0.8f, Vector3.right);
                 Turn(_armLL, -8f - Mathf.Abs(swing) * 0.3f, Vector3.right); Turn(_armLR, -8f - Mathf.Abs(swing) * 0.3f, Vector3.right);
             }
+            if (cup && !carry)
+            {
+                // The elbow by the side, the forearm up in front: the hand at the chest; a sip lifts both.
+                Turn(_armUR, -10f - lift, Vector3.right);
+                Turn(_armLR, -90f - lift * 0.6f, Vector3.right);
+            }
             if (wave > 0f)
             {
                 var up = Quaternion.AngleAxis((150f + Mathf.Sin(Time.time * 12f) * 15f) * wave, transform.forward);
@@ -206,6 +232,7 @@ namespace HtfFortress
                 Turn(_armLR, -25f * wave, Vector3.right);
                 if (_mouth) Turn(_mouth, Mathf.Abs(Mathf.Sin(Time.time * 15f)) * 22f * wave, Vector3.right);
             }
+            if (talk > 0f && _mouth && wave <= 0f) Turn(_mouth, Mathf.Abs(Mathf.Sin(Time.time * 13f)) * 18f * talk, Vector3.right);
             // The head turns, then the eyes stare on at whoever's close (as the game's own people do).
             var headRest = (_head.parent ? _head.parent.rotation : Quaternion.identity) * _rest[_head];
             _head.rotation = Quaternion.AngleAxis(lookYaw, transform.up) * Quaternion.AngleAxis(lookPitch, transform.right) * headRest;
@@ -218,6 +245,18 @@ namespace HtfFortress
             }
             // A bounce at each step, and breathing.
             _body.localPosition = _bodyRest + _body.parent.InverseTransformVector(transform.up * (Mathf.Abs(Mathf.Sin(walk)) * 0.035f * stride + 0.006f * Mathf.Sin(Time.time * 2.1f)));
+            if (cup && _handR) PlaceCup(_handR.TransformPoint(Palm));
+        }
+
+        // Upright whatever the hand does (it's coffee), its handle in the palm, sized to the person.
+        private void PlaceCup(Vector3 grip)
+        {
+            if (!_cup || !_cup.gameObject.activeSelf) return;
+            var rot = Quaternion.LookRotation(transform.forward, transform.up);
+            float s = Mathf.Abs(transform.lossyScale.x) * CupScale;
+            _cup.rotation = rot;
+            _cup.localScale = Vector3.one * (s / Mathf.Max(1e-4f, Mathf.Abs(_cup.parent.lossyScale.x)));
+            _cup.position = grip - rot * (CupGrip * s);
         }
 
         // ---------- the old models (tools/make_people.py), when the game's body isn't there ----------
@@ -241,7 +280,7 @@ namespace HtfFortress
             _oLegR = Part("LegR", new Vector3(0.085f, 0.92f, 0f));
         }
 
-        private void PoseModelled(float walk, float stride, bool carry, float wave, float lookYaw, float lookPitch)
+        private void PoseModelled(float walk, float stride, bool carry, float wave, float lookYaw, float lookPitch, bool cup, float lift)
         {
             if (!_oBody) return;
             float swing = Mathf.Sin(walk) * 28f * stride;
@@ -251,11 +290,12 @@ namespace HtfFortress
             else
             {
                 _oArmL.localRotation = Quaternion.Euler(-swing * 0.8f, 0f, -6f);
-                _oArmR.localRotation = Quaternion.Euler(swing * 0.8f, 0f, 6f);
+                _oArmR.localRotation = Quaternion.Euler(cup ? -55f - lift : swing * 0.8f, 0f, 6f);
             }
             if (wave > 0f) _oArmR.localRotation = Quaternion.Slerp(_oArmR.localRotation, Quaternion.Euler(0f, 0f, 150f + Mathf.Sin(Time.time * 12f) * 18f), wave);
             _oHead.localRotation = Quaternion.Euler(lookPitch, lookYaw, 0f);
             _oBody.localPosition = Vector3.up * Mathf.Abs(Mathf.Sin(walk)) * 0.035f * stride;
+            if (cup) PlaceCup(_oArmR.TransformPoint(0f, -0.6f, 0f)); // the mitten at the end of the arm (tools/make_people.py)
         }
     }
 }

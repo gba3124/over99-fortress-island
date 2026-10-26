@@ -49,6 +49,24 @@ namespace HtfFortress
         public static readonly Vector3 KeeperLocal = new Vector3(-2.6f, 0f, -3.4f); // the lighthouse keeper, beside the start circle
         public static readonly Vector3 BoardLocal = new Vector3(3.6f, 0f, -6.2f);   // the record board, the other side of it
         public const float BoardYaw = 35f;                                          // read from the road up from the dock
+        // Where the stall's villagers have a coffee when there's nothing to pick up (Helpers): north of the vault, behind the
+        // stall (between it and the smithy), on the beach by the dock south of the vault. Flat open ground clear of the doors,
+        // the stall's front and the roads, with no plants underfoot (tests/Headless). Yaw: where they're mostly seen from (the
+        // road), so a pair stands side on to it.
+        public static readonly (Vector3 at, float yaw)[] RestSpots = { (new Vector3(-8.2f, 0f, -12.9f), 90f), (new Vector3(9.6f, 0f, -13.9f), -90f), (new Vector3(-7f, 0f, -21f), 100f) };
+        // The seagulls' nests (GullNest.obj), each flat on a real surface (tests/Headless checks them against the models): two on
+        // the lighthouse's gallery (its own frame: the door on +z, the ladder up on -x), two on pile caps along the pier's east
+        // side (the lamps are on the west), one on the smithy's roof (its frame: the roof falls 10 degrees to the front). Yaw, in
+        // the same frame: where its gull looks out.
+        public enum NestOn { Lighthouse, Island, Smithy }
+        public static readonly (NestOn on, Vector3 at, float yaw, float scale)[] NestSpots =
+        {
+            (NestOn.Lighthouse, new Vector3(0.5f, Ladder.DeckY, 0.866f), 30f, 1f), (NestOn.Lighthouse, new Vector3(-0.5f, Ladder.DeckY, 0.866f), -30f, 1f),
+            (NestOn.Island, new Vector3(1.4f, 1.23f, -28.5f), 90f, 0.85f), (NestOn.Island, new Vector3(1.4f, 1.23f, -36.5f), 90f, 0.85f),
+            (NestOn.Smithy, new Vector3(-1.1f, 2.881f, -0.5f), 0f, 1f),
+        };
+        public const float SmithyRoofTilt = 10f;
+        public readonly List<Transform> GullNests = new List<Transform>();
         public const float BuildRadius = 27f;
         public const float IslandRadius = 36f;
         public static readonly float[] GapAngles = { 90f, 210f, 330f };
@@ -362,7 +380,7 @@ namespace HtfFortress
             // 比做一個功能重複的漁網箱子好 可以直接拔掉漁網箱子".)
             var market = Station("MarketStall", MarketLocal, MarketYaw, out var mp);
             MarketPos = mp;
-            Lamp(market.transform, new Vector3(0f, 2.15f, 0.6f), new Color(1f, 0.9f, 0.75f), 4.5f, 0.9f, false); // under the awning, over the counter
+            Lamp(market.transform, new Vector3(0f, 2.115f, 0.1f), new Color(1f, 0.9f, 0.75f), 4.5f, 0.9f, false); // in the lantern under the awning, over the counter
             CounterPos = Ground(market.transform.TransformPoint(new Vector3(0f, 0f, 1.6f)));
             var counter = new GameObject("StallCounter"); // over the counter top (tools/make_station_models.py: ~1 m up, 3 m wide)
             counter.layer = BuildSystem.PieceLayer;
@@ -390,6 +408,14 @@ namespace HtfFortress
             chute.transform.localPosition = new Vector3(0f, 1.0f, 2.15f);
             var mouthBox = chute.AddComponent<BoxCollider>(); mouthBox.isTrigger = true; mouthBox.size = new Vector3(1.6f, 2.0f, 0.9f);
             chute.AddComponent<VaultChute>();
+            // And over his counter inside: thrown to him, he puts it away too (Owen: "倉庫丟給裡面的人那個人應該也會吃然後幫我們存
+            // 才對"). The counter's top is 1.28 m up at (1.35, 0.55) (tools/make_vault_models.py); it goes in at his chest.
+            var desk = new GameObject("VaultDesk");
+            desk.layer = BuildSystem.PieceLayer;
+            desk.transform.SetParent(vault.transform, false);
+            desk.transform.localPosition = new Vector3(1.3f, 1.4f, 0f);
+            var deskBox = desk.AddComponent<BoxCollider>(); deskBox.isTrigger = true; deskBox.size = new Vector3(1.6f, 1.0f, 1.3f); deskBox.center = new Vector3(0.05f, 0.35f, 0.5f);
+            desk.AddComponent<VaultChute>();
 
             // The smithy: the weapon rack on its back wall, the anvil where weapons are dropped to go on the rack.
             var smithy = Station("Smithy", SmithyLocal, SmithyYaw, out var sp);
@@ -429,6 +455,21 @@ namespace HtfFortress
             // The lighthouse keeper walks a slow ring round the tower instead of standing still on the plaza.
             foreach (var k in Keepers)
                 if (k && k.Role == "Lighthouse") { k.WanderAround(Center, 5.2f); break; }
+
+            // The seagulls' nests. The lighthouse isn't under the island's root (Siege moves it), so its two go on the root where
+            // it stands, turned as it is.
+            GullNests.Clear();
+            foreach (var (on, at, yaw, scale) in NestSpots)
+            {
+                var nest = new GameObject("GullNest").transform;
+                nest.SetParent(on == NestOn.Smithy ? smithy.transform : _root.transform, false);
+                var turn = Quaternion.Euler(0f, on == NestOn.Lighthouse ? 180f : 0f, 0f);
+                nest.localPosition = on == NestOn.Lighthouse ? _lighthouseLocal + turn * at : at;
+                nest.localRotation = (on == NestOn.Smithy ? Quaternion.Euler(SmithyRoofTilt, 0f, 0f) : turn) * Quaternion.Euler(0f, yaw, 0f);
+                nest.localScale = Vector3.one * scale;
+                Models.Attach("GullNest", nest, new Vector3(0.46f, 0.12f, 0.46f), new Vector3(0f, 0.06f, 0f), share: true);
+                GullNests.Add(nest);
+            }
             BuildSystem.Log.LogInfo($"Fortress island at {Center} (off island at {_anchor}).");
         }
 
@@ -600,9 +641,10 @@ namespace HtfFortress
                 var bt = box.transform;
                 Hud.Label(bt, L10n.T("soulSettleTitle"), 24f, new Vector2(0f, 1f), new Vector2(18f, -10f), new Vector2(420f, 30f), TextAlignmentOptions.Left, Hud.Gold, bold: true);
                 string left = r.Souls > 0
-                    ? L10n.T("soulSettleFrom", r.SoulsFrom, r.Waves) + "\n" + r.SoulLines + "\n" + L10n.T("soulSettleHint")
+                    ? (r.Waves > r.SoulsFrom ? L10n.T("soulSettleFrom", r.SoulsFrom, r.Waves) + "\n" : "") + r.SoulLines + "\n" + L10n.T("soulSettleHint")
                     : L10n.T("soulSettleNone");
-                Hud.Label(bt, left, 16f, new Vector2(0f, 1f), new Vector2(18f, -46f), new Vector2(580f, 92f), TextAlignmentOptions.TopLeft, Hud.Ink);
+                var leftLabel = Hud.Label(bt, left, 16f, new Vector2(0f, 1f), new Vector2(18f, -46f), new Vector2(580f, 92f), TextAlignmentOptions.TopLeft, Hud.Ink);
+                leftLabel.enableAutoSizing = true; leftLabel.fontSizeMin = 11f; leftLabel.fontSizeMax = 16f; // a first run's many records still fit
                 soulValue = Hud.Label(bt, $"<size=165%><color={Hud.Hex(Hud.Gold)}><b>+0</b></color></size>", 34f, new Vector2(1f, 1f), new Vector2(-24f, -34f), new Vector2(320f, 66f), TextAlignmentOptions.Center);
                 Hud.Label(bt, L10n.T("soulSettleHave", r.SoulsTotal), 18f, new Vector2(1f, 0f), new Vector2(-24f, 22f), new Vector2(320f, 26f), TextAlignmentOptions.Center, Hud.Muted);
                 y -= 154f;

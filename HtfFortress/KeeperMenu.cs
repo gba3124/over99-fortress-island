@@ -27,7 +27,11 @@ namespace HtfFortress
         private readonly Button[] _tabBtn = new Button[3];
         private readonly TextMeshProUGUI[] _tabText = new TextMeshProUGUI[3];
         private int _soulTab;
-        private float _nextRefresh, _buyLockUntil;
+        private float _nextRefresh, _buyLockUntil, _resetArmedUntil;
+        private Button _reset;
+        private TextMeshProUGUI _resetText, _resetInfo;
+        private UnityEngine.UI.Image _resetLine;
+        private static readonly Color ResetColour = new Color(0.50f, 0.24f, 0.22f);
 
         private void Awake() => Instance = this;
 
@@ -125,6 +129,24 @@ namespace HtfFortress
                 bt.text = L10n.T("soulUpBuy"); bt.fontSize = 20f;
             }
 
+            // Under the tree: what's been paid into it, and a reset that gives all of it back (a second click within 3 s does
+            // it; between runs only). Placed under whichever tab's rows are showing (Refresh).
+            _resetLine = Hud.Box(_panel, new Vector2(0.5f, 1f), Vector2.zero, new Vector2(760f, 2f), new Color(1f, 1f, 1f, 0.08f), 0f);
+            _resetInfo = Hud.Label(_panel, "", 18f, new Vector2(0f, 1f), Vector2.zero, new Vector2(480f, 28f), TextAlignmentOptions.Left, Hud.Muted);
+            _reset = Btn(_panel, new Vector2(1f, 1f), Vector2.zero, new Vector2(240f, 42f), ResetColour, () =>
+            {
+                if (Time.unscaledTime > _resetArmedUntil) { _resetArmedUntil = Time.unscaledTime + 3f; Refresh(); return; }
+                _resetArmedUntil = 0f;
+                int back = Loot.Instance ? Loot.Instance.ServerResetTree() : 0;
+                if (back > 0)
+                {
+                    Hud.Banner(L10n.T("soulResetDone", back), 2.5f, Hud.Gold);
+                    Fx.Sound("QuestReceived", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Vector3.zero, 0.7f, AudioDistance.Short);
+                }
+                Refresh();
+            }, out _resetText);
+            _resetText.fontSizeMax = 19f;
+
             // The wave skip sits below the tree with its own label and reason line.
             _skip = Btn(_panel, new Vector2(0.5f, 0f), new Vector2(0f, 118f), new Vector2(420f, 64f), new Color(0.26f, 0.42f, 0.78f),
                 () => { if (FortressPlugin.Instance && FortressPlugin.Instance.ServerSkipTenWaves()) Close(); }, out _skipText);
@@ -165,9 +187,20 @@ namespace HtfFortress
                 int lvl = v != null ? Loot.SoulLevel(v, i) : 0, cost = Loot.SoulUpgradeCost(i, lvl);
                 _upName[i].text = L10n.T("soulUp" + new[] { "Dmg", "Crit", "Coins", "Scales", "Core", "Discount", "TurretDmg", "Knock", "Health" }[i]);
                 _upEffect[i].text = L10n.T("soulNow", Loot.SoulNow(i, lvl));
-                _upCost[i].text = L10n.T("soulUpLevel", lvl, cost);
-                _upBtn[i].interactable = host && v != null && souls >= cost;
+                bool max = lvl >= Loot.SoulMaxLevel(i);
+                _upCost[i].text = max ? "Lv" + lvl + " · MAX" : L10n.T("soulUpLevel", lvl, cost);
+                _upBtn[i].interactable = host && v != null && souls >= cost && !max;
             }
+            float under = -238f - 70f * shown.Count; // the rows end 10 px above this
+            bool resetOk = Loot.CanResetTree, armed = Time.unscaledTime < _resetArmedUntil;
+            int spent = v != null ? v.SoulsSpent : 0;
+            _resetLine.rectTransform.anchoredPosition = new Vector2(0f, under - 12f);
+            _resetInfo.rectTransform.anchoredPosition = new Vector2(52f, under - 37f);
+            _reset.GetComponent<RectTransform>().anchoredPosition = new Vector2(-34f, under - 30f);
+            _resetInfo.text = resetOk ? L10n.T("soulResetSpent", spent) : L10n.T("soulResetBetween");
+            _resetText.text = armed ? L10n.T("soulResetConfirm", spent) : L10n.T("soulResetBtn");
+            _reset.GetComponent<Image>().color = armed ? Hud.Bad : ResetColour;
+            _reset.interactable = host && v != null && spent > 0 && resetOk;
             for (int i = 0; i < 3; i++)
             {
                 _tabBtn[i].GetComponent<Image>().color = i == _soulTab ? Hud.Accent : new Color(0.2f, 0.25f, 0.34f);

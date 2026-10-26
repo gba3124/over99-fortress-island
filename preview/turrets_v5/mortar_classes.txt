@@ -1,0 +1,8 @@
+columns: Lv1, A, B, A1, A2, B1, B2; rows: 3/4, back
+Lv1: top 1.89 m, 2638 turret tris
+A: top 1.95 m, 3874 turret tris
+B: top 1.95 m, 4374 turret tris
+A1: top 2.21 m, 6114 turret tris
+A2: top 1.90 m, 6162 turret tris
+B1: top 2.42 m, 7658 turret tris
+B2: top 2.18 m, 6712 turret tris

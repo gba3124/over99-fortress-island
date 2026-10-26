@@ -264,7 +264,7 @@ namespace HtfFortress.Headless
             // Expansions: they cost scales, wait for the record, add a slot each, stop at the top, survive a save.
             {
                 var e = new VaultData { Scales = 3000, Best = 0 };
-                Check(e.SlotsOf(0) == 4 && e.SlotsOf(1) == 2 && e.StorageSlots == 40, "starting slots and room");
+                Check(e.SlotsOf(0) == 4 && e.SlotsOf(1) == 2 && e.StorageSlots == 60, "starting slots and room");
                 Check(!e.Apply(VaultAction.Expand, default, default, 3, 1), "an expansion that isn't one (the old weapon rack) is refused");
                 // Expansions are gated by scales only now (Owen: "倉庫格子的限制 只用魚鱗限制就好 不要用關卡"): no record needed.
                 int bought = 0;
@@ -272,19 +272,19 @@ namespace HtfFortress.Headless
                 Check(bought == 6 && e.SlotsOf(0) == 10, $"team slots: bought {bought}, now {e.SlotsOf(0)} (expect 6 more, 10)");
                 Check(e.Scales == 3000 - GearCatalog.TeamSlotPrices.Sum(p => p.scales), "team slots charged their price");
                 e.Scales = 10;
-                Check(!e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 40, "storage bought without the scales");
+                Check(!e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 60, "storage bought without the scales");
                 e.Scales = 1000;
-                Check(e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 55, "storage +15 slots");
+                Check(e.Apply(VaultAction.Expand, default, default, (int)Expansion.Storage, 1) && e.StorageSlots == 75, "storage +15 slots");
                 var e2 = VaultData.Read(e.Write());
-                Check(e2.SlotsOf(0) == 10 && e2.StorageSlots == 55, "expansions lost in a save");
+                Check(e2.SlotsOf(0) == 10 && e2.StorageSlots == 75, "expansions lost in a save");
                 foreach (Expansion x in Enum.GetValues(typeof(Expansion)))
                 {
                     var prices = GearCatalog.PricesOf(x);
                     for (int i = 1; i < prices.Length; i++) Check(prices[i].scales > prices[i - 1].scales && prices[i].best >= prices[i - 1].best, $"{x} step {i + 1} isn't dearer");
                 }
-                // The vault: scales only, no wave gate, up to 130 slots.
+                // The vault: scales only, no wave gate, 60 up to 210 slots (Owen's list: base 40 -> 60).
                 var sp = GearCatalog.StoragePrices;
-                Check(sp.All(p => p.best == 0) && GearCatalog.StorageBase + GearCatalog.StorageStep * sp.Length == 190,
+                Check(sp.All(p => p.best == 0) && GearCatalog.StorageBase + GearCatalog.StorageStep * sp.Length == 210,
                       "vault steps: " + string.Join(", ", sp.Select(p => $"{p.scales}@{p.best}")));
                 // Equipping into a bought slot works; one past it doesn't.
                 var f = new VaultData { Scales = 1000, Best = 100 };
@@ -337,9 +337,10 @@ namespace HtfFortress.Headless
                 Check(st.SlotsUsed == 1, "50 lasers still one slot");
                 st.Add(Gear.Laser, Rarity.Common, 1);
                 Check(st.SlotsUsed == 1, "51 lasers stay in their one (gear, rarity) slot; stars are sub-stacks");
-                int gi = 0;
-                while (st.SlotsUsed < st.StorageSlots) st.Add(GearCatalog.All[gi++ % GearCatalog.All.Length], Rarity.Common, 1);
-                Check(st.VaultFull && st.Fits(Gear.Laser, Rarity.Common) && !st.Fits(Gear.Scope, Rarity.Rare),
+                // 43 kinds: commons alone no longer fill 60 slots (this looped till the counter overflowed), so the colours go round too.
+                int n = GearCatalog.All.Length;
+                for (int gi = 0; st.SlotsUsed < st.StorageSlots && gi < 3 * n; gi++) st.Add(GearCatalog.All[gi % n], (Rarity)(gi / n), 1);
+                Check(st.VaultFull && st.Fits(Gear.Laser, Rarity.Common) && !st.Fits(Gear.Scope, Rarity.Legendary),
                       $"full vault ({st.SlotsUsed}/{st.StorageSlots}): only an existing group or a free slot takes more");
                 var fish = new StoredItem { Dead = true, Saved = new SavedItem { Exists = true, ItemID = 37, Weight = 1.734f, Cookness = 0.25f, BettingMultiplier = 1f, KillScoreMultiplier = 1.5f, SkinIndex = 2, IsDripCreature = true } };
                 var gun = new StoredItem { Saved = new SavedItem { Exists = true, ItemID = 12, Weight = 1f, Sight = 3, AmmoType = 1, ExtendedMag = true, LaserSight = true, Sharpness = 0, Quiver = 0, BarrelAttachment = 2 } };
@@ -415,6 +416,13 @@ namespace HtfFortress.Headless
                   && old.ModOf(6, Gear.Rocket, WeaponMods.Power) == GearCatalog.MaxEnhance && old.EnhanceOf(Gear.Laser) == 0 && old.EnhanceOf(Gear.Rebar) == 2,
                   "old weapon enhancement didn't become everyone's power:\n" + old.Write());
 
+            // The keeper's tree reset gives back what was paid: a save from before souls-spent was kept paid crit at 5 x1.15 a level.
+            var tree = VaultData.Read("souls 4 0\nsoulup 1 3 0 0 0 2 0 0 0");
+            int paid = 10 + (5 + 6 + 7) + (12 + 14); // damage Lv1, crit Lv3 (old prices), discount Lv2
+            Check(tree.SoulsSpent == paid && VaultData.Read(tree.Write()).SoulsSpent == paid, $"an old save's tree cost {tree.SoulsSpent} souls, not {paid}");
+            Check(tree.ResetTree() == paid && tree.Souls == 4 + paid && tree.SoulsSpent == 0 && tree.SoulDmg + tree.SoulCrit + tree.SoulDiscount == 0
+                  && VaultData.Read(tree.Write()).SoulsSpent == 0, "the tree reset didn't give back what it cost:\n" + tree.Write());
+
             // Random clicking by three players: nothing appears from nowhere, slots stay legal, scales never go negative.
             var rng = new System.Random(3);
             ulong[] keys = { 1, 2, 3 };
@@ -488,7 +496,7 @@ namespace HtfFortress.Headless
 
         // ---------- buildings ----------
 
-        private static float Dps(Catalog.TurretStats s) => s.Interval > 0f ? s.Damage * s.Shots / s.Interval : 0f;
+        private static float Dps(Catalog.TurretStats s) => s.Interval > 0f ? (s.Heal > 0f ? s.Heal * 1e4f : s.Damage * s.Shots) / s.Interval : 0f; // a repair tower: its heal
 
         private static void Buildings()
         {
@@ -497,7 +505,15 @@ namespace HtfFortress.Headless
             for (int l = 1; l <= 30; l++) Check(BuildSystem.LampsLit(l) == Math.Min(BuildSystem.Lamps, Math.Max(0, l - 3)), $"Lv{l} lights {BuildSystem.LampsLit(l)} lamps");
             Check(BuildSystem.LampsLit(20) == BuildSystem.Lamps, "the ring of lamps isn't full at Lv20");
             var all = (PieceType[])Enum.GetValues(typeof(PieceType));
-            Check(Catalog.TypeCount == all.Length, $"Catalog.TypeCount {Catalog.TypeCount} but {all.Length} piece types (the build bar uses it)");
+            Check(BuildSystem.BarOrder.Length == all.Length && BuildSystem.BarOrder.Distinct().Count() == all.Length, "the build bar (and T) doesn't hold every piece once");
+            // The look card's and the detail panel's picture: the piece by level, or its class's head once it has picked a branch.
+            foreach (var t in all)
+                for (int b = 0; b <= (Catalog.HasSecondBranch(t) ? 6 : Catalog.HasBranches(t) ? 2 : 0); b++)
+                    for (int l = b > 2 ? Catalog.SecondBranchLevel : b > 0 ? Catalog.BranchLevel : 1; l <= 12; l++)
+                    {
+                        string pic = PieceMenu.PictureOf(new PieceState { Type = t, Level = l, Branch = b });
+                        Check(File.Exists(Path.Combine(Src, "Icons", pic + ".png")), $"{t} Lv{l} branch {b}: no picture Icons/{pic}.png");
+                    }
             foreach (var t in all)
             {
                 Check(Catalog.BuildCost(t) > 0, $"{t} costs nothing");
@@ -538,30 +554,117 @@ namespace HtfFortress.Headless
             var v = new VaultData();
             Check(all.Count(v.CanBuild) == 10, "10 pieces buildable without blueprints (the repair tower among them)");
             var mend = Catalog.Turret(PieceType.Mender, 1, 0);
-            Check(!Catalog.Shoots(PieceType.Mender) && !Catalog.Shoots(PieceType.Bubble) && Catalog.Shoots(PieceType.Gun) && mend.Damage > 0 && mend.Range > 0f
-                  && Catalog.Turret(PieceType.Mender, 3, 1).Range > Catalog.Turret(PieceType.Mender, 3, 2).Range && Catalog.Turret(PieceType.Mender, 3, 2).Damage > Catalog.Turret(PieceType.Mender, 3, 1).Damage,
+            Check(!Catalog.Shoots(PieceType.Mender) && !Catalog.Shoots(PieceType.Bubble) && Catalog.Shoots(PieceType.Gun) && mend.Heal > 0f && mend.Range > 0f
+                  && Catalog.Turret(PieceType.Mender, 3, 1).Range > Catalog.Turret(PieceType.Mender, 3, 2).Range && Catalog.Turret(PieceType.Mender, 3, 2).Heal > Catalog.Turret(PieceType.Mender, 3, 1).Heal,
                   "repair tower: heals, doesn't shoot; A reaches further, B heals more");
+            // Owen 2026-10-26: two repair towers and towers never needed looking after. Now a share of the building's own health
+            // a second that grows slowly with levels, whatever the branch.
+            for (int br = 0; br <= 6; br++)
+            {
+                var m3 = Catalog.Turret(PieceType.Mender, 3, br); var m25 = Catalog.Turret(PieceType.Mender, 25, br);
+                float r3 = m3.Heal / m3.Interval, r25 = m25.Heal / m25.Interval;
+                Check(r3 > 0.005f && r25 > r3 && r25 < 0.06f && m25.CoreMend * r25 < 0.03f, $"repair tower branch {br}: {r3 * 100:0.0}%/s at Lv3, {r25 * 100:0.0}%/s at Lv25 (under 6%), lighthouse {m25.CoreMend * r25 * 100:0.0}%/s");
+            }
+            Check(Catalog.Turret(PieceType.Mender, 9, 4).CoreMend > Catalog.Turret(PieceType.Mender, 9, 3).CoreMend * 2.5f, "the core mender mends the lighthouse three times as much");
+            Check(Catalog.Turret(PieceType.Mender, 9, 6).Interval < Catalog.Turret(PieceType.Mender, 9, 5).Interval, "cleanse mends more often");
+            // Owen 2026-10-27 「不會疊加也太爛」: towers over one building stack, strongest first, each worth 60% of the one before.
+            Func<float[], float> stack = x => Catalog.MendStack(x.ToList());
+            Check(Math.Abs(stack(new[] { 0.01f }) - 0.01f) < 1e-6f && Math.Abs(stack(new[] { 0.01f, 0.01f }) - 0.016f) < 1e-6f
+                  && Math.Abs(stack(new[] { 0.01f, 0.01f, 0.01f }) - 0.0196f) < 1e-6f && Math.Abs(stack(new[] { 0.005f, 0.01f }) - 0.013f) < 1e-6f
+                  && stack(Enumerable.Repeat(0.01f, 30).ToArray()) < 0.025f && stack(new float[0]) == 0f,
+                  $"repair towers stack 100/60/36%, strongest first, never past 2.5x (two: {stack(new[] { 0.01f, 0.01f }) * 100:0.00}%)");
+            Check(Catalog.Turret(PieceType.Mender, 3, 2).Surge && !Catalog.Turret(PieceType.Mender, 3, 1).Surge
+                  && Catalog.Turret(PieceType.Mender, 9, 5) is var b1 && b1.Surge && b1.Overheal && !b1.Cleanse
+                  && Catalog.Turret(PieceType.Mender, 9, 6) is var b2 && b2.Surge && b2.Cleanse && !b2.Overheal
+                  && !Catalog.Turret(PieceType.Mender, 9, 3).Overheal && !Catalog.Turret(PieceType.Mender, 9, 4).Cleanse,
+                  "surge on the repair tower's B side (and both its splits), overheal on B1, cleanse on B2");
+            var ps = new PieceState { Hp = 100, MaxHp = 100, Guard = 30 };
+            BuildSystem.Hit(ref ps, 10); bool soaked = ps.Hp == 100 && ps.Guard == 20;
+            BuildSystem.Hit(ref ps, 50); bool through = ps.Hp == 70 && ps.Guard == 0;
+            BuildSystem.Hit(ref ps, 5); bool bare = ps.Hp == 65 && ps.Guard == 0;
+            Check(soaked && through && bare, $"a guard takes hits first, the rest goes through (ended {ps.Hp} hp, {ps.Guard} guard)");
+            ps = new PieceState { Hp = 95, MaxHp = 100 };
+            BuildSystem.Mend(ref ps, 10, 0); bool plain = ps.Hp == 100 && ps.Guard == 0;
+            BuildSystem.Mend(ref ps, 10, Catalog.GuardCap(100)); bool over = ps.Guard == 10;
+            BuildSystem.Mend(ref ps, 30, Catalog.GuardCap(100)); bool capped = ps.Guard == 25 && Catalog.GuardCap(100) == 25;
+            ps = new PieceState { Hp = 90, MaxHp = 100, Guard = 40 };
+            BuildSystem.Mend(ref ps, 20, 25); bool kept = ps.Hp == 100 && ps.Guard == 40;
+            Check(plain && over && capped && kept, "mending past full health: nothing without overheal, a guard up to 25% with it, never cut down");
+            // The Lv9 split must change something (from 0.2.9 to 0.3.0 it was applied to a copy and dropped: every split did nothing).
+            foreach (var t in all.Where(Catalog.HasSecondBranch))
+                for (int b = 3; b <= 6; b++)
+                    Check(!Catalog.Turret(t, 9, b).Equals(Catalog.Turret(t, 9, Catalog.FirstOf(b))), $"{t} split {Catalog.BranchKey(t, b)} changes nothing");
+            if (Environment.GetEnvironmentVariable("SPLIT_TABLE") == "1")
+                foreach (var t in all.Where(Catalog.Shoots))
+                    for (int b = 3; b <= 6; b++)
+                    {
+                        float Tot(Catalog.TurretStats x) => Dps(x) * x.Targets;
+                        var was = Catalog.Turret(t, 12, Catalog.FirstOf(b)); var now = Catalog.Turret(t, 12, b);
+                        Console.WriteLine($"  split {Catalog.BranchKey(t, b),-10} Lv12 dps {Tot(was),9:0} -> {Tot(now),9:0} (x{Tot(now) / Tot(was):0.00})");
+                    }
             v.Unlocked.Add(PieceType.Bubble);
             Check(v.CanBuild(PieceType.Bubble) && !v.CanBuild(PieceType.Sniper), "a blueprint unlocks just its turret");
-            // Every turret's art (tools/make_turrets_v4.py): a body, seven branch heads and an extra barrel, each on disk and
-            // within the budget (TURRET-UPGRADE-DESIGN: at most 2500 triangles and 5 materials a model).
+            // Every turret's art (art pass 5, tools/t5_<turret>.py): a static plinth, a turntable, seven class heads, the
+            // extra barrel, a piece for each of Lv2..Lv8 and a dressing for each final class, each on disk and in budget; the
+            // numbers the models were built round (tools/layout5) are the ones the game stacks them with.
             foreach (var t in all.Where(Catalog.IsTurret))
             {
                 Check(Catalog.HasModules(t) && Catalog.BodyModel(t) == t + "Body", $"{t}: not modular");
-                var names = new List<string> { Catalog.BodyModel(t), Catalog.BarrelModel(t) };
-                for (int b = 0; b <= 6; b++) names.Add(Catalog.ModuleModel(t, b));
-                Check(names.Distinct().Count() == 9, $"{t}: its nine models aren't distinct ({string.Join(",", names)})");
+                var heads = Enumerable.Range(0, 7).Select(b => Catalog.ModuleModel(t, b)).ToList();
+                var kits = Enumerable.Range(Catalog.FirstKit, Catalog.LastKit - Catalog.FirstKit + 1).Select(n => t + "Kit" + n).ToList();
+                var dresses = new[] { 3, 4, 5, 6 }.Select(b => Catalog.DressModel(t, b)).ToList();
+                var names = new List<string> { Catalog.BaseModel(t), Catalog.BodyModel(t), Catalog.BarrelModel(t) }.Concat(heads).Concat(kits).Concat(dresses).ToList();
+                Check(names.Distinct().Count() == 21, $"{t}: its 21 models aren't distinct ({string.Join(",", names)})");
                 foreach (var n in names)
                 {
                     string path = Path.Combine(Src, "Models", n + ".obj");
                     if (!File.Exists(path) || !File.Exists(Path.ChangeExtension(path, ".mtl"))) { Check(false, $"{t}: no {n}.obj/.mtl"); continue; }
                     var lines = File.ReadLines(path).ToList();
                     int tris = lines.Where(l => l.StartsWith("f ")).Sum(l => l.Split(' ').Length - 3), mats = lines.Where(l => l.StartsWith("usemtl ")).Distinct().Count();
-                    Check(tris > 0 && tris <= 2500 && mats <= 5, $"{n}: {tris} triangles, {mats} materials (budget 2500 / 5)");
+                    int budget = n == Catalog.BaseModel(t) ? 1500 : n == Catalog.BodyModel(t) ? 600 : n == Catalog.BarrelModel(t) ? 400
+                               : kits.Contains(n) ? 800 : dresses.Contains(n) ? 1800 : 2500;
+                    Check(tris > 0 && tris <= budget && mats <= 6, $"{n}: {tris} triangles, {mats} materials (budget {budget} / 6)");
+                    // the plinth inside the ring of lamps (radius 1, BuildSystem.LampRing), what stands round it no further out
+                    float reach = lines.Where(l => l.StartsWith("v ")).Select(l => l.Split(' ')).Select(q => (x: float.Parse(q[1], System.Globalization.CultureInfo.InvariantCulture), z: float.Parse(q[3], System.Globalization.CultureInfo.InvariantCulture)))
+                                       .Max(v => Mathf.Sqrt(v.x * v.x + v.z * v.z));
+                    if (n == Catalog.BaseModel(t)) Check(reach <= 0.8f, $"{n}: reaches {reach:0.00} m from the middle, into the lamps (0.8 at most)");
+                    if (kits.Contains(n) || dresses.Contains(n)) Check(reach <= 0.9f, $"{n}: reaches {reach:0.00} m from the middle, into the lamps (0.9 at most)");
                 }
-                var mount = Catalog.BarrelMount(t);
-                Check(mount.y > 0.2f && mount.y < 1.3f && mount.z >= 0f, $"{t}: extra barrels mount at {mount}, off the head");
+                string lay = Path.Combine(Program.Repo, "tools", "layout5", t + ".json");
+                if (!File.Exists(lay)) { Check(false, $"{t}: no tools/layout5/{t}.json"); continue; }
+                var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(lay)).RootElement;
+                float F(System.Text.Json.JsonElement e) => (float)e.GetDouble();
+                Check(Mathf.Abs(F(json.GetProperty("head")) - Catalog.HeadHeight(t)) < 0.005f && Mathf.Abs(F(json.GetProperty("muzzle")) - Catalog.MuzzleHeight(t)) < 0.005f,
+                      $"{t}: Catalog head {Catalog.HeadHeight(t)} / muzzle {Catalog.MuzzleHeight(t)}, the model's {json.GetProperty("head")} / {json.GetProperty("muzzle")}");
+                bool pods = json.TryGetProperty("pod", out var pod) && pod.ValueKind == System.Text.Json.JsonValueKind.Array;
+                Check(pods == (Catalog.Barrels(t, 15, 3) > 1 || Catalog.Barrels(t, 15, 5) > 1), $"{t}: extra barrels in the game and the model's layout disagree");
+                if (pods)
+                {
+                    var step = json.TryGetProperty("step", out var st) ? st : default;
+                    var m = Catalog.BarrelMount(t);
+                    var k = Catalog.BarrelStep(t);
+                    Check((new Vector3(F(pod[0]), F(pod[1]), F(pod[2])) - m).magnitude < 0.005f
+                          && (step.ValueKind != System.Text.Json.JsonValueKind.Array || (new Vector3(F(step[0]), F(step[1]), F(step[2])) - k).magnitude < 0.005f)
+                          && (json.TryGetProperty("mirror", out var mi) && mi.GetBoolean()) == Catalog.BarrelMirror(t),
+                          $"{t}: Catalog barrel mount {m} step {k}, the model's {pod} / {step}");
+                }
             }
+            // A turret looks different after every upgrade (Owen: "每次升等的變化"): on each path a new model at every level up to
+            // Lv9, and past that a lamp a level up to Lv20; every final class looks unlike the others.
+            foreach (var t in all.Where(Catalog.IsTurret))
+                foreach (int final in new[] { 3, 4, 5, 6 })
+                {
+                    int Branch(int lv) => lv < Catalog.BranchLevel ? 0 : lv < Catalog.SecondBranchLevel ? Catalog.FirstOf(final) : final;
+                    string Look(int lv) => string.Join(",", Catalog.TurretKit(t, lv, Branch(lv))) + "|" + Catalog.ModuleModel(t, Branch(lv)) + "|" + Catalog.Barrels(t, lv, Branch(lv));
+                    for (int lv = 2; lv <= 20; lv++)
+                    {
+                        bool changed = lv <= Catalog.SecondBranchLevel ? Look(lv) != Look(lv - 1)
+                                     : Look(lv) != Look(lv - 1) || BuildSystem.LampsLit(lv) != BuildSystem.LampsLit(lv - 1);
+                        Check(changed, $"{t} on the {Catalog.BranchKey(t, final)} path: Lv{lv} looks like Lv{lv - 1}");
+                    }
+                }
+            foreach (var t in all.Where(Catalog.IsTurret))
+                Check(new[] { 3, 4, 5, 6 }.Select(b => string.Join(",", Catalog.TurretKit(t, 9, b)) + Catalog.ModuleModel(t, b)).Distinct().Count() == 4, $"{t}: two final classes look alike");
         }
 
         // ---------- enemies ----------
@@ -625,6 +728,49 @@ namespace HtfFortress.Headless
                 .Select(m => m.Groups[1].Value).Distinct().ToList();
             var unseen = sent.Where(k => !looks.Contains($"case \"{k}\"")).ToList();
             Check(sent.Count >= 90 && unseen.Count == 0, $"{sent.Count} boss effects sent, with no look: {string.Join(", ", unseen)}");
+            // Every boss has a voice and a sound on the move, and every boss move makes a sound, in its own case or in what
+            // that calls, two deep (Owen: 「怪物沒有自己的叫聲 還有怪物本身招式或是他移動都沒聲音」).
+            var calls = Enum.GetValues(typeof(BossVoice.Call)).Cast<BossVoice.Call>().ToList();
+            foreach (var k in EnemyCatalog.BossOrder) Check(calls.All(c => BossVoice.Lines(k, c).Length > 0) && BossVoice.GaitOf(k) != null, $"{k}: a call or its sound on the move missing");
+            string lib = string.Concat(Sources.Where(f => Path.GetFileName(f).StartsWith("Boss")).Select(File.ReadAllText));
+            var bodies = new Dictionary<string, string>();
+            string Body(string name)
+            {
+                if (bodies.TryGetValue(name, out var known)) return known;
+                var all = "";
+                foreach (Match d in new Regex(@"\b(?:IEnumerator|void|bool)\s+" + name + @"\s*\([^;{]*\)\s*(=>|\{)").Matches(lib))
+                {
+                    int at = d.Groups[1].Index, i = at, depth = 0;
+                    if (d.Groups[1].Value == "=>") { all += lib.Substring(at, lib.IndexOf(';', at) - at); continue; }
+                    for (; i < lib.Length; i++) { if (lib[i] == '{') depth++; else if (lib[i] == '}' && --depth == 0) break; }
+                    all += lib.Substring(at, i - at);
+                }
+                return bodies[name] = all;
+            }
+            var noisy = new Regex(@"\b(?:BossAudio|BossVoice)\.|\b(?:Sound|SoundRandom|Rapid|Pitched)\(");
+            var named = new Regex(@"\b([A-Z][A-Za-z0-9]*)\(");
+            bool Heard(string code, int deep) => noisy.IsMatch(code) || deep > 0 && named.Matches(code).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().Any(n => Heard(Body(n), deep - 1));
+            string play = looks.Substring(looks.IndexOf("public static bool Play(BossFx host"));
+            play = play.Substring(0, play.IndexOf("default: return false;"));
+            var moves = new Regex(@"case ""([a-z]+\.[A-Za-z0-9]+)"":").Matches(play).Cast<Match>().ToList();
+            var silent = moves.Where((m, i) => !Heard(play.Substring(m.Index, (i + 1 < moves.Count ? moves[i + 1].Index : play.Length) - m.Index), 2)).Select(m => m.Groups[1].Value).ToList();
+            Check(moves.Count >= 85 && silent.Count == 0, $"{moves.Count} boss moves, silent: {string.Join(", ", silent)}");
+            // ... and every one of those sounds is a clip the game has (its list: BepInEx/fortress-sounds.txt, written in game).
+            string clipList = Path.Combine(Program.Game, "BepInEx/fortress-sounds.txt");
+            if (File.Exists(clipList))
+            {
+                var clips = new HashSet<string>(File.ReadAllLines(clipList).Select(l => l.Trim()));
+                bool Has(string prefix, int n) => n <= 0 ? clips.Contains(prefix) : Enumerable.Range(1, n).All(i => clips.Contains(prefix + i));
+                foreach (EnemyKind k in Enum.GetValues(typeof(EnemyKind)))
+                {
+                    foreach (var c in calls) foreach (var l in BossVoice.Lines(k, c)) Check(Has(l.Clip, l.N), $"{k} {c}: no clip {l.Clip} 1-{l.N}");
+                    if (BossVoice.GaitOf(k) is BossVoice.Gait g) Check(Has(g.Clip, g.N), $"{k} on the move: no clip {g.Clip} 1-{g.N}");
+                }
+                Check(Has(BossVoice.Splash, BossVoice.Splashes), "no splash clips");
+                foreach (Match m in new Regex(@"Pitched\(""([A-Za-z0-9_]+)"", (\d+)").Matches(lib))
+                    Check(Has(m.Groups[1].Value, int.Parse(m.Groups[2].Value)), $"a boss move: no clip {m.Groups[1].Value} 1-{m.Groups[2].Value}");
+            }
+            else Console.WriteLine("  (no fortress-sounds.txt: the boss sounds' clips unchecked)");
             // Their trophies: items 180-189 (after the game's 0-102 and the rocket and guns' 150-177, before the first weapons' 200-255), one each, worth more the later the boss.
             var ids = EnemyCatalog.BossOrder.Select(BossTrophies.IdOf).ToList();
             Check(ids.Distinct().Count() == 10 && ids.Min() == BossTrophies.FirstId && ids.Max() == BossTrophies.FirstId + 9, "trophy ids: " + string.Join(",", ids));
@@ -762,7 +908,15 @@ namespace HtfFortress.Headless
                 Check(g == Gear.Laser || g == Gear.WaterCannon || g == Gear.Boomerang || g == Gear.Gatling || GearCatalog.IsGameGun(g) || GearCatalog.Cooldown(g, Rarity.Common) > 0f, $"{g} fires with no cooldown"); // the laser heats up, the cannon's tank runs dry, the gatling spins up; the game's guns have their own rate
                 for (var r = Rarity.Rare; r <= Rarity.Legendary; r++)
                     Check(GearCatalog.Cooldown(g, r) <= GearCatalog.Cooldown(g, r - 1), $"{g}: {r} recharges slower than {r - 1}");
+                // A magazine's shots and its reload take what the same shots took one cooldown at a time (the same damage a second).
+                int mag = GearCatalog.Magazine(g);
+                foreach (var r in GearCatalog.Rarities)
+                {
+                    float cd = GearCatalog.Cooldown(g, r), cycle = (mag - 1) * cd * GearCatalog.InMagazine + GearCatalog.ReloadTime(g, cd);
+                    Check(mag == 0 || (Mathf.Abs(cycle - mag * cd) < 1e-3f && GearCatalog.ReloadTime(g, cd) > cd), $"{g} {r}: a magazine of {mag} cycles in {cycle:0.00}s, not {mag * cd:0.00}s");
+                }
             }
+            Check(GearCatalog.Magazine(Gear.Rocket) == 3 && GearCatalog.Magazine(Gear.Laser) == 0 && GearCatalog.Magazine(Gear.Gatling) == 0, "magazines: the rocket 3, the held streams none");
             Check(File.Exists(Model("Shark")), "no Shark.obj for the shark whistle");
             Check(File.Exists(Model("RocketShell")), "no RocketShell.obj for the rocket in flight");
             foreach (var g in weapons.Where(GearCatalog.IsGameGun))
@@ -850,23 +1004,6 @@ namespace HtfFortress.Headless
             }
             Check(Weapons.GatlingShots(0f) == Weapons.GatlingRate * Weapons.GatlingFloor && Weapons.GatlingShots(1f) == Weapons.GatlingRate && Weapons.GatlingShots(2f) == Weapons.GatlingRate
                   && Weapons.GatlingShots(0.5f) > Weapons.GatlingShots(0.4f), "the gatling: a quarter of its rate as the barrels start, all of it spun up");
-            List<(Vector3 a, Vector3 b, Vector3 c)> Tris(string name)
-            {
-                var v = new List<Vector3>();
-                var t = new List<(Vector3, Vector3, Vector3)>();
-                foreach (var line in File.ReadLines(Path.Combine(Src, "Models", name + ".obj")))
-                {
-                    var q = line.Split(' ');
-                    float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
-                    if (q[0] == "v") v.Add(new Vector3(-F(1), F(2), F(3))); // as Models.Parse: x flipped
-                    else if (q[0] == "f")
-                    {
-                        var idx = q.Skip(1).Select(s => int.Parse(s.Split('/')[0]) - 1).ToList();
-                        for (int k = 1; k + 1 < idx.Count; k++) t.Add((v[idx[0]], v[idx[k]], v[idx[k + 1]]));
-                    }
-                }
-                return t;
-            }
             var whole = Tris("Gatling");
             int cut = whole.Count(t => WeaponItems.GatlingBarrel(t.a) && WeaponItems.GatlingBarrel(t.b) && WeaponItems.GatlingBarrel(t.c));
             int across = whole.Count(t => new[] { t.a, t.b, t.c }.Count(WeaponItems.GatlingBarrel) is int n && n > 0 && n < 3);
@@ -878,19 +1015,6 @@ namespace HtfFortress.Headless
         // sharks ever made, the game's guns lying on the ground as nothing).
         private static void GunSpecChecks(List<Gear> weapons)
         {
-            (Vector3 min, Vector3 max) Box(string name)
-            {
-                Vector3 lo = Vector3.one * 99f, hi = -lo;
-                foreach (var line in File.ReadLines(Path.Combine(Src, "Models", name + ".obj")))
-                {
-                    var q = line.Split(' ');
-                    if (q[0] != "v") continue;
-                    float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
-                    var v = new Vector3(-F(1), F(2), F(3)); // as Models.Parse: x flipped
-                    lo = Vector3.Min(lo, v); hi = Vector3.Max(hi, v);
-                }
-                return (lo, hi);
-            }
             var ours = weapons.Where(g => !GearCatalog.IsGameGun(g)).ToList();
             Check(ours.Count == 17, $"{ours.Count} fortress weapons, expected 17");
             foreach (var g in ours)
@@ -1002,11 +1126,23 @@ namespace HtfFortress.Headless
                 }
             float bestBoss = kinds.Max(g => Sim.Dps(g, Rarity.Legendary, 5).one);
             Check(Sim.AbsorberDps(Rarity.Legendary, 5, boss: true).one <= 1.6f * bestBoss, "the absorber melts bosses far faster than the best other legendary");
-            // Bosses last (Owen: "王血太少"): the wave-50 one isn't down in seconds to a legendary with its mods at 5, and the first
-            // one doesn't outlast its crash timer for a newcomer's common gun.
-            float wave50 = Sim.BossHp(50) / Sim.BestSingle(Rarity.Legendary, 5), wave10 = Sim.BossHp(10) / Sim.BestSingle(Rarity.Common, 0);
-            Check(wave50 >= 20f && wave10 <= Bosses.CrashAfter / 2f, $"a boss lasts {wave50:0.0} s at wave 50 (legendary Lv5), {wave10:0.0} s at wave 10 (common Lv0), solo");
+            // Bosses are the turrets' to wear down (their health is a ladder against what a save carries over); the players'
+            // weapons break their moves, by what a player deals by then (Bosses.PlayerDps), which has to follow the weapons.
             Check(Enumerable.Range(1, 99).All(w => FortressPlugin.BossHpMult(w + 1) >= FortressPlugin.BossHpMult(w)), "boss health doesn't keep growing with the wave");
+            foreach (var (wave, r, l) in new[] { (10, Rarity.Common, 0), (20, Rarity.Rare, 1), (30, Rarity.Epic, 2), (50, Rarity.Legendary, 5), (70, Rarity.Legendary, 8), (100, Rarity.Legendary, 12) })
+            {
+                float want = Sim.BestSingle(r, l), got = BossBrain.PlayerDps(wave);
+                Check(got >= 0.85f * want && got <= 1.15f * want, $"breaking a wave-{wave} boss's move assumes {got:0} a second a player; the best {r} Lv{l} weapon deals {want:0}");
+            }
+            // The last boss for four players is past an int: kept at MaxBossHp, hits scaled down, not to nothing.
+            double full = (double)EnemyCatalog.Of(EnemyKind.Eye).BaseHp * FortressPlugin.HpMult(100) * FortressPlugin.BossHpMult(100) * 2.5;
+            Check(full > FortressPlugin.MaxBossHp && FortressPlugin.MaxBossHp / full > 0.1, $"the wave-100 boss for four: {full:0.00e0} health, hits x{FortressPlugin.MaxBossHp / full:0.00}");
+            // Souls: every run pays a little; crit is a flat 2 a level to 100%; the discount compounds, its last level still counts.
+            Check(Loot.RunSouls(39) == 9 && Loot.RunSouls(3) == 0 && Loot.SoulUpgradeCost(1, 0) == 2 && Loot.SoulUpgradeCost(1, 49) == 2 && Loot.SoulMaxLevel(1) == 50,
+                  "per-run souls or the crit line changed");
+            int top = Loot.SoulMaxLevel(5);
+            Check(VaultData.DiscountAt(top) == 0.1f && VaultData.DiscountAt(top - 1) > 0.1f && Mathf.Abs(VaultData.DiscountAt(9) - 0.387f) < 0.001f,
+                  $"tower discount: Lv{top} {VaultData.DiscountAt(top):0.000}, Lv{top - 1} {VaultData.DiscountAt(top - 1):0.000}, Lv9 {VaultData.DiscountAt(9):0.000}");
             Check(Weapons.AbsorberBoost > 1f, "the absorber isn't boosted against fish");
         }
 
@@ -1059,8 +1195,9 @@ namespace HtfFortress.Headless
                 Check(Math.Abs(v.WeaponValue(9, g, Rarity.Epic) - GearCatalog.Value(g, Rarity.Epic) * 1.3f) < 1e-4f && v.WeaponValue(8, g, Rarity.Epic) == GearCatalog.Value(g, Rarity.Epic), $"{g}: power isn't the shooter's own");
                 string fx = v.EffectFor(9, g, Rarity.Rare), shown = GearCatalog.FormatValue(g, v.WeaponValue(9, g, Rarity.Rare));
                 Check(fx.Contains(shown), $"{g}: card '{fx}' doesn't show {shown}");
-                if (GearCatalog.Cooldown(g, Rarity.Rare) > 0f)
-                    Check(fx.Contains((GearCatalog.Cooldown(g, Rarity.Rare) * WeaponMods.TimeMult(5)).ToString("0.#")), $"{g}: card '{fx}' doesn't show the faster cooldown");
+                float cd = GearCatalog.Cooldown(g, Rarity.Rare), shownCd = GearCatalog.Magazine(g) > 0 ? GearCatalog.ReloadTime(g, cd) : cd; // a magazine's card shows its reload
+                if (cd > 0f)
+                    Check(fx.Contains((shownCd * WeaponMods.TimeMult(5)).ToString("0.#")), $"{g}: card '{fx}' doesn't show the faster cooldown");
             }
             // "+N" on a tile, the hotbar and a name: a weapon's is that player's mods, gear's its enhancement (legendaries only).
             var pv = new VaultData();
@@ -1151,6 +1288,26 @@ namespace HtfFortress.Headless
             Check(Siege.Money(Helpers.HirePrice(Helpers.MaxHelpers - 1)) > 0 && Siege.Money(Helpers.UpgradePrice(Helpers.MaxLevel - 1)) > 0, "the dearest helper prices still fit");
             var v = new VaultData { Helpers = Helpers.MaxHelpers, HelperSpeed = Helpers.MaxLevel, HelperLoad = Helpers.MaxLevel };
             Check(Helpers.PriceOf(0, v) < 0 && Helpers.PriceOf(1, v) < 0 && Helpers.PriceOf(2, v) < 0, "nothing past the top");
+            // Nothing to pick up (Helpers.Rest): up to five round a coffee, a step between each, the ring small; anything to pick
+            // up is seen within a think and sent within a tick, so they're back at work well inside 2 s.
+            for (int n = 1; n <= Helpers.HumanHelpers; n++)
+            {
+                float apart = n < 2 ? 1f : Enumerable.Range(0, n).Min(k => Vector3.Distance(Helpers.CircleSlot(0f, n, k), Helpers.CircleSlot(0f, n, (k + 1) % n)));
+                Check(Helpers.CircleRadius(n) < 0.9f && apart >= 0.9f && (n > 1 || Helpers.CircleSlot(0f, 1, 0) == Vector3.zero), $"{n} at a coffee: {Helpers.CircleRadius(n):0.00} m round, {apart:0.00} m apart");
+            }
+            Check(Helpers.IdleThink + Helpers.SendEvery < 2f && Helpers.IdleThink <= 0.5f, "resting helpers aren't back at work within 2 s (or think less often than before)");
+            // The mug (Person.HoldCup: its body the first material, the one coloured; about 8 cm across and 9 tall) and the nest
+            // (40-50 cm across; the gull's belly, NestSeat, over its bowl's floor and under its rim; SeagullSit's belly, as drawn
+            // at 0.95, GullBelly under the gull).
+            var (cupLo, cupHi) = Box("CoffeeCup");
+            string cupBody = File.ReadLines(Path.Combine(Src, "Models", "CoffeeCup.obj")).First(l => l.StartsWith("usemtl "));
+            Check(cupHi.z - cupLo.z > 0.07f && cupHi.z - cupLo.z < 0.09f && cupHi.y - cupLo.y > 0.08f && cupHi.y - cupLo.y < 0.1f && cupBody == "usemtl MugBody",
+                  $"the mug: {(cupHi.z - cupLo.z) * 100f:0.0} cm across, {(cupHi.y - cupLo.y) * 100f:0.0} cm tall, first {cupBody}");
+            var (nestLo, nestHi) = Box("GullNest");
+            float across = Math.Max(nestHi.x - nestLo.x, nestHi.z - nestLo.z), floor = Under(Tris("GullNest"), 0f, 0f).Where(y => y < Helpers.NestSeat + 0.02f).DefaultIfEmpty(9f).Max();
+            Check(across >= 0.4f && across <= 0.5f && nestLo.y > -0.01f && floor <= Helpers.NestSeat && nestHi.y > Helpers.NestSeat + 0.04f,
+                  $"the nest: {across:0.00} m across, its floor at {floor:0.000} m, rim {nestHi.y:0.000} m, the gull's belly at {Helpers.NestSeat} m");
+            Check(Math.Abs(Box("SeagullSit").min.y * 0.95f - Helpers.GullBelly) < 0.01f, $"the sitting gull's belly {Box("SeagullSit").min.y * 0.95f:0.000} m under it, not GullBelly");
             Console.WriteLine($"  hire: $" + string.Join(" / ", new[] { 1, 2, 5, 10, 20, 30 }.Select(n => Siege.Money(Helpers.HirePrice(n - 1)).ToString("N0"))) + $"; a level: $" + string.Join(" / ", new[] { 1, 5, 10, 20, 30, 40 }.Select(l => Siege.Money(Helpers.UpgradePrice(l - 1)).ToString("N0"))));
         }
 
@@ -1227,6 +1384,56 @@ namespace HtfFortress.Headless
 
         private static bool IsPatch(object a) => a.GetType().Name == "HarmonyPatch";
 
+        // A model's triangles and its bounds, in the game's frame (as Models.Parse loads it: x flipped).
+        private static List<(Vector3 a, Vector3 b, Vector3 c)> Tris(string name)
+        {
+            var v = new List<Vector3>();
+            var t = new List<(Vector3, Vector3, Vector3)>();
+            foreach (var line in File.ReadLines(Path.Combine(Src, "Models", name + ".obj")))
+            {
+                var q = line.Split(' ');
+                float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
+                if (q[0] == "v") v.Add(new Vector3(-F(1), F(2), F(3)));
+                else if (q[0] == "f")
+                {
+                    var idx = q.Skip(1).Select(s => int.Parse(s.Split('/')[0]) - 1).ToList();
+                    for (int k = 1; k + 1 < idx.Count; k++) t.Add((v[idx[0]], v[idx[k]], v[idx[k + 1]]));
+                }
+            }
+            return t;
+        }
+
+        private static (Vector3 min, Vector3 max) Box(string name)
+        {
+            Vector3 lo = Vector3.one * 99f, hi = -lo;
+            foreach (var line in File.ReadLines(Path.Combine(Src, "Models", name + ".obj")))
+            {
+                var q = line.Split(' ');
+                if (q[0] != "v") continue;
+                float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
+                var v = new Vector3(-F(1), F(2), F(3));
+                lo = Vector3.Min(lo, v); hi = Vector3.Max(hi, v);
+            }
+            return (lo, hi);
+        }
+
+        // Every surface of `mesh` straight above or below (x, z), lowest first.
+        private static List<float> Under(List<(Vector3 a, Vector3 b, Vector3 c)> mesh, float x, float z)
+        {
+            var hs = new List<float>();
+            foreach (var (a, b, c) in mesh)
+            {
+                if (Math.Min(a.x, Math.Min(b.x, c.x)) > x || Math.Max(a.x, Math.Max(b.x, c.x)) < x || Math.Min(a.z, Math.Min(b.z, c.z)) > z || Math.Max(a.z, Math.Max(b.z, c.z)) < z) continue;
+                float d = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+                if (Math.Abs(d) < 1e-9f) continue;
+                float l1 = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / d, l2 = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / d, l3 = 1f - l1 - l2;
+                if (l1 < -1e-5f || l2 < -1e-5f || l3 < -1e-5f) continue;
+                hs.Add(l1 * a.y + l2 * b.y + l3 * c.y);
+            }
+            hs.Sort();
+            return hs;
+        }
+
         // ---------- the island: what players walk to stands on open ground, reachable from the pier ----------
 
         private static void IslandLayout()
@@ -1249,6 +1456,8 @@ namespace HtfFortress.Headless
             string mat = "";
             int groundDown = 0, ground = 0;
             var groundMats = new HashSet<string> { "Sand", "Grass", "IslPath", "IslWetSand", "IslTileDark", "IslGrout", "IslPathWet", "IslPathEdge", "IslGateStone" };
+            var unpaved = new HashSet<string> { "Sand", "Grass", "IslGrassDark", "IslWetSand", "IslSandDrift", "IslWetDrift" }; // off the roads and the plaza
+            var unpavedTris = new List<(Vector3 a, Vector3 b, Vector3 c)>();
             foreach (var line in File.ReadLines(Path.Combine(Src, "Models", "FortressIsland.obj")))
             {
                 var p = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -1258,7 +1467,11 @@ namespace HtfFortress.Headless
                 else if (p[0] == "f")
                 {
                     var idx = p.Skip(1).Select(q => int.Parse(q.Split('/')[0]) - 1).ToArray();
-                    for (int i = 1; i < idx.Length - 1; i++) tris.Add((v[idx[0]], v[idx[i]], v[idx[i + 1]]));
+                    for (int i = 1; i < idx.Length - 1; i++)
+                    {
+                        tris.Add((v[idx[0]], v[idx[i]], v[idx[i + 1]]));
+                        if (unpaved.Contains(mat)) unpavedTris.Add(tris[tris.Count - 1]);
+                    }
                     if (groundMats.Contains(mat))
                     {
                         // The loader mirrors x and reverses the winding, so in this (mirrored) frame a face that ends up facing
@@ -1273,22 +1486,7 @@ namespace HtfFortress.Headless
             // The ground is one open sheet: faces turned upside down are invisible from above and can't be stood on
             // (raycasts and the player's feet go straight through: people "fell under the ground").
             Check(ground > 0 && groundDown == 0, $"{groundDown} of {ground} ground faces face down");
-            // Every surface straight above or below (x, z), lowest first.
-            List<float> Hits(float x, float z)
-            {
-                var hs = new List<float>();
-                foreach (var (a, b, c) in tris)
-                {
-                    if (Math.Min(a.x, Math.Min(b.x, c.x)) > x || Math.Max(a.x, Math.Max(b.x, c.x)) < x || Math.Min(a.z, Math.Min(b.z, c.z)) > z || Math.Max(a.z, Math.Max(b.z, c.z)) < z) continue;
-                    float d = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
-                    if (Math.Abs(d) < 1e-9f) continue;
-                    float l1 = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / d, l2 = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / d, l3 = 1f - l1 - l2;
-                    if (l1 < -1e-5f || l2 < -1e-5f || l3 < -1e-5f) continue;
-                    hs.Add(l1 * a.y + l2 * b.y + l3 * c.y);
-                }
-                hs.Sort();
-                return hs;
-            }
+            List<float> Hits(float x, float z) => Under(tris, x, z);
             // The top surface: what the game's ray from above lands on. A rock or a tree in the way shows up as a jump in it.
             float Top(float x, float z) { var h = Hits(x, z); return h.Count > 0 ? h[h.Count - 1] : float.NaN; }
             // A spot people stand at: flat, at beach level, within `r`.
@@ -1340,6 +1538,75 @@ namespace HtfFortress.Headless
             Walk("pier to the stall", pier, new Vector3(pier.x, 0f, stall.z));
             Walk("pier to the stall", new Vector3(pier.x, 0f, stall.z), stall);
             Walk("pier to start circle", pier, ready);
+            // The helpers' coffee (Helpers.Rest): round each rest spot, one to five of them each stand on level open ground (no
+            // road, plaza or plant underfoot), clear of the stations and of the doors and spots people walk to; and one ring
+            // is well apart from the next.
+            (Vector2 lo, Vector2 hi) Footprint(string model, Vector3 at, float yawDeg)
+            {
+                var (lo, hi) = Box(model);
+                float sn = (float)Math.Sin(yawDeg * Mathf.Deg2Rad), cs = (float)Math.Cos(yawDeg * Mathf.Deg2Rad);
+                var corners = new[] { (lo.x, lo.z), (lo.x, hi.z), (hi.x, lo.z), (hi.x, hi.z) }.Select(q => new Vector2(at.x + q.Item1 * cs + q.Item2 * sn, at.z - q.Item1 * sn + q.Item2 * cs)).ToList();
+                return (new Vector2(corners.Min(q => q.x), corners.Min(q => q.y)), new Vector2(corners.Max(q => q.x), corners.Max(q => q.y)));
+            }
+            var built = new[] { Footprint("Vault", vault, FortressIsland.VaultYaw), Footprint("MarketStall", market, FortressIsland.MarketYaw), Footprint("Smithy", smithy, FortressIsland.SmithyYaw) };
+            var walkedTo = new[] { door, stall, forge, ready, FortressIsland.RespawnLocal, FortressIsland.BoardLocal, FortressIsland.KeeperLocal, pier };
+            // The decor's plants are drawn only (nothing stops a foot): kept a body clear of their leaves (a fern's, the widest, 0.9 m).
+            var plants = File.ReadLines(Path.Combine(Src, "Models", "FortressIsland.decor.txt")).Select(l => l.Split(' '))
+                .Where(q => q.Length > 5 && q[0] != "#" && q[0] != "Pool" && !q[0].StartsWith("GrassIsland"))
+                .Select(q => (x: float.Parse(q[1], inv), z: float.Parse(q[3], inv), r: 0.9f * float.Parse(q[5], inv))).ToList();
+            var rests = FortressIsland.RestSpots;
+            float ring = Helpers.CircleRadius(Helpers.HumanHelpers) + 0.3f; // a ring at its biggest, and a body round it
+            for (int s = 0; s < rests.Length; s++)
+            {
+                var (at, yaw) = rests[s];
+                float lo = float.MaxValue, hi = float.MinValue, people = float.MaxValue, walls = float.MaxValue, leaves = float.MaxValue;
+                int paved = 0;
+                for (int n = 1; n <= Helpers.HumanHelpers; n++)
+                    for (int k = 0; k < n; k++)
+                    {
+                        var p = at + Helpers.CircleSlot(yaw, n, k);
+                        float y = Top(p.x, p.z);
+                        lo = Math.Min(lo, y); hi = Math.Max(hi, y);
+                        for (int e = 0; e < 5; e++) // underfoot and half a metre round
+                        {
+                            float ex = p.x + (e == 1 ? 0.5f : e == 2 ? -0.5f : 0f), ez = p.z + (e == 3 ? 0.5f : e == 4 ? -0.5f : 0f), ey = Top(ex, ez);
+                            if (!Under(unpavedTris, ex, ez).Any(u => Math.Abs(u - ey) < 1e-4f)) paved++;
+                        }
+                        people = Math.Min(people, walkedTo.Min(w => new Vector2(w.x - p.x, w.z - p.z).magnitude));
+                        walls = Math.Min(walls, built.Min(b => new Vector2(Math.Max(0f, Math.Max(b.lo.x - p.x, p.x - b.hi.x)), Math.Max(0f, Math.Max(b.lo.y - p.z, p.z - b.hi.y))).magnitude));
+                        leaves = Math.Min(leaves, plants.Min(q => new Vector2(q.x - p.x, q.z - p.z).magnitude - q.r));
+                    }
+                Check(!float.IsNaN(lo) && hi - lo < 0.3f && paved == 0 && people > 2.5f && walls > 0.4f && leaves > 0.3f,
+                      $"rest spot {s + 1} ({at.x}, {at.z}): ground {lo:0.00} to {hi:0.00} m, {paved} paved, {people:0.0} m from where people go, {walls:0.0} m from a station, {leaves:0.0} m from a plant");
+                for (int o = 0; o < s; o++) Check(Vector3.Distance(at, rests[o].at) >= 2f * ring + 1.5f, $"rest spots {o + 1} and {s + 1} too close for two rings 1.5 m apart");
+                Console.WriteLine($"  rest spot {s + 1}: ground {lo:0.00}-{hi:0.00} m, {people:0.0} m from where people go, {walls:0.0} m from a station, {leaves:0.0} m from a plant");
+            }
+            // The seagulls' nests (FortressIsland.NestSpots): one a gull, each lying on what it's on all round its foot (the
+            // lighthouse's gallery, a pile cap, the smithy's roof: none floating, none sunk in), with nothing over it (its gull comes
+            // straight down onto it).
+            var nests = FortressIsland.NestSpots;
+            int gulls = Helpers.MaxHelpers - Helpers.HumanHelpers;
+            Check(nests.Length >= Math.Max(3, gulls), $"{nests.Length} nests for {gulls} seagulls");
+            var nestTris = Tris("GullNest");
+            float nestFoot = nestTris.SelectMany(t => new[] { t.a, t.b, t.c }).Where(q => q.y < 0.005f).Max(q => new Vector2(q.x, q.z).magnitude);
+            var coreTris = Tris("Core");
+            var smithyTris = Tris("Smithy");
+            foreach (var (on, at, _, scale) in nests)
+            {
+                var mesh = on == FortressIsland.NestOn.Lighthouse ? coreTris : on == FortressIsland.NestOn.Smithy ? smithyTris : tris;
+                float tilt = on == FortressIsland.NestOn.Smithy ? FortressIsland.SmithyRoofTilt * Mathf.Deg2Rad : 0f, off = 0f;
+                int over = 0;
+                for (int k = 0; k <= 12; k++) // round its foot, and its middle
+                {
+                    float a = k * Mathf.PI / 6f, rim = k < 12 ? nestFoot * scale : 0f, lx = rim * (float)Math.Cos(a), lz = rim * (float)Math.Sin(a);
+                    var p = at + new Vector3(lx, -lz * (float)Math.Sin(tilt), lz * (float)Math.Cos(tilt)); // tilted with the roof, Euler(tilt, 0, 0)
+                    var hs = Under(mesh, p.x, p.z);
+                    off = Math.Max(off, hs.Count == 0 ? 9f : hs.Min(y => Math.Abs(y - p.y)));
+                    over += hs.Count(y => y > p.y + 0.03f);
+                }
+                Check(off < 0.03f && over == 0, $"the nest on the {on} at {at.x:0.00}, {at.y:0.00}, {at.z:0.00}: its foot {off * 100f:0.0} cm off what it's on, {over} surfaces over it");
+            }
+            Console.WriteLine($"  {rests.Length} rest spots, {nests.Length} nests (a {nestFoot * 2f:0.00} m foot)");
             // The tide pools (decor file): on the south-west beach, above the waterline.
             var pools = File.ReadLines(Path.Combine(Src, "Models", "FortressIsland.decor.txt")).Where(l => l.StartsWith("Pool ")).Select(l => l.Split(' ')).ToList();
             Check(pools.Count >= 3, $"only {pools.Count} tide pools in the decor file");

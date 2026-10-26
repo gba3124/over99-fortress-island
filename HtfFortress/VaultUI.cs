@@ -576,7 +576,7 @@ namespace HtfFortress
             {
                 // One click for every merge that's possible (Owen: "一鍵合成").
                 int merges = v.Mergeable();
-                var mb = Btn(_tabsLayer, new Vector2(150f, 34f), GridTopLeft + new Vector2(760f, 40f), new Color(0.24f, 0.34f, 0.52f, 1f), () => { Send(VaultAction.MergeAll); AutoTest.Count("smith_merge_all"); }, out var mt);
+                var mb = Btn(_tabsLayer, new Vector2(150f, 34f), GridTopLeft + new Vector2(760f, 40f), new Color(0.24f, 0.34f, 0.52f, 1f), () => { Send(VaultAction.MergeAll); Click(); Fx.SoundRandom("MetallicItemImpact_V", 1, 3, Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Vector3.zero, 0.8f, AudioDistance.Short); AutoTest.Count("smith_merge_all"); }, out var mt);
                 mt.text = L10n.T("smithMergeAll", merges);
                 mt.fontSize = 16f;
                 mb.interactable = merges > 0;

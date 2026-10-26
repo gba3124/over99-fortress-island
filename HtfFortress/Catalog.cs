@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace HtfFortress
@@ -12,6 +13,8 @@ namespace HtfFortress
     {
         public const int BranchLevel = 3;          // the last level in the tables; turrets choose A or B reaching it
         public const int SecondBranchLevel = BranchLevel + 6; // Lv9: six upgrades after the Lv3 branch, then A/B splits again (four kinds a turret)
+        public const int OverdriveLevel = 20;      // a turret that shoots also blows up the fish round it every few seconds (Turrets.Nova)
+        public static float NovaRadius(float range) => 9f + range * 0.25f;
         public static int FirstOf(int branch) => branch <= 2 ? branch : branch <= 4 ? 1 : 2;   // old saves: 1/2 are first-only
         public static int SecondOf(int branch) => branch <= 2 ? 0 : (branch == 3 || branch == 5) ? 1 : 2; // 3/5 = first side, 4/6 = second
         public static int BranchCode(int first, int second) => first == 1 ? (second == 1 ? 3 : 4) : (second == 1 ? 5 : 6);
@@ -19,21 +22,35 @@ namespace HtfFortress
         public static string BranchName(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch));
         public static string BranchDesc(PieceType t, int branch) => branch <= 0 ? "" : L10n.T(BranchKey(t, branch) + "_d");
         public const float BeyondDamage = 1.3f, BeyondHp = 1.25f, BeyondCost = 1.35f, BeyondRange = 0.4f, BeyondRangeMax = 4f;
-        public const int TypeCount = 13;
-        public const float MendCore = 0.5f; // a repair tower gives the lighthouse this share of what it gives a building
+        // A repair tower gives a building a share of the building's own health a second, and the lighthouse a quarter of that
+        // share (Owen 2026-10-26: two repair towers and he never had to look at a tower's health; it used to be a flat amount
+        // growing ×1.3 a level, stacking in full, the lighthouse half of it). Towers over the same building stack, strongest
+        // first, each worth MendFalloff of the one before (Owen 2026-10-27, on only the strongest counting: 「不會疊加也太爛」).
+        public const float MendCore = 0.25f, BeyondHeal = 1.03f, MendFalloff = 0.6f;
+        // Surge (B side): ×SurgeMult on a building under SurgeBelow of its health. Overheal (B1): mending past full health
+        // becomes a guard of up to GuardMax of it, taking hits first, fading GuardFade of it a second out of an overheal
+        // tower's reach. Cleanse (B2): frees a turret a boss has shut down (once it's been CleanseAfter s), each turret once
+        // every CleanseEvery s, and it can't be shut down again for CleanseImmune s.
+        public const float SurgeMult = 2f, SurgeBelow = 0.3f, GuardMax = 0.25f, GuardFade = 0.05f, CleanseAfter = 1f, CleanseEvery = 10f, CleanseImmune = 3f;
+        public static int GuardCap(int maxHp) => Mathf.RoundToInt(maxHp * GuardMax);
+
+        // Several repair towers over one building: strongest first, each worth MendFalloff of the one before.
+        public static float MendStack(List<float> shares)
+        {
+            shares.Sort((a, b) => b.CompareTo(a));
+            float sum = 0f, k = 1f;
+            foreach (float x in shares) { sum += x * k; k *= MendFalloff; }
+            return sum;
+        }
 
         public static bool IsTurret(PieceType t) => (t >= PieceType.Gun && t <= PieceType.Tesla) || t >= PieceType.Flame;
         public static bool NeedsBlueprint(PieceType t) => t >= PieceType.Flame && t != PieceType.Mender;
         public static bool Shoots(PieceType t) => IsTurret(t) && t != PieceType.Bubble && t != PieceType.Mender;
         public static bool HasBranches(PieceType t) => IsTurret(t);
-        public static string HeadModel(PieceType t) => t + "Head";
-        // A modular turret keeps one shared body and swaps a branch module into it (starting with the Gun). The body is what
-        // is attached as the "Head"; the module carries the barrels and the branch's silhouette.
-        // Art pass 3 split every turret into Body + swappable head modules; Owen preferred the original, characterful
-        // single-piece heads (the build poster's silhouettes), so use those by default and keep the modular set as an option.
-        public static bool ClassicHeads = false; // art pass 4 (tools/make_turrets_v4.py): every turret modular again, each with its own body
-        public static bool HasModules(PieceType t) => !ClassicHeads && IsTurret(t);
-        public static string BodyModel(PieceType t) => HasModules(t) ? t + "Body" : HeadModel(t);
+        // Every turret (art pass 5, tools/t5_<turret>.py) is modular: a turntable "Body" on the aimed Head and a swappable
+        // class module carrying the branch's silhouette.
+        public static bool HasModules(PieceType t) => IsTurret(t);
+        public static string BodyModel(PieceType t) => t + "Body";
         public static string ModuleModel(PieceType t, int branch)
         {
             if (!HasModules(t)) return null;
@@ -43,22 +60,91 @@ namespace HtfFortress
         }
         // The extra gun a turret grows at Lv5/10/15 (its own kind of barrel, not a copy of the whole head).
         public static string BarrelModel(PieceType t) => t + "Barrel";
-        // Where an extra barrel sits on the head (x across, y up, z forward): just under the module's own barrel, its rear
-        // where the module's barrel starts (the <T>Barrel models point +Z from their rear; tools/make_turrets_v4.py).
+
+        // Art pass 5 (tools/t5_<turret>.py, Owen's reference sheets): a turret is a static plinth (<T>Base, it doesn't turn
+        // with the aim), the head on the plinth's top (<T>Body, the turntable, and the class head), one more piece round the
+        // plinth at each of Lv2..Lv8 (<T>Kit2..Kit8: iron caps, brass band, supplies, armour, a second supply, its pennant,
+        // its crest) and from Lv9 its final class's own dressing (<T>DressA1..B2), which takes the supplies' places.
+        public static string BaseModel(PieceType t) => t + "Base";
+        public const int FirstKit = 2, LastKit = 8;
+        public static bool Dressed(int level, int branch) => level >= SecondBranchLevel && branch >= 3;
+        public static string DressModel(PieceType t, int branch) => t + "Dress" + (FirstOf(branch) == 1 ? "A" : "B") + SecondOf(branch);
+        public static List<string> TurretKit(PieceType t, int level, int branch)
+        {
+            var kit = new List<string>();
+            bool dressed = Dressed(level, branch);
+            for (int n = FirstKit; n <= Mathf.Min(level, LastKit); n++)
+                if (!(dressed && (n == 4 || n == 6))) kit.Add(t + "Kit" + n);
+            if (dressed) kit.Add(DressModel(t, branch));
+            return kit;
+        }
+        // The head grows a little with every level up to Lv13 (the pieces round the plinth show the rest).
+        public static float HeadScale(int level) => 1f + 0.025f * Mathf.Clamp(level - 1, 0, 12);
+
+        // The numbers each turret's model was built round (tools/layout5/<T>.json; tests/Headless checks they agree): the
+        // head pivot on top of the plinth, the muzzle at Lv1, and where the extra barrels stand on the turntable (head space:
+        // x either side, up, forward), the first pair at BarrelMount and each further pair one BarrelStep on.
+        public static float HeadHeight(PieceType t)
+        {
+            switch (t)
+            {
+                case PieceType.Gun: return 1.1f;
+                case PieceType.Cannon: return 0.78f;
+                case PieceType.Harpoon: return 0.74f;
+                case PieceType.Mortar: return 0.8f;
+                case PieceType.Tesla: return 0.52f;
+                case PieceType.Flame: return 0.56f;
+                case PieceType.Sniper: return 1.12f;
+                case PieceType.Bubble: return 0.46f;
+                default: return 0.76f; // Mender
+            }
+        }
+        public static float MuzzleHeight(PieceType t)
+        {
+            switch (t)
+            {
+                case PieceType.Gun: return 1.424f;
+                case PieceType.Cannon: return 1.332f;
+                case PieceType.Harpoon: return 1.364f;
+                case PieceType.Mortar: return 1.71f;
+                case PieceType.Tesla: return 1.756f;
+                case PieceType.Flame: return 1.064f;
+                case PieceType.Sniper: return 1.48f;
+                case PieceType.Bubble: return 1.022f;
+                default: return 1.4f; // Mender
+            }
+        }
+        // Where the shot leaves at this level (the head, muzzle and all, grows with HeadScale).
+        public static float MuzzleHeight(PieceType t, int level) => HeadHeight(t) + (MuzzleHeight(t) - HeadHeight(t)) * HeadScale(level);
         public static Vector3 BarrelMount(PieceType t)
         {
             switch (t)
             {
-                case PieceType.Gun: return new Vector3(0f, 0.54f, 0.4f);
-                case PieceType.Cannon: return new Vector3(0f, 0.56f, 0.3f);
-                case PieceType.Harpoon: return new Vector3(0f, 0.83f, 0.3f);
-                case PieceType.Mortar: return new Vector3(0f, 0.55f, 0.1f);
-                case PieceType.Tesla: return new Vector3(0f, 1.12f, 0.3f);
-                case PieceType.Flame: return new Vector3(0f, 0.36f, 0.2f);
-                case PieceType.Sniper: return new Vector3(0f, 0.83f, 0.4f);
-                default: return new Vector3(0f, 0.6f, 0.3f); // Bubble, Mender: never get one
+                case PieceType.Gun: return new Vector3(0.372f, 0.192f, 0.144f);
+                case PieceType.Cannon: return new Vector3(0.432f, 0.096f, -0.132f);
+                case PieceType.Harpoon: return new Vector3(0.36f, 0.096f, -0.144f);
+                case PieceType.Mortar: return new Vector3(0.396f, 0.06f, 0.144f);
+                case PieceType.Tesla: return new Vector3(0.24f, 0.06f, 0.06f);
+                case PieceType.Flame: return new Vector3(0.324f, 0.096f, 0.06f);
+                case PieceType.Sniper: return new Vector3(0.282f, 0.084f, 0.024f);
+                default: return Vector3.zero; // no extra barrels
             }
         }
+        public static Vector3 BarrelStep(PieceType t)
+        {
+            switch (t)
+            {
+                case PieceType.Gun: return new Vector3(0f, 0.156f, 0f);
+                case PieceType.Cannon: return new Vector3(0f, 0.18f, 0f);
+                case PieceType.Harpoon: return new Vector3(0f, 0.156f, 0f);
+                case PieceType.Mortar: return new Vector3(0f, 0f, -0.192f);
+                case PieceType.Tesla: return new Vector3(0f, 0f, -0.24f);
+                case PieceType.Flame: return new Vector3(0f, 0.144f, 0f);
+                case PieceType.Sniper: return new Vector3(0f, 0.12f, 0f);
+                default: return Vector3.zero;
+            }
+        }
+        public static bool BarrelMirror(PieceType t) => false;
         // How many barrels the volley physically has (and how many fish/shells it fires at once): the model follows the stat, so
         // an upgrade that adds a shot also grows a barrel (Owen: "要跟他同時可以射幾發有關").
         public static int Barrels(PieceType t, int level, int branch)
@@ -71,11 +157,6 @@ namespace HtfFortress
                 default: return 1; // bubble/mender: no barrels
             }
         }
-        // The ornament a path grows: A/B at Lv3, A1/A2/B1/B2 at Lv6 (BranchA... models).
-        public static string BranchOrnament(int branch) => branch <= 0 ? null : branch <= 2
-            ? "Branch" + (branch == 1 ? "A" : "B")
-            : "Branch" + (FirstOf(branch) == 1 ? "A" : "B") + (SecondOf(branch) == 1 ? "1" : "2");
-
         public static int BuildCost(PieceType t) => Siege.Money(BaseCost(t)); // in the game's dollars
 
         private static int BaseCost(PieceType t)
@@ -149,6 +230,8 @@ namespace HtfFortress
             public int Chain, Shots, Targets; public bool Pierce; public float Slow, SlowTime, Burn;
             public float BossMult, WaterMult;
             public float Cone, Shield; // flamethrower half-angle; bubble damage reduction
+            public float Heal, CoreMend; // repair tower: share of a building's health a second; the lighthouse's share of that
+            public bool Surge, Overheal, Cleanse; // repair tower: its B side, B1, B2 (see SurgeMult)
         }
 
         // Branch 1 = A, 2 = B (chosen when upgrading to Lv3).
@@ -156,11 +239,12 @@ namespace HtfFortress
         {
             int first = FirstOf(branch), second = SecondOf(branch);
             var s = TableTurret(t, level, first);
-            if (second > 0) SecondSplit(t, first, second, s);
+            if (second > 0) SecondSplit(t, first, second, ref s); // by ref: from 0.2.9 a copy took the split and was dropped
             if (Beyond(level) == 0) return s;
             float k = Grow(BeyondDamage, level);
             s.Damage = Mathf.RoundToInt(Mathf.Min(1e8f, s.Damage * k));
-            s.Interval = Mathf.Max(0.05f, s.Interval * Mathf.Pow(0.96f, Beyond(level))); // every level also fires faster
+            if (t != PieceType.Mender) s.Interval = Mathf.Max(0.05f, s.Interval * Mathf.Pow(0.96f, Beyond(level))); // every level also fires faster
+            s.Heal *= Grow(BeyondHeal, level);
             s.Burn *= k;
             s.Range += Mathf.Min(BeyondRangeMax, BeyondRange * Beyond(level));
             if (t == PieceType.Bubble) s.Shield = Mathf.Min(0.85f, s.Shield + 0.025f * Beyond(level));
@@ -224,10 +308,11 @@ namespace HtfFortress
                     if (first == 1) s.Range += 4f;                         // Expanse
                     if (first == 2) s.Shield = 0.65f;                      // Hardened
                     break;
-                case PieceType.Mender: // no attack: once a second every damaged building within Range gets Damage health back, the lighthouse MendCore of it
-                    s.Damage = new[] { 5, 8, 12 }[i]; s.Interval = 1f; s.Range = new[] { 7f, 8f, 9f }[i];
+                case PieceType.Mender: // no attack: every damaged building within Range gets Heal of its health back a second
+                    s.Damage = 0; s.Interval = 1f; s.Range = new[] { 7f, 8f, 9f }[i];
+                    s.Heal = new[] { 0.008f, 0.01f, 0.012f }[i]; s.CoreMend = MendCore;
                     if (first == 1) s.Range += 4f;                         // Wide
-                    if (first == 2) s.Damage *= 2;                         // Surge
+                    if (first == 2) { s.Heal *= 1.6f; s.Surge = true; }    // Surge: and twice that on what's nearly down
                     break;
                 case PieceType.Tesla:
                     s.Damage = new[] { 14, 22, 33 }[i]; s.Interval = new[] { 1.2f, 1f, 0.85f }[i]; s.Range = new[] { 11f, 13f, 15f }[i];
@@ -241,7 +326,7 @@ namespace HtfFortress
 
         // The Lv6 split continues its own Lv3 choice (Owen: "沿著第一個選擇延伸，每個要夠獨特"): A1/A2 only along A,
         // B1/B2 only along B, each with its own name and effect.
-        private static void SecondSplit(PieceType t, int first, int second, TurretStats s)
+        private static void SecondSplit(PieceType t, int first, int second, ref TurretStats s)
         {
             switch (t)
             {
@@ -278,8 +363,8 @@ namespace HtfFortress
                     else { if (second == 1) { s.Shield = Mathf.Min(0.9f, s.Shield + 0.2f); } else { s.Range += 2f; s.Shield = Mathf.Min(0.9f, s.Shield + 0.1f); } }
                     break;
                 case PieceType.Mender:
-                    if (first == 1) { if (second == 1) { s.Range += 4f; s.Damage = Mathf.RoundToInt(s.Damage * 1.3f); } else { s.Range += 2f; s.Damage = Mathf.RoundToInt(s.Damage * 1.5f); } }
-                    else { if (second == 1) { s.Damage = Mathf.RoundToInt(s.Damage * 1.6f); } else { s.Range += 2f; s.Interval *= 0.8f; } }
+                    if (first == 1) { if (second == 1) { s.Range += 4f; s.Heal *= 1.3f; } else { s.Range += 2f; s.Heal *= 1.5f; s.CoreMend *= 3f; } } // grand / core mender
+                    else { if (second == 1) { s.Heal *= 1.4f; s.Overheal = true; } else { s.Range += 2f; s.Interval *= 0.8f; s.Cleanse = true; } } // overheal / cleanse
                     break;
             }
         }

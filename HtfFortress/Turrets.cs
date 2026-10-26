@@ -69,6 +69,7 @@ namespace HtfFortress
             }
             if (Enemies.Instance.TryGet(c, out var tag) && (tag.Kind == EnemyKind.Tank || EnemyCatalog.IsBoss(tag.Kind))) d *= s.BossMult * (1f + Perks.Team(Gear.ApRounds));
             Siege.Instance.Slow(c, Perks.Team(Gear.FrostCore), 1.5f);
+            Siege.Instance.Slow(c, s.Slow, s.SlowTime); // a branch's slow (hail, shockwave, conduction, blue flame, harpoons)
             Ignite(c); // Incendiary Rounds (fortress gear): every turret hit sets the fish burning
             if (s.WaterMult != 1f && c.transform.position.y < WaterManager.GetWaterHeight(c.transform.position) + 0.3f) d *= s.WaterMult;
             if (Siege.Instance.IsBubbled(c)) d *= 1.5f; // bubble gun
@@ -87,7 +88,7 @@ namespace HtfFortress
             if (p.Type == PieceType.Tesla) s.Chain += Mathf.RoundToInt(Perks.Team(Gear.TeslaCoil));
             _owner = BuildSystem.Instance.OwnerOf(p.Id);
             _from = p.Pos;
-            Vector3 muzzle = p.Pos + Vector3.up * 1.1f;
+            Vector3 muzzle = p.Pos + Vector3.up * Catalog.MuzzleHeight(p.Type, p.Level); // where its model's muzzle is
 
             // Range is measured flat (a cylinder): a turret up on a rise reaches the beach below it, and one on the ground the
             // flyers over it (the playtest's high turret couldn't hit what was under it).
@@ -129,6 +130,7 @@ namespace HtfFortress
                 {
                     int dmg = Dmg(s.Damage, target, s);
                     Hit(target, dmg);
+                    Pierce(alive, muzzle, target, s);
                     _tracer.TryGetValue(p.Id, out var tr);
                     if (Time.time - tr.next > 0.5f) tr.dmg = 0; // left over from when it last stopped firing
                     tr.dmg += dmg;
@@ -169,7 +171,8 @@ namespace HtfFortress
                 {
                     int dmg = Dmg(s.Damage, target, s);
                     Hit(target, dmg);
-                    Fx.Send(FxKind.Snipe, muzzle, hit, p.Id, dmg, 0, Key(p.Type));
+                    Pierce(alive, muzzle, target, s);
+                    Fx.Send(FxKind.Snipe, muzzle, s.Pierce ? muzzle + (hit - muzzle).Flat().normalized * s.Range + Vector3.up * (hit.y - muzzle.y) : hit, p.Id, dmg, 0, Key(p.Type));
                     // Three targets (Lv5+ barrels) are a burst, not a shotgun: `啪、啪、啪`, each round separately aimed.
                     var extras = Others(alive, target, muzzle, s, true);
                     if (extras.Count > 0)
@@ -186,6 +189,7 @@ namespace HtfFortress
                     {
                         Vector3 at = i == 0 ? hit : hit + Random.insideUnitSphere.Flat() * 3f;
                         Splash(alive, at, s.Splash, s.Damage, s);
+                        if (s.Burn > 0f) StartCoroutine(GroundFire(at, s, _owner, _from));
                         Fx.Send(FxKind.Cannonball, muzzle, at, i == 0 ? p.Id : 0, Mathf.RoundToInt(s.Damage * DamageMultiplier.Value * SoulTurretMult), 0, Key(p.Type));
                     }
                     break;
@@ -198,14 +202,17 @@ namespace HtfFortress
                         Vector3 d = Quaternion.Euler(0f, (i - (s.Shots - 1) * 0.5f) * 12f, 0f) * dir;
                         Vector3 end = muzzle + d * s.Range;
                         var living = Living(alive);
+                        Creature last = null; float far = -1f;
                         foreach (var c in living)
                             if (DistToSegment(c.transform.position, muzzle, end) < 1f)
                             {
                                 Hit(c, Dmg(s.Damage, c, s));
-                                Siege.Instance.Slow(c, s.Slow, s.SlowTime);
+                                float along = Vector3.Dot((c.transform.position - muzzle).Flat(), d);
+                                if (along > far) { far = along; last = c; }
                             }
                         Done(living);
                         Fx.Send(FxKind.Harpoon, muzzle, end, i == 0 ? p.Id : 0, 0, 0, Key(p.Type));
+                        if (s.Chain > 0 && last) ChainHarpoon(alive, last, s, Key(p.Type));
                     }
                     break;
                 }
@@ -222,13 +229,14 @@ namespace HtfFortress
                 case PieceType.Tesla:
                 {
                     var hitSet = new HashSet<Creature>();
-                    Creature cur = target; Vector3 from = muzzle + Vector3.up * 0.3f;
+                    Creature cur = target; Vector3 from = muzzle; // the electrode on top (Catalog.MuzzleHeight)
                     for (int n = 0; n < s.Chain && cur; n++)
                     {
                         hitSet.Add(cur);
                         int zd = Dmg(s.Damage, cur, s);
                         if (Weapons.IsWet(cur)) zd = Mathf.RoundToInt(zd * Weapons.WetMult); // the water cannon's wet fish
                         Hit(cur, zd);
+                        if (s.Splash > 0f) ArcBlast(alive, cur, s, n == 0 ? p.Id : 0);
                         if (Perks.TeamLegend(Gear.TeslaCoil)) { Siege.Instance.Slow(cur, 1f, 0.35f); Perks.Proc(Gear.TeslaCoil, cur.transform.position); } // legendary: every zap stuns
                         Vector3 to = cur.transform.position + Vector3.up * 0.4f;
                         Fx.Send(FxKind.Zap, from, to, n == 0 ? p.Id : 0, zd, 0, Key(p.Type));
@@ -247,7 +255,7 @@ namespace HtfFortress
             }
             // Lv20 overdrive: every few seconds the tower does not just shoot, it detonates the ground around it. This is the
             // incremental-game "it went crazy" moment, and it is deliberately very visible.
-            if (p.Level >= 20 && (!_nova.TryGetValue(p.Id, out float nt) || Time.time >= nt))
+            if (p.Level >= Catalog.OverdriveLevel && (!_nova.TryGetValue(p.Id, out float nt) || Time.time >= nt))
             {
                 _nova[p.Id] = Time.time + 4.5f;
                 Nova(p, s, muzzle, alive);
@@ -256,7 +264,7 @@ namespace HtfFortress
         private void Nova(PieceState p, Catalog.TurretStats s, Vector3 muzzle, List<Creature> alive)
         {
             Vector3 at = p.Pos + Vector3.up * 0.6f;
-            float r = 9f + s.Range * 0.25f;
+            float r = Catalog.NovaRadius(s.Range);
             foreach (var c in alive.Where(c => Alive(c) && (c.transform.position - at).Flat().sqrMagnitude <= r * r).ToList())
             {
                 Hit(c, Dmg(Mathf.RoundToInt(s.Damage * 1.6f), c, s));
@@ -361,26 +369,71 @@ namespace HtfFortress
             _burning[c] = (dps, Time.time + 3f, _owner);
         }
 
-        // Repair towers: once a second every damaged building in reach gets the tower's heal back (not the tower itself: two
-        // look after each other), the lighthouse MendCore of it; a green spark to a few of them every other second.
+        // Repair towers: once a second every damaged building in reach gets a share of its own health back (not the tower
+        // itself: two look after each other). Towers over the same building stack, strongest first, each worth less
+        // (Catalog.MendStack); the lighthouse gets a part of each one's share (Catalog.MendCore). Surge towers give twice as
+        // much to what's nearly down, overheal towers mend past full health into a guard, cleansing towers free turrets a
+        // boss has shut down. Each tower shows what it mends, every second (Fx.Mending: an arc, beads, pluses), up to
+        // MendShown.
         private float _nextMend;
-        private int _mendPulse;
+        private const int MendShown = 10;
+        private readonly HashSet<int> _guarded = new HashSet<int>(); // buildings an overheal tower reaches
+        private readonly List<float> _stack = new List<float>();
         private void Mend()
         {
-            bool fx = (++_mendPulse & 1) == 0;
-            foreach (var p in BuildSystem.Instance.ServerPieces.Where(x => x.Type == PieceType.Mender).ToList())
+            var menders = BuildSystem.Instance.ServerPieces.Where(x => x.Type == PieceType.Mender && !Bosses.Instance.IsSilenced(x.Id)).ToList();
+            var pieces = BuildSystem.Instance.ServerPieces.ToList(); // ServerMend writes into it
+            var reached = new Dictionary<int, List<(float share, int by, bool surge)>>(); // building (0: the lighthouse) -> the towers reaching it
+            void Reach(int id, float share, int by, bool surge)
             {
-                if (Bosses.Instance.IsSilenced(p.Id)) continue;
-                var s = Catalog.Turret(p.Type, p.Level, p.Branch);
-                var healed = BuildSystem.Instance.ServerMendArea(p.Pos, s.Range, s.Damage, p.Id);
-                Vector3 core = Siege.Instance.CorePos;
-                if ((core - p.Pos).Flat().sqrMagnitude <= s.Range * s.Range && Siege.Instance.ServerHealCore(s.Damage * Catalog.MendCore / Mathf.Max(1, Siege.Instance.CoreMax)) > 0)
-                    healed.Add(core + Vector3.up * 2f);
-                if (healed.Count == 0) continue;
+                if (!reached.TryGetValue(id, out var l)) reached[id] = l = new List<(float, int, bool)>();
+                l.Add((surge ? share * Catalog.SurgeMult : share, by, surge));
+            }
+            _guarded.Clear();
+            Vector3 core = Siege.Instance.CorePos;
+            bool coreLow = Siege.Instance.CoreHp < Siege.Instance.CoreMax * Catalog.SurgeBelow;
+            foreach (var m in menders)
+            {
+                var s = Catalog.Turret(m.Type, m.Level, m.Branch);
+                float share = s.Heal / s.Interval, r2 = s.Range * s.Range;
+                foreach (var p in pieces)
+                {
+                    if (p.Id == m.Id || (p.Pos - m.Pos).Flat().sqrMagnitude > r2) continue;
+                    Reach(p.Id, share, m.Id, s.Surge && p.Hp < p.MaxHp * Catalog.SurgeBelow);
+                    if (s.Overheal) _guarded.Add(p.Id);
+                    if (s.Cleanse && Catalog.IsTurret(p.Type) && Bosses.Instance.SilencedFor(p.Id) >= Catalog.CleanseAfter
+                        && Time.time >= Bosses.Instance.FreedAt(p.Id) + Catalog.CleanseEvery)
+                    {
+                        Bosses.Instance.Free(p.Id);
+                        Fx.Send(FxKind.Mend, Muzzle(m), p.Pos + Vector3.up * 0.6f, m.Id, who: p.Id, key: "free");
+                        AutoTest.Count("cleansed");
+                    }
+                }
+                if ((core - m.Pos).Flat().sqrMagnitude <= r2) Reach(0, share * s.CoreMend, m.Id, s.Surge && coreLow);
+            }
+            BuildSystem.Instance.ServerFadeGuards(_guarded);
+            var healed = new Dictionary<int, List<(Vector3 at, int id, bool surge)>>();
+            foreach (var kv in reached)
+            {
+                _stack.Clear();
+                foreach (var t in kv.Value) _stack.Add(t.share);
+                float total = Catalog.MendStack(_stack);
+                Vector3 at = core + Vector3.up * 2f;
+                if (kv.Key == 0 ? Siege.Instance.ServerHealCore(total) <= 0 : !BuildSystem.Instance.ServerMend(kv.Key, total, _guarded.Contains(kv.Key), out at)) continue;
+                foreach (var t in kv.Value)
+                {
+                    if (!healed.TryGetValue(t.by, out var l)) healed[t.by] = l = new List<(Vector3, int, bool)>();
+                    l.Add((at, kv.Key, t.surge));
+                }
+            }
+            foreach (var m in menders)
+            {
+                if (!healed.TryGetValue(m.Id, out var list)) continue;
                 AutoTest.Count("mended");
-                if (fx) foreach (var to in healed.Take(3)) Fx.Send(FxKind.Mend, p.Pos + Vector3.up * 1.4f, to + Vector3.up * 0.6f, p.Id);
+                foreach (var h in list.Take(MendShown)) Fx.Send(FxKind.Mend, Muzzle(m), h.at + Vector3.up * 0.6f, m.Id, who: h.id, key: h.surge ? "surge" : null);
             }
         }
+        private static Vector3 Muzzle(PieceState m) => m.Pos + Vector3.up * Catalog.MuzzleHeight(m.Type, m.Level);
 
         // Bubble shields: the strongest one covering `pos` (0 = none). Used by every piece-damage path on the host.
         public static float ShieldAt(Vector3 pos)
@@ -437,8 +490,12 @@ namespace HtfFortress
             if (!Siege.Instance.ServerActive) yield break;
             _owner = owner; _from = from;
             Splash(FortressPlugin.Alive, at, s.Splash, s.Damage, s);
-            if (s.Burn <= 0f) yield break;
-            // Fire branch: the impact keeps burning for 4 s.
+            if (s.Burn > 0f) yield return GroundFire(at, s, owner, from);
+        }
+
+        // Fire branches (mortar, napalm cluster): where a shell lands keeps burning for 4 s, s.Burn damage a second.
+        private IEnumerator GroundFire(Vector3 at, Catalog.TurretStats s, int owner, Vector3 from)
+        {
             for (float t = 0f; t < 4f && Siege.Instance.ServerActive; t += 0.5f)
             {
                 Fx.Send(FxKind.Burn, at, at);
@@ -476,6 +533,48 @@ namespace HtfFortress
                     }
                 }
             }
+        }
+
+        // Railgun, piercing shot: the round goes on through `first` to the end of its range, hitting every fish within a metre
+        // of the line.
+        private void Pierce(List<Creature> alive, Vector3 muzzle, Creature first, Catalog.TurretStats s)
+        {
+            if (!s.Pierce) return;
+            Vector3 end = muzzle + (first.transform.position - muzzle).Flat().normalized * s.Range;
+            var living = Living(alive);
+            foreach (var c in living)
+                if (c != first && DistToSegment(c.transform.position, muzzle, end) < 1f) Hit(c, Dmg(s.Damage, c, s));
+            Done(living);
+        }
+
+        // Chain harpoon: from the last fish on the harpoon's line it jumps to the nearest fish not yet hit (6 m), s.Chain times.
+        private void ChainHarpoon(List<Creature> alive, Creature from, Catalog.TurretStats s, string key)
+        {
+            var hit = new HashSet<Creature> { from };
+            for (int n = 0; n < s.Chain && from; n++)
+            {
+                Creature next = null; float best = 6f * 6f;
+                foreach (var c in alive)
+                {
+                    if (!Alive(c) || hit.Contains(c)) continue;
+                    float d = (c.transform.position - from.transform.position).sqrMagnitude;
+                    if (d < best) { best = d; next = c; }
+                }
+                if (!next) break;
+                Fx.Send(FxKind.Harpoon, from.transform.position + Vector3.up * 0.5f, next.transform.position + Vector3.up * 0.5f, 0, 0, 0, key);
+                Hit(next, Dmg(s.Damage, next, s));
+                hit.Add(next);
+                from = next;
+            }
+        }
+
+        // Arc blast: a zap bursts round the fish it hits, half its damage to every fish within s.Splash (one boom a volley).
+        private void ArcBlast(List<Creature> alive, Creature at, Catalog.TurretStats s, int pieceId)
+        {
+            Vector3 pos = at.transform.position;
+            Splash(alive, pos, s.Splash, Mathf.RoundToInt(s.Damage * 0.5f), s);
+            if (pieceId != 0) Fx.Send(FxKind.Blast, pos, pos, 0, Mathf.RoundToInt(s.Splash * 100f));
+            AutoTest.Count("arc_blasts");
         }
 
         private static float DistToSegment(Vector3 p, Vector3 a, Vector3 b)

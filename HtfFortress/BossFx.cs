@@ -27,24 +27,38 @@ namespace HtfFortress
             return id != 0 && cm != null && cm.Objects.Spawned.TryGetValue(id, out NetworkObject nob) && nob ? nob.transform : null;
         }
 
-        private static EnemyKind KindOf(int id) => Enemies.Instance && Enemies.Instance.ClientTagOf(id) is EnemyTag t ? t.Kind : EnemyKind.Runner;
+        internal static EnemyKind KindOf(int id) => Enemies.Instance && Enemies.Instance.ClientTagOf(id) is EnemyTag t ? t.Kind : EnemyKind.Runner;
         public static Color ColourOf(int id) => BossLooks.Colour(KindOf(id));
 
         public void Play(FxEvent e)
         {
             string k = e.Key ?? "";
-            if (k.StartsWith("w.")) { StartCoroutine(Warning(k.Substring(2), e.From, e.To, e.Who % 100000 / 100f, e.Who / 100000, e.Arg / 1000f, ColourOf(e.PieceId))); return; }
+            if (k.StartsWith("w.")) { BossVoice.Say(e.PieceId, BossVoice.Call.Attack); Focus(e.PieceId, k.Substring(2), e.From, e.To, e.Arg / 1000f); StartCoroutine(Warning(k.Substring(2), e.From, e.To, e.Who % 100000 / 100f, e.Who / 100000, e.Arg / 1000f, ColourOf(e.PieceId))); return; }
             switch (k)
             {
-                case "winding": StartCoroutine(Winding(e.PieceId, e.Arg / 1000f)); return;
+                case "winding": StartCoroutine(Winding(e.PieceId, e.Arg / 1000f)); BossVoice.Say(e.PieceId, BossVoice.Call.Roar); return;
                 case "broken":
-                    StartCoroutine(Dizzy(e.PieceId, e.Arg / 1000f)); Fx.Sound("Hitmarker", e.From, 1f, AudioDistance.Long); Burst(e.From, "Gold", 40, 0.18f);
+                    _brokeAt[e.PieceId] = Time.time;
+                    StartCoroutine(Dizzy(e.PieceId, e.Arg / 1000f)); BossAudio.Sound("Hitmarker", e.From, 1f, AudioDistance.Long); Burst(e.From, "Gold", 40, 0.18f);
                     if (BossEye.Of(e.PieceId) is BossEye eye) eye.Reel(e.Arg / 1000f); // the eye squints, shaking
+                    if (BossBody.Of(e.PieceId) is BossBody body) body.Stagger(); // held a beat, white, then knocked loose
+                    BossVoice.Say(e.PieceId, BossVoice.Call.Hurt);
+                    BossAudio.SoundRandom("MetallicItemImpact_V", 1, 3, e.From, 1f, AudioDistance.Long);
+                    BossAudio.SoundRandom("ItemImpactHeavy_V", 1, 3, e.From, 0.9f, AudioDistance.Long);
+                    BossMoves.Shake(e.From, 0.5f);
                     return;
-                case "stomp": WeaponFx.Emit(WeaponFx.Dust, e.From, 8, Vector3.up); Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, e.From, 0.7f); return;
+                case "bar": // one of its health bars broken (Bosses.Bars): held a beat, white, a crack
+                    if (BossBody.Of(e.PieceId) is BossBody bb) bb.Stagger();
+                    BossVoice.Say(e.PieceId, BossVoice.Call.Hurt);
+                    BossAudio.Sound("Hitmarker", e.From, 0.9f, AudioDistance.Long);
+                    BossAudio.SoundRandom("MetallicItemImpact_V", 1, 3, e.From, 0.9f, AudioDistance.Long);
+                    Burst(e.From, "White", 28, 0.15f);
+                    BossMoves.Shake(e.From, 0.25f);
+                    return;
+                case "stomp": WeaponFx.Emit(WeaponFx.Dust, e.From, 8, Vector3.up); BossAudio.SoundRandom("ItemImpactHeavy_V", 1, 3, e.From, 0.7f); return;
                 case "phase2": StartCoroutine(Transform2(e.PieceId)); return;
                 case "secondform": StartCoroutine(SecondFormFx(e.PieceId)); return;
-                case "died": StartCoroutine(Death(e.PieceId, e.From, e.Arg / 100f)); return;
+                case "died": StartCoroutine(Death(e.PieceId, e.From, e.Arg / 100f)); BossVoice.Say(e.PieceId, BossVoice.Call.Death, e.From); return;
                 case "dark": Night(e.Arg > 0); return;
                 case "trophy": StartCoroutine(Trophy(e.From, (EnemyKind)e.Who)); return;
             }
@@ -202,15 +216,32 @@ namespace HtfFortress
 
         // ---------- winding up, reeling, the second form, the end ----------
 
-        // Over its head while it winds up a move that can be broken: a gold ring closing in.
+        // Its body on where its move will land while it warns: the head and claws (BossIk), the eye's pupil. The last
+        // warning of a move is its main one (the brain casts the others first).
+        private static void Focus(int id, string shape, Vector3 a, Vector3 b, float seconds)
+        {
+            Vector3 at = shape == "lane" ? (a + b) * 0.5f : shape == "cone" ? Vector3.Lerp(a, b, 0.6f) : a;
+            if (BossIk.Of(id) is BossIk ik) ik.Focus(at, seconds);
+            if (BossEye.Of(id) is BossEye eye) eye.LookAt(at, seconds);
+        }
+
+        private readonly Dictionary<int, float> _brokeAt = new Dictionary<int, float>();
+
+        // Over its head while it winds up a move that can be broken: a gold ring closing in, gone if it's broken. It's
+        // heard drawing back as it starts, and the swing as it lets go.
         private IEnumerator Winding(int id, float seconds)
         {
             var body = BodyOf(id);
             if (!body) yield break;
+            float start = Time.time;
+            bool swung = false;
+            BossAudio.SoundRandom("BowDrawbackLong_0", 1, 5, body.position, 0.9f, AudioDistance.Long);
             var ring = WeaponFx.Piece(WeaponFx.Torus, BossVfx.Glow(new Color(1f, 0.8f, 0.25f), 6f));
             float top = Top(body);
             for (float t = 0f; t < seconds && ring && body; t += Time.deltaTime)
             {
+                if (_brokeAt.TryGetValue(id, out float broke) && broke >= start) break;
+                if (!swung && t >= seconds - 0.14f) { swung = true; BossAudio.Sound("PunchSwoosh", body.position, 1f, AudioDistance.Long); }
                 float k = t / seconds;
                 ring.position = new Vector3(body.position.x, body.position.y + top + 0.6f, body.position.z);
                 ring.rotation = Quaternion.Euler(90f, t * 180f, 0f);
@@ -254,7 +285,8 @@ namespace HtfFortress
             BossLooks.Recolor(body, kind, true);
             Color c = ColourOf(id);
             float top = Top(body);
-            Fx.Sound("BossFightIntro", body.position, 1f, AudioDistance.Long);
+            BossAudio.Sound("BossFightIntro", body.position, 1f, AudioDistance.Long);
+            BossVoice.Say(id, BossVoice.Call.Roar); // and its own roar, deeper now
             for (int i = 0; i < 4; i++)
             {
                 if (!body) yield break;
@@ -269,7 +301,8 @@ namespace HtfFortress
             var body = BodyOf(id);
             if (!body) yield break;
             Color c = ColourOf(id);
-            Fx.Sound("BossFightIntro", body.position, 1f, AudioDistance.Long);
+            BossAudio.Sound("BossFightIntro", body.position, 1f, AudioDistance.Long);
+            BossVoice.Say(id, BossVoice.Call.Roar);
             float top = Top(body);
             for (int i = 0; i < 3; i++)
             {
@@ -284,7 +317,7 @@ namespace HtfFortress
         private IEnumerator Death(int id, Vector3 at, float size)
         {
             Color c = ColourOf(id);
-            Fx.Sound("Explosion", at, 1f, AudioDistance.Long);
+            BossAudio.Sound("Explosion", at, 1f, AudioDistance.Long);
             try { VFXManager.Play("LavaExplosion", at); } catch { }
             for (int i = 0; i < 4; i++)
             {
@@ -363,7 +396,7 @@ namespace HtfFortress
         {
             Color c = BossLooks.Colour(k);
             var pillar = WeaponFx.Piece(WeaponFx.Cyl, BossVfx.Glow(c, 6f));
-            Fx.Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), at, 1f, AudioDistance.Long);
+            BossAudio.Sound("ShinyCreatureCaught_0" + Random.Range(1, 4), at, 1f, AudioDistance.Long);
             Vector3 ground = new Vector3(at.x, Ground(at), at.z);
             for (float t = 0f; t < 2.5f && pillar; t += Time.deltaTime)
             {

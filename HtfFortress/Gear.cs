@@ -32,7 +32,7 @@ namespace HtfFortress
 
         // Expansions, priced in fish scales only (Owen: "倉庫格子的限制 只用魚鱗限制就好 不要用關卡 然後就合適的量" --
         // no wave requirement any more, the scales are the gate): team slots 5-8, personal slots 3-4, the vault
-        // 30 -> 130 slots (a slot holds up to 50 of one thing). Priced against what dismantling brings in (a 30-wave run
+        // 60 -> 210 slots (a slot holds up to 50 of one thing). Priced against what dismantling brings in (a 30-wave run
         // drops about 70 pieces; dismantling the spares is roughly 60-100 scales): the first steps come within a run or
         // two, the last team slot is a long-term goal next to legendary enhancing (15-90 a level). The second number stays
         // in the tuple (the format the vault, the shop and the tests share) but is 0 = no wave needed.
@@ -40,7 +40,7 @@ namespace HtfFortress
         public static readonly (int scales, int best)[] PersonalSlotPrices = { (60, 0), (180, 0) };
         public static readonly (int scales, int best)[] StoragePrices =
             { (20, 0), (30, 0), (45, 0), (60, 0), (80, 0), (100, 0), (125, 0), (150, 0), (180, 0), (220, 0) };
-        public const int StorageBase = 40, StorageStep = 15, Stack = 50;
+        public const int StorageBase = 60, StorageStep = 15, Stack = 50;
 
         public static (int scales, int best)[] PricesOf(Expansion e) =>
             e == Expansion.TeamSlot ? TeamSlotPrices : e == Expansion.PersonalSlot ? PersonalSlotPrices : StoragePrices;
@@ -125,6 +125,13 @@ namespace HtfFortress
         // Active gear has none: each one is used up (Actives).
         public static float Cooldown(Gear g, Rarity r) => IsWeapon(g) ? WeaponCooldowns[g - Gear.Laser][(int)r] : 0f;
 
+        // Weapons with a magazine (Owen: 「這些武器會有換子彈的需求嗎？」, then all of a / b / c): shots before a reload. Inside
+        // one they come twice as fast; the reload takes the rest, so a magazine's shots take as long as they did one cooldown
+        // at a time: the same damage a second as before (nothing retuned), only in bursts. R reloads early.
+        public static int Magazine(Gear g) => g == Gear.Rocket ? 3 : g == Gear.BubbleGun ? 5 : g == Gear.StarThrower ? 6 : 0;
+        public const float InMagazine = 0.5f;
+        public static float ReloadTime(Gear g, float cooldown) => cooldown * (Magazine(g) - (Magazine(g) - 1) * InMagazine);
+
         // The same kind worn twice or more adds up (Owen: "同一件裝備可以疊", the playtest: "想坦我就穿三個鯊魚衣"): a cut
         // (damage taken, prices, the frost's slow) multiplies down so it never reaches all of it, the lucky charm adds its
         // extra chance (two legendaries: x5, not x9), the rest add. 0 when none is worn.
@@ -163,7 +170,9 @@ namespace HtfFortress
         public static string Name(Gear g) => L10n.T("gear" + g);
         public static string Effect(Gear g, Rarity r) => Effect(g, r, Value(g, r));
         public static string Effect(Gear g, Rarity r, float v, float cooldownMult = 1f) =>
-            L10n.T("gearFx" + g, FormatValue(g, v)) + (Cooldown(g, r) > 0f ? "<size=85%><color=#9aa4b0>　" + L10n.T("cooldown", (Cooldown(g, r) * cooldownMult).ToString("0.#")) + "</color></size>" : "");
+            L10n.T("gearFx" + g, FormatValue(g, v)) + (Cooldown(g, r) > 0f ? "<size=85%><color=#9aa4b0>　" + (Magazine(g) > 0
+                ? L10n.T("magazine", Magazine(g), (ReloadTime(g, Cooldown(g, r)) * cooldownMult).ToString("0.#"))
+                : L10n.T("cooldown", (Cooldown(g, r) * cooldownMult).ToString("0.#"))) + "</color></size>" : "");
         public static string RarityName(Rarity r) => L10n.T("rarity" + r);
         public static Color Color(Rarity r) => r == Rarity.Legendary ? new Color(1f, 0.71f, 0.18f) : r == Rarity.Epic ? new Color(0.71f, 0.36f, 1f) : r == Rarity.Rare ? new Color(0.29f, 0.64f, 1f) : new Color(0.91f, 0.91f, 0.91f);
         public static string Hex(Rarity r) => ColorUtility.ToHtmlStringRGB(Color(r));
@@ -263,17 +272,37 @@ namespace HtfFortress
         public readonly Dictionary<Gear, int> Enhance = new Dictionary<Gear, int>(); // +levels on a kind's legendaries (not weapons)
         public readonly Dictionary<(ulong, Gear, int), int> Mods = new Dictionary<(ulong, Gear, int), int>(); // (player, weapon kind, line): level (WeaponMods)
         public int Best;                                                        // most waves cleared in a real round on this save
-        public int Souls;                                                       // souls from records (wave 100 and beyond): paid at the lighthouse keeper
+        public int Souls;                                                       // souls (records, and a few every run): paid at the lighthouse keeper
         public int SoulDmg, SoulCrit, SoulCoins, SoulScales, SoulCore, SoulDiscount, SoulTurretDmg, SoulKnock, SoulHealth; // the keeper's permanent tree (levels, bought with souls)
         public float DamageMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulDmg));
         public float CritChance => Mathf.Min(1f, 0.02f * Mathf.Max(0, SoulCrit));
         public float ScaleMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulScales));
         public float CoreMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulCore));
-        public float TowerDiscount => Mathf.Max(0.1f, 1f - 0.1f * Mathf.Max(0, SoulDiscount)); // 10% a level, capped at 90% off
+        public float TowerDiscount => DiscountAt(SoulDiscount);
+        public static float DiscountAt(int lvl) => Mathf.Max(0.1f, Mathf.Pow(0.9f, Mathf.Max(0, lvl))); // another 10% off a level, capped at 90% off
         public float TurretDamageMult => Mathf.Pow(1.10f, Mathf.Max(0, SoulTurretDmg)); // tower damage only: +10% a level
         public float KnockbackMult => 1f + 0.25f * Mathf.Max(0, SoulKnock); // explosions / water push +25% a level
         public float HealthTakenMult => 1f / (1f + 0.10f * Mathf.Max(0, SoulHealth)); // character health: +10% effective HP a level
         public float SettleMult => 1f + 0.10f * Mathf.Max(0, SoulCoins); // settlement money, +10% a level
+        public int SoulsSpent; // souls paid into the tree: what a reset gives back
+
+        // The keeper's tree back to nothing, every soul paid into it returned (Owen: 「重製魂」). What came back.
+        public int ResetTree()
+        {
+            int back = SoulsSpent;
+            Souls += back;
+            SoulsSpent = SoulDmg = SoulCrit = SoulCoins = SoulScales = SoulCore = SoulDiscount = SoulTurretDmg = SoulKnock = SoulHealth = 0;
+            return back;
+        }
+
+        // What a save from before "soulspent" paid for its tree: today's prices, but crit at its old 5 x1.15 a level.
+        private int OldTreePrice()
+        {
+            int sum = 0;
+            for (int k = 0; k < 9; k++)
+                for (int l = 0; l < Loot.SoulLevel(this, k); l++) sum += k == 1 ? Mathf.RoundToInt(5f * Mathf.Pow(1.15f, l)) : Loot.SoulUpgradeCost(k, l);
+            return sum;
+        }
         public readonly HashSet<ulong> Starter = new HashSet<ulong>();          // players who got their first laser gun
         public readonly Dictionary<Expansion, int> Bought = new Dictionary<Expansion, int>(); // expansions bought so far
         public readonly List<(string date, string team)> Wins = new List<(string, string)>();  // every OVER 99 on this save
@@ -412,6 +441,7 @@ namespace HtfFortress
             lines.Add($"best {Best} 0");
             lines.Add($"souls {Souls} 0");
             lines.Add($"soulup {SoulDmg} {SoulCrit} {SoulCoins} {SoulScales} {SoulCore} {SoulDiscount} {SoulTurretDmg} {SoulKnock} {SoulHealth}");
+            lines.Add($"soulspent {SoulsSpent} 0");
             foreach (var k in Starter) lines.Add($"starter {k} 1");
             foreach (var kv in Bought) lines.Add($"buy {kv.Key} {kv.Value}");
             foreach (var w in Wins) lines.Add($"win {w.date} {w.team.Split('、').Length} {w.team.Replace("\n", " ")}");
@@ -554,6 +584,7 @@ namespace HtfFortress
         {
             var v = new VaultData();
             int modv = 1;
+            bool spentKnown = false;
             foreach (var line in (text ?? "").Split('\n'))
             {
                 string raw = line.Trim();
@@ -598,6 +629,7 @@ namespace HtfFortress
                         case "mod": var tl = f[3].Split(' '); v.Mods[(ulong.Parse(f[1]), P<Gear>(f[2]), int.Parse(tl[0]))] = int.Parse(tl[1]); break;
                         case "best": v.Best = int.Parse(f[1]); break;
                         case "souls": v.Souls = int.Parse(f[1]); break;
+                        case "soulspent": v.SoulsSpent = Math.Max(0, int.Parse(f[1])); spentKnown = true; break;
                         case "soulup":
                             var su = f[3].Split(' ');
                             v.SoulDmg = int.Parse(f[1]); v.SoulCrit = Mathf.Max(0, int.Parse(f[2]));
@@ -629,6 +661,7 @@ namespace HtfFortress
                     v.Mods[(p, kv.Key, WeaponMods.Power)] = Math.Max(v.ModOf(p, kv.Key, WeaponMods.Power), Math.Min(GearCatalog.MaxEnhance, kv.Value));
                 v.Enhance.Remove(kv.Key);
             }
+            if (!spentKnown) v.SoulsSpent = v.OldTreePrice();
             // Before the range line these four's trait was how far they reach: those levels are their range now.
             if (modv < 2)
                 foreach (var k in v.Mods.Keys.Where(k => k.Item3 == WeaponMods.Trait && RangeTraits.Contains(k.Item2)).ToList())

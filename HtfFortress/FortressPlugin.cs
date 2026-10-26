@@ -293,6 +293,17 @@ namespace HtfFortress
             AutoTest.Count("test_horde", n);
         }
         public void DebugSouls(int n) { if (!IsHost) return; var v = Loot.Instance ? Loot.Instance.Vault : null; if (v == null) return; v.Souls = Mathf.Max(0, v.Souls + n); Loot.Instance.SaveVault(); }
+        // Test menu: this save back to where a new one starts (Owen: 「測試選單我想要有重製進度」): the vault (record, souls and
+        // the keeper's tree, gear and mods, scales, expansions, helpers, wins) after a copy to fortress-backups, the run
+        // checkpoint, and the crew's money (the next run's budget). Not mid-round.
+        public bool DebugResetProgress()
+        {
+            if (!IsHost || _running || !Loot.Instance || !Loot.Instance.ServerResetVault()) return false;
+            RunSave.Clear();
+            if (Siege.Instance) { Logger.LogInfo($"Test menu: progress reset (the crew had ${Siege.Instance.ServerCoins})."); Siege.Instance.ServerSetCoins(0); }
+            AutoTest.Count("progress_reset");
+            return true;
+        }
         public void DebugScales(int n) { if (!IsHost) return; var v = Loot.Instance ? Loot.Instance.Vault : null; if (v == null) return; v.Scales = Mathf.Max(0, v.Scales + n); Loot.Instance.SaveVault(); }
         public void DebugGear(int n)
         {
@@ -734,15 +745,20 @@ namespace HtfFortress
             Siege.Instance.ServerStop();
             Loot.Instance.ServerCollectAll();
             bool practice = _practice || PlayerManager.InGodMode;
-            int soulsBefore = Loot.Instance.Vault.Souls, oldBest = Loot.Instance.Vault.Best;
+            int oldBest = _bestAtStart; // (the record's souls were paid wave by wave as it went up)
             bool record = !practice && (Loot.Instance.ServerRecord(_cleared) || _cleared > _bestAtStart);
-            int soulGain = Loot.Instance.Vault.Souls - soulsBefore;
-            string soulLines = "";
-            if (soulGain > 0)
+            var blocks = new List<string>();
+            int soulGain = 0;
+            if (!practice)
+                for (int m = Mathf.Max(10, (oldBest / 10 + 1) * 10); m <= _cleared; m += 10) { soulGain += Loot.SoulReward(m); blocks.Add(L10n.T("soulSettleBlock", m, Loot.SoulReward(m))); }
+            string soulLines = string.Join("　·　", blocks);
+            // Every run that ends for real pays a little too, record or not (a quit keeps its checkpoint and pays at its end).
+            int runSouls = practice || !naturalEnd ? 0 : Loot.RunSouls(_cleared);
+            if (runSouls > 0)
             {
-                var sb = new System.Text.StringBuilder();
-                for (int m = Mathf.Max(10, (oldBest / 10 + 1) * 10); m <= _cleared; m += 10) sb.Append(L10n.T("soulSettleBlock", m, Loot.SoulReward(m))).Append('\n');
-                soulLines = sb.ToString().TrimEnd('\n');
+                Loot.Instance.ServerAddSouls(runSouls);
+                soulGain += runSouls;
+                soulLines += (soulLines.Length > 0 ? "\n" : "") + L10n.T("soulSettleRun", _cleared, runSouls);
             }
             if (soulGain > 0) Fx.Send(FxKind.Soul, Siege.Instance.CorePos + Vector3.up * 0.5f, Siege.Instance.CorePos + Vector3.up * 3.5f, Mathf.Min(12, soulGain / 100 + 1));
             if (_victory && !practice) Loot.Instance.ServerWin(string.Join("、", PlayerManager.Players.Where(p => p).Select(Loot.NameOf)));
@@ -837,10 +853,15 @@ namespace HtfFortress
             return 1f + hpPerWave * w + 0.012f * w * w + 0.0002f * w * w * w + Mathf.Pow(Mathf.Max(0f, w - 30f), 3f) * 0.004f;
         }
 
-        // A boss's health on top of that (Owen: "可能不是武器 是王血太少": a legendary with its mods took the wave-50 boss down
-        // in two seconds, before it showed a move). x3.4 at wave 10, x20 at 50, x44 at 100: about half a minute or more
-        // for a team kitted out as a team gets by then (Sim's boss lines), still well inside Bosses.CrashAfter.
-        public static float BossHpMult(int wave) => Mathf.Max(1f, wave / 3f + wave * wave / 900f + Mathf.Pow(Mathf.Max(0f, wave - 30f), 3f) / 300f);
+        // A boss's health on top of that: a ladder set against what a team carries over from run to run (souls, gear, mods),
+        // so a save is stopped at a boss, breaks through a run or two later and is stopped again (Owen: 「卡關又突破卡關又突破」,
+        // about twelve runs to the last one). The run a boss first falls on, its fight is about three minutes of the four
+        // before it crashes (Bosses.CrashAfter); later runs take it faster. Walls at 50, 70-80 and 90-100.
+        private static readonly float[] BossLadder = { 21f, 39f, 77f, 86f, 281f, 339f, 533f, 616f, 872f, 909f };
+        public static float BossHpMult(int wave) => BossLadder[Mathf.Clamp(wave / 10, 1, BossLadder.Length) - 1];
+        // What a boss's health is kept at, at most (wave 100, wave 90 for three: past what an int holds); it takes every hit
+        // that much lighter instead (BossBrain.Armor), so the fight lasts as long as its whole health would.
+        public const int MaxBossHp = 1000000000;
 
         public static (List<(EnemyKind kind, bool elite)> plan, int extras, float hpMult) PlanWave(int wave, int players, int baseCount, int perWave, float hpPerWave, bool seaPool)
         {
@@ -1002,12 +1023,13 @@ namespace HtfFortress
         // entrance (`hold` s) and then fights.
         public Creature ServerSpawnBoss(EnemyKind kind, float hpMult, int gap, int wave, float hold)
         {
-            int hp = Mathf.Max(1, Mathf.RoundToInt(EnemyCatalog.Of(kind).BaseHp * hpMult * BossHpMult(wave) * (1f + 0.5f * (Mathf.Max(1, PlayerManager.Players.Count) - 1))));
+            double full = (double)EnemyCatalog.Of(kind).BaseHp * hpMult * BossHpMult(wave) * (1f + 0.5f * (Mathf.Max(1, PlayerManager.Players.Count) - 1));
+            int hp = (int)System.Math.Max(1.0, System.Math.Min(MaxBossHp, System.Math.Round(full)));
             Vector3 at = BossSpot(kind, gap), toward = (Siege.Instance.CorePos - at).Flat();
             var c = ServerSpawnPuppet(kind, at, Quaternion.LookRotation(toward.sqrMagnitude > 0.01f ? toward.normalized : Vector3.forward), hp, BossBrain.ArrivalOffset(kind, at, FortressIsland.Instance && FortressIsland.Instance.Exists ? FortressIsland.Instance.Center : Siege.Instance.CorePos), out var home);
             if (!c) return null;
             _required.Add(c);
-            Bosses.Instance.ServerAdd(c, kind, wave, hold, home);
+            Bosses.Instance.ServerAdd(c, kind, wave, hold, home, full > MaxBossHp ? (float)(MaxBossHp / full) : 1f);
             return c;
         }
 
