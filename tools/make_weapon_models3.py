@@ -9,7 +9,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bkit import Builder, M, export, loft, mat, torus, tube
+from mathutils import Vector
+from bkit import Builder, M, export, fin, loft, mat, torus, tube
 
 iron, steel, brass, black, white = (M(n) for n in ("Iron", "Steel", "Brass", "BombBlack", "White"))
 olive = mat("WpnOlive", (0.36, 0.42, 0.22), force=True)
@@ -32,53 +33,66 @@ def trigger(b, guard, m):
     b.beam((0, -0.058, 0.075), (0, -0.064, 0.035), 0.007, m, segs=4)
 
 
-def rocket(b, y0, length, r, body, nose, fins):
-    # Nose toward -Y from y0: a cone of warhead, a body, three fins at the back.
-    b.cone(r, 0.0, length * 0.32, (0, y0 - length * 0.16, 0), nose, segs=10, axis="Y")
-    b.cyl(r, length * 0.55, (0, y0 + length * 0.275, 0), body, segs=10, axis="Y")
-    for k in range(3):
-        a = k * 2 * math.pi / 3
-        d = (math.cos(a), 0, math.sin(a))
-        b.beam((d[0] * r, y0 + length * 0.5, d[2] * r), (d[0] * r * 2.1, y0 + length * 0.62, d[2] * r * 2.1), r * 0.25, fins, segs=4)
+def warhead_rings(y0, r_bore, z):
+    # A PG-7-style warhead pointing to -Y from its seat at y0: a boat tail inside the bore, a bulge wider than the tube, an
+    # ogive to a point. (y, r) pairs; the bulge's shoulder is index 1 (a white band), the rest the warhead's red.
+    prof = ((y0 + 0.02, r_bore), (y0 - 0.01, 0.040), (y0 - 0.04, 0.058), (y0 - 0.07, 0.060), (y0 - 0.10, 0.052), (y0 - 0.13, 0.034), (y0 - 0.145, 0.014))
+    return [[(r * math.cos(k * math.tau / 12), y, z + r * math.sin(k * math.tau / 12)) for k in range(12)] for y, r in prof] + [[(0, y0 - 0.152, z)]]
 
 
-# ---------- Rocket: a long olive launch tube over the shoulder (rear exhaust bell, a shoulder pad), a pistol grip and a front
-# grip under it, flip-up iron sights on top, a red warhead seated in the muzzle. Tube axis at z = Z; the muzzle ring's centre is
-# WeaponItems.Spec(Rocket).Muzzle ----------
+# ---------- Rocket: a shoulder-fired launcher, long and slender (Owen: the round-2 one read as a toy): an olive tube 78 cm
+# long and 9 cm through, a flared exhaust bell with a dark throat at the back, a padded shoulder rest and a heat cuff over
+# the shoulder, the pistol grip and trigger under the middle, a front grip, flip-up iron sights (a bladed post at the front,
+# a leaf with a ghost ring at the back), the firing box and its cable on the side the holder sees, and an oversized red
+# warhead seated in the muzzle. Tube axis at z = Z, x = 0; the tube's front face (y = FRONT) is WeaponItems.Spec(Rocket).Muzzle ----------
 g = Builder("Rocket", [olive, olive_dark, warhead, iron, black, white])
 grip(g, iron, olive_dark)
 trigger(g, iron, iron)
-Z, R, FRONT, BACK = 0.13, 0.064, -0.41, 0.26
-g.cyl(R, BACK - FRONT - 0.06, (0, (FRONT + BACK - 0.06) / 2, Z), olive, segs=16, axis="Y")      # the tube
-g.cyl(R + 0.008, 0.035, (0, FRONT + 0.0175, Z), olive_dark, segs=16, axis="Y")                 # muzzle ring
-g.cyl(R - 0.006, 0.004, (0, FRONT - 0.001, Z), black, segs=16, axis="Y")                       # the bore round the warhead
-loft(g, [[(r * math.cos(k * math.tau / 16), y, Z + r * math.sin(k * math.tau / 16)) for k in range(16)] for y, r in
-         ((BACK - 0.08, R), (BACK - 0.04, R + 0.008), (BACK, R + 0.036), (BACK + 0.014, R + 0.038))], olive_dark, caps=(olive_dark, black))  # exhaust bell
-g.cyl(R + 0.024, 0.004, (0, BACK + 0.01, Z), black, segs=16, axis="Y")                         # its dark throat
-for y in (-0.3, -0.06, 0.12):                                                                  # straps
-    g.cyl(R + 0.004, 0.022, (0, y, Z), olive_dark, segs=16, axis="Y")
-g.cyl(R + 0.0045, 0.012, (0, -0.2, Z), white, segs=16, axis="Y")                               # a stencil stripe
-g.cyl(R - 0.008, 0.05, (0, FRONT - 0.02, Z), warhead, segs=12, axis="Y")                       # the warhead seated in the muzzle
-g.cone(R - 0.008, 0.012, 0.085, (0, FRONT - 0.087, Z), warhead, segs=12, axis="Y")
-g.cyl(R - 0.0075, 0.01, (0, FRONT - 0.04, Z), white, segs=12, axis="Y")
-g.box((0.05, 0.13, 0.03), (0, 0.17, Z - R - 0.008), black)                                     # shoulder pad
-g.box((0.04, 0.06, 0.02), (0, 0.0, Z - R - 0.005), iron)                                       # the grip's mount
-g.box((0.03, 0.04, 0.11), (0, -0.2, Z - R - 0.05), olive_dark, rot=(-0.18, 0, 0))              # front grip
-g.box((0.036, 0.046, 0.012), (0, -0.21, Z - R - 0.106), iron, rot=(-0.18, 0, 0))
-g.box((0.012, 0.012, 0.04), (0, -0.36, Z + R + 0.016), iron)                                   # front post on its block
-g.box((0.024, 0.03, 0.012), (0, -0.36, Z + R + 0.002), iron)
-g.box((0.024, 0.03, 0.012), (0, 0.04, Z + R + 0.002), iron)                                     # rear aperture, flipped up
-torus(g, (0, 0.04, Z + R + 0.036), (0, 1, 0), 0.014, 0.0045, iron, segs=10, tsegs=4)
-g.box((0.006, 0.006, 0.02), (0, 0.04, Z + R + 0.014), iron)
-g.box((0.03, 0.05, 0.03), (-R - 0.012, 0.08, Z), olive_dark)                                    # the firing box at the side
-g.box((0.008, 0.02, 0.008), (-R - 0.03, 0.08, Z + 0.005), white)
+Z, R, FRONT, BACK, N = 0.125, 0.046, -0.50, 0.28, 16
+g.cyl(R, (BACK - 0.10) - (FRONT + 0.03), (0, (BACK - 0.10 + FRONT + 0.03) / 2, Z), olive, segs=N, axis="Y")   # the tube
+g.cyl(R + 0.007, 0.05, (0, FRONT + 0.025, Z), olive_dark, segs=N, axis="Y")                                     # muzzle collar
+g.cyl(R - 0.004, 0.004, (0, FRONT - 0.001, Z), black, segs=N, axis="Y")                                         # the bore round the warhead
+loft(g, warhead_rings(FRONT, R - 0.012, Z), warhead, caps=(olive_dark, warhead), mf=lambda i, j: olive_dark if i == 0 else white if i == 1 else warhead)
+g.cyl(0.006, 0.016, (0, FRONT - 0.158, Z), iron, segs=6, axis="Y")                                               # the fuze cap on its nose
+loft(g, [[(r * math.cos(k * math.tau / N), y, Z + r * math.sin(k * math.tau / N)) for k in range(N)] for y, r in
+         ((BACK - 0.10, R), (BACK - 0.07, R + 0.002), (BACK - 0.03, R + 0.018), (BACK - 0.005, R + 0.034), (BACK, R + 0.036))],
+     olive_dark, caps=(olive_dark, black))                                                                      # exhaust bell, its throat dark
+for y in (-0.40, -0.17, 0.06):                                                                                  # cuffs round the tube
+    g.cyl(R + 0.004, 0.02, (0, y, Z), olive_dark, segs=N, axis="Y")
+g.cyl(R + 0.003, 0.012, (0, -0.29, Z), white, segs=N, axis="Y")                                                 # a stencil stripe
+g.cyl(R + 0.003, 0.016, (0, BACK - 0.13, Z), black, segs=N, axis="Y")                                           # the danger band before the bell
+g.cyl(R + 0.012, 0.12, (0, 0.16, Z), black, segs=N, axis="Y")                                                   # heat cuff where it rides the shoulder
+g.box((0.03, 0.03, 0.045), (0, 0.19, Z - R - 0.02), iron)                                                       # shoulder rest: bracket and pad
+g.box((0.055, 0.13, 0.028), (0, 0.19, Z - R - 0.052), black)
+g.box((0.04, 0.09, 0.028), (0, -0.02, 0.068), olive_dark)                                                       # trigger housing, grip to tube
+g.box((0.03, 0.04, 0.10), (0, -0.26, Z - R - 0.048), olive_dark, rot=(-0.2, 0, 0))                              # front grip
+g.box((0.034, 0.046, 0.012), (0, -0.27, Z - R - 0.1), iron, rot=(-0.2, 0, 0))
+g.box((0.024, 0.03, 0.012), (0, -0.42, Z + R + 0.005), iron)                                                    # front sight: hinge block, blade, a white dot
+g.box((0.006, 0.014, 0.05), (0, -0.42, Z + R + 0.035), iron)
+g.box((0.008, 0.004, 0.006), (0, -0.4105, Z + R + 0.054), white)
+g.box((0.03, 0.03, 0.012), (0, 0.03, Z + R + 0.005), iron)                                                      # rear sight: hinge block, leaf, ghost ring
+g.box((0.034, 0.004, 0.03), (0, 0.03, Z + R + 0.026), iron)
+for z in (0.02, 0.03):
+    g.box((0.02, 0.005, 0.003), (0, 0.03, Z + R + z), white)
+torus(g, (0, 0.03, Z + R + 0.052), (0, 1, 0), 0.011, 0.0035, iron, segs=10, tsegs=4)
+g.box((0.028, 0.06, 0.036), (R + 0.01, -0.04, Z - 0.01), olive_dark)                                            # firing box on the holder's side
+g.box((0.004, 0.03, 0.012), (R + 0.025, -0.04, Z), white)
+tube(g, [(R + 0.02, -0.01, Z + 0.01), (R + 0.014, 0.03, Z + 0.02), (R + 0.01, 0.07, Z + 0.02)], 0.004, black, segs=5)  # its cable back along the tube
 out.append(g.finish())
 
-# ---------- RocketShell (flying): a red-nosed rocket with fins and a glowing flame at the back ----------
+# ---------- RocketShell (flying): the same warhead on an olive motor with four fins and a glowing flame behind; origin in
+# the middle, nose toward -Y ----------
 g = Builder("RocketShell", [olive, warhead, iron, flame, white])
-rocket(g, -0.2, 0.5, 0.055, olive, warhead, iron)
-g.cyl(0.056, 0.03, (0, -0.15, 0), white, segs=10, axis="Y")
-g.cone(0.04, 0.0, 0.14, (0, 0.145, 0), flame, segs=8, axis="-Y")             # the flame, its tip toward the back
+loft(g, warhead_rings(-0.06, 0.03, 0), warhead, caps=(olive, warhead), mf=lambda i, j: olive if i == 0 else white if i == 1 else warhead)
+g.cyl(0.006, 0.016, (0, -0.218, 0), iron, segs=6, axis="Y")
+g.cyl(0.032, 0.3, (0, 0.1, 0), olive, segs=10, axis="Y")                    # the motor
+g.cyl(0.033, 0.02, (0, 0.0, 0), white, segs=10, axis="Y")
+for k in range(4):
+    a = k * math.pi / 2
+    d = Vector((math.cos(a), 0, math.sin(a)))
+    fin(g, [d * 0.03 + Vector((0, 0.15, 0)), d * 0.075 + Vector((0, 0.22, 0)), d * 0.075 + Vector((0, 0.25, 0)), d * 0.03 + Vector((0, 0.25, 0))],
+        d.cross(Vector((0, 1, 0))), 0.005, iron)
+g.cone(0.028, 0.0, 0.14, (0, 0.32, 0), flame, segs=8, axis="-Y")             # the flame, its tip toward the back
 out.append(g.finish())
 
 # ---------- MenderHead: a column with a big glowing green cross on a white plate, a wrench across it, lamps round the foot ----------

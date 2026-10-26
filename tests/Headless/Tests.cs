@@ -914,6 +914,23 @@ namespace HtfFortress.Headless
                 else Check(drop != null && File.Exists(Path.Combine(Src, "Models", drop + ".obj")), $"{g}: no drop model {drop}.obj");
             }
             Check(File.ReadAllText(Path.Combine(Src, "Loot.cs")).Contains("WeaponItems.GameGunModel(g, spin)"), "a game gun's drop isn't drawn from its own mesh");
+            // A rare-or-better weapon on the ground wears its rarity's look (RarityLook) like one in the hand.
+            Check(File.ReadAllText(Path.Combine(Src, "Loot.cs")).Contains("WeaponItems.RarityLook(model, r)"), "a rare weapon on the ground is dressed as a common");
+            // Icons are rendered mirrored, as Models.Parse flips x: the same side of a gun as the holder sees.
+            Check(File.ReadAllText(Path.Combine(Program.Repo, "tools", "make_icons.py")).Contains("name in MIRROR"), "weapon icons aren't mirrored like the game's models");
+            // The gatling's cluster carries a common's count of barrels (their dark bores sit proud of the muzzle plane).
+            {
+                var bores = new List<Vector3>();
+                foreach (var line in File.ReadLines(Path.Combine(Src, "Models", "GatlingBarrels.obj")))
+                {
+                    var q = line.Split(' ');
+                    if (q[0] != "v") continue;
+                    float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
+                    var v = new Vector3(F(1), F(2), F(3));
+                    if (v.z > 0.4425f && !bores.Any(b => (b - v).sqrMagnitude < 0.012f * 0.012f)) bores.Add(v);
+                }
+                Check(bores.Count == Weapons.GatlingBarrelBase, $"the gatling's cluster has {bores.Count} barrels, a common fires {Weapons.GatlingBarrelBase}");
+            }
             // The shark whistle makes sharks (SharkTick had nothing to hunt with) that stay by their pool.
             Check(weaponsSrc.Contains("_sharks.Add(sh)"), "the shark whistle never makes a shark");
             Check(GearCatalog.Rarities.All(r => Weapons.SharkSpots(Vector3.zero, r).Length == (r == Rarity.Legendary ? 2 : 1)), "one shark, two for a legendary");

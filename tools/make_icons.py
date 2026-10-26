@@ -37,6 +37,7 @@ leather = mat("IconLeather", (0.45, 0.27, 0.15), force=True)
 heal = mat("IconHeal", (0.35, 0.95, 0.45), (0.2, 0.8, 0.3), force=True)
 wave = mat("IconWave", (0.55, 0.85, 1.0), (0.3, 0.65, 1.0), force=True)
 lens = mat("IconLens", (0.35, 0.7, 1.0), (0.2, 0.5, 0.9), force=True)
+glass_dome = mat("IconGlassDome", (0.75, 0.92, 1.0), force=True)  # drawn see-through (alpha below)
 
 
 def around_z(z, r, n=12, sx=1.0, sy=1.0, cx=0.0, cy=0.0):
@@ -354,13 +355,28 @@ for name, fn in (("StallHelper", stall_helper), ("StallSpeed", stall_speed), ("S
     if not ONLY or name in ONLY:
         built["Icon" + name] = fn()
     ICONS[name] = ([("Icon" + name, (0, 0, 0))], FRONT)
-for g, m in (("Laser", "LaserGun"), ("PoisonGas", "GasGun"), ("Boomerang", "Boomerang"), ("SharkWhistle", "SharkWhistle"),
-             ("BubbleGun", "BubbleGun"), ("Hook", "HookGun"), ("Whirlpool", "WhirlCannon"), ("Conch", "Conch"),
-             ("NetLauncher", "NetLauncher"), ("JellyGun", "JellyGun"), ("WaterCannon", "WaterCannon"), ("PufferBomb", "PufferBomb"),
-             ("StarThrower", "StarThrower"), ("LobsterClaw", "LobsterClaw"), ("Rocket", "Rocket"), ("Absorber", "Absorber"), ("Gatling", "Gatling")):
-    ICONS["Gear" + g] = ([(m, (0, 0, 0))], SIDE if g != "Boomerang" else (-0.25, -0.45, 1.0))  # the wooden V from above, tilted to show its edge
+WEAPON_MODELS = (("Laser", "LaserGun"), ("PoisonGas", "GasGun"), ("Boomerang", "Boomerang"), ("SharkWhistle", "SharkWhistle"),
+                 ("BubbleGun", "BubbleGun"), ("Hook", "HookGun"), ("Whirlpool", "WhirlCannon"), ("Conch", "Conch"),
+                 ("NetLauncher", "NetLauncher"), ("JellyGun", "JellyGun"), ("WaterCannon", "WaterCannon"), ("PufferBomb", "PufferBomb"),
+                 ("StarThrower", "StarThrower"), ("LobsterClaw", "LobsterClaw"), ("Rocket", "Rocket"), ("Absorber", "Absorber"), ("Gatling", "Gatling"))
+for g, m in WEAPON_MODELS:
+    ICONS["Gear" + g] = ([(m, (0, 0, 0))], SIDE if g != "Boomerang" else HIGH)  # the tuna stood up (70°, below) and seen from high
+# The game draws every OBJ with x flipped (Models.Parse), so what the holder sees is the model's +x side: these icons are
+# rendered mirrored to match (the hook's reel, the gatling's ammo box, the net launcher's bottle on the side they're on in play).
+MIRROR = {"Gear" + g for g, _ in WEAPON_MODELS} | {"HelpLoot"}
 for p in ("Wall", "WallStone", "WallMetal", "Floor", "Ramp", "Spikes"):
     ICONS["Piece" + p] = ([(p, (0, 0, 0))], FRONT)
+
+
+def absorber_glass():  # the glass over the absorber's chamber, as the game adds it (Absorber.cs: DomeAt (0, 0.21, 0.02) in its mesh's units, DomeR)
+    b = Builder("IconAbsorberGlass", [glass_dome])
+    b.ico(0.055, (0, -0.02, 0.21), glass_dome, subdiv=3)
+    return b.finish()
+
+
+if not ONLY or "GearAbsorber" in ONLY:
+    built["IconAbsorberGlass"] = absorber_glass()
+ICONS["GearAbsorber"] = ([("Absorber", (0, 0, 0)), ("IconAbsorberGlass", (0, 0, 0))], SIDE)
 FRAME = {}  # icon: (objects the frame is fitted to, how much lower the frame reaches, in parts of its height)
 for t in ("Gun", "Cannon", "Harpoon", "Mortar", "Tesla", "Flame", "Sniper", "Bubble", "Mender"):
     ICONS["Piece" + t] = ([("TurretBase", (0, 0, 0)), (t + "Head", (0, 0, 0.85))], FRONT)
@@ -479,7 +495,8 @@ for m in bpy.data.materials:  # game-like colours: a glowing material shows betw
     kd = Vector(bsdf.inputs["Base Color"].default_value[:3])
     ke = Vector(bsdf.inputs["Emission Color"].default_value[:3]) * bsdf.inputs["Emission Strength"].default_value
     c = kd.lerp(ke, 0.5) if ke.length > 0 else kd
-    m.diffuse_color = (*(min(1.0, x) for x in c), 1.0)
+    m.diffuse_color = (*(min(1.0, x) for x in c), 0.3 if m.name == "IconGlassDome" else 1.0)
+glass_dome.blend_method = "BLEND"
 
 for o in sc.objects:
     o.hide_render = True
@@ -513,8 +530,9 @@ for name, (parts, view) in ICONS.items():
         oname, loc = part[0], part[1]
         o = obj(oname)
         o.location = loc
-        o.rotation_euler = part[2] if len(part) > 2 else (math.radians(45), 0, 0) if oname == "Ramp" else (0, 0, 0)  # the ramp tilted as the game lays it
-        o.scale = part[3] if len(part) > 3 else (1, 1, 1)
+        o.rotation_euler = part[2] if len(part) > 2 else (math.radians(70), 0, 0) if oname == "Boomerang" else (math.radians(45), 0, 0) if oname == "Ramp" else (0, 0, 0)  # the V stood up; the ramp tilted as the game lays it
+        sx, sy, sz = part[3] if len(part) > 3 else (1, 1, 1)
+        o.scale = (-sx if name in MIRROR else sx, sy, sz)
         o.hide_render = False
         objs.append(o)
     bpy.context.view_layer.update()
