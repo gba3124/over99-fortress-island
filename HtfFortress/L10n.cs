@@ -669,6 +669,8 @@ namespace HtfFortress
             ["menuCloseHint"] = new[] { "[RMB] close", "[右鍵] 關閉", "[右键] 关闭" },
             ["buildKeysA"] = new[] { "[LMB] hold to build\n[Alt] hold for free place\n[R] turn\n[Y] flip", "[左鍵] 按住建造\n[Alt] 按住自由擺放\n[R] 旋轉\n[Y] 反轉", "[左键] 按住建造\n[Alt] 按住自由摆放\n[R] 旋转\n[Y] 反转" },
             ["buildKeysB"] = new[] { "[T] next piece\n[Shift+T] previous\n[G] exit", "[T] 下一個\n[Shift+T] 上一個\n[G] 離開", "[T] 下一个\n[Shift+T] 上一个\n[G] 离开" },
+            ["toastUp"] = new[] { "{0} reached {1}", "{0} 升到 {1}", "{0} 升到 {1}" },
+            ["toastBranch"] = new[] { "{0} chose {1}", "{0} 選了 {1}", "{0} 选了 {1}" },
             ["statDamage"] = new[] { "Damage", "傷害", "伤害" },
             ["statRate"] = new[] { "Fire rate", "射速", "射速" },
             ["statRange"] = new[] { "Range", "射程", "射程" },

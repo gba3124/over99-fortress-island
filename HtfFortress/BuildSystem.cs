@@ -243,6 +243,7 @@ namespace HtfFortress
                 }
             }
             InstanceFinder.ClientManager.Broadcast(new PieceUpgradeRequest { Id = id, Branch = shift ? 2 : 1, FromLevel = LevelOf(id) });
+            AskedUp(id);
         }
 
         public void DebugPressU(int id) => Upgrade(id, false); // auto-test: U on a piece, as from the keyboard
@@ -973,6 +974,8 @@ namespace HtfFortress
 
         private void LateUpdate()
         {
+            HpTags();
+            ToastTick();
             bool on = _building && EnsureBuildUi();
             bool lookOnly = !_building && _walkUp && EnsureBuildUi(); // walked up to a piece
             if (_cards) { _cards.gameObject.SetActive(on); _infoBox.gameObject.SetActive(on); }
@@ -1098,6 +1101,113 @@ namespace HtfFortress
             string keys = L10n.T("lookDetails");
             if (s.Hp < s.MaxHp) keys += "　" + L10n.T("repairHint", Perks.MyCost(Catalog.RepairCost(s.Hp, s.MaxHp)));
             return keys + "　" + L10n.T("moveHint") + "　" + L10n.T("removeHint");
+        }
+
+        // ---------- over the field: damaged turrets' health and level; a line when your upgrade lands ----------
+
+        // A tag over each damaged turret in sight, so a wave shows at a glance which one to repair (Owen's list, 5). Not over
+        // the one whose look card is up: the card says it all.
+        private class HpTag { public RectTransform Root; public CanvasGroup Group; public UnityEngine.UI.Image Back; public TextMeshProUGUI Lv; public Hud.Bar Bar; public int Level; }
+        private readonly List<HpTag> _hpTags = new List<HpTag>();
+        private const float TagFar = 55f, TagFull = 35f; // gone past TagFar metres, faded in from there to TagFull
+
+        private void HpTags()
+        {
+            var cam = GameInfo.CurCamera;
+            int n = 0;
+            if (cam && Hud.Font && !Hud.ModalOpen && !PieceMenu.IsOpen && Siege.Instance && Siege.Instance.ViewActive)
+            {
+                Vector3 eye = cam.transform.position;
+                int carded = _lookBox && _lookBox.gameObject.activeSelf ? _lookId : 0;
+                foreach (var kv in _states)
+                {
+                    var s = kv.Value;
+                    if (s.Hp >= s.MaxHp || s.Id == carded || !Catalog.IsTurret(s.Type)) continue;
+                    Vector3 at = s.Pos + Vector3.up * (Catalog.MuzzleHeight(s.Type, s.Level) + 0.8f);
+                    float dist = Vector3.Distance(eye, at);
+                    if (dist > TagFar) continue;
+                    Vector3 vp = cam.WorldToViewportPoint(at);
+                    if (vp.z <= 0f || vp.x < 0f || vp.x > 1f || vp.y < 0f || vp.y > 1f) continue;
+                    var tag = n < _hpTags.Count ? _hpTags[n] : NewHpTag();
+                    n++;
+                    if (!tag.Root.gameObject.activeSelf) tag.Root.gameObject.SetActive(true);
+                    tag.Root.anchorMin = tag.Root.anchorMax = new Vector2(vp.x, vp.y);
+                    tag.Root.localScale = Vector3.one * Mathf.Lerp(1f, 0.75f, Mathf.InverseLerp(10f, TagFar, dist));
+                    tag.Group.alpha = Mathf.InverseLerp(TagFar, TagFull, dist);
+                    if (tag.Level != s.Level)
+                    {
+                        tag.Level = s.Level;
+                        tag.Lv.text = PieceMenu.Lv(s.Level);
+                        float w = tag.Lv.GetPreferredValues(tag.Lv.text).x;
+                        tag.Lv.rectTransform.sizeDelta = new Vector2(w + 2f, 20f);
+                        tag.Back.rectTransform.sizeDelta = new Vector2(8f + w + 6f + 40f + 8f, 22f);
+                    }
+                    float f = s.MaxHp > 0 ? (float)s.Hp / s.MaxHp : 1f;
+                    tag.Bar.Set(f, Hud.HealthColor(f));
+                }
+            }
+            for (int i = n; i < _hpTags.Count; i++) if (_hpTags[i].Root.gameObject.activeSelf) _hpTags[i].Root.gameObject.SetActive(false);
+        }
+
+        private HpTag NewHpTag()
+        {
+            var mid = new Vector2(0.5f, 0.5f);
+            var t = new HpTag { Root = Hud.Node(Hud.Root, "TurretHpTag", mid, Vector2.zero, new Vector2(10f, 10f)), Level = -1 };
+            t.Root.SetAsFirstSibling(); // under the rest of the HUD
+            t.Group = t.Root.gameObject.AddComponent<CanvasGroup>();
+            t.Group.blocksRaycasts = false;
+            t.Back = Hud.Box(t.Root, mid, Vector2.zero, new Vector2(100f, 22f), new Color(0.07f, 0.09f, 0.12f, 0.8f), 11f);
+            t.Lv = Hud.Label(t.Back.transform, "", 13f, new Vector2(0f, 0.5f), new Vector2(8f, 0f), new Vector2(40f, 20f), TextAlignmentOptions.Left, Hud.Gold, bold: true, pivot: new Vector2(0f, 0.5f));
+            t.Bar = Hud.Bar.Make(t.Back.transform, new Vector2(1f, 0.5f), new Vector2(-8f, 0f), new Vector2(40f, 7f), Hud.Good, new Vector2(1f, 0.5f));
+            _hpTags.Add(t);
+            return t;
+        }
+
+        // Your upgrade landed: "Machine Gun reached Lv 7  ★ new perk: …", "Machine Gun chose [A Storm]  Lv 3" (Owen's list, 6).
+        private readonly Dictionary<int, float> _askedUp = new Dictionary<int, float>(); // piece -> when this player asked to raise it
+        private UnityEngine.UI.Image _toast, _toastPic;
+        private TextMeshProUGUI _toastText;
+        private CanvasGroup _toastGroup;
+        private float _toastAt = -10f;
+        private const float ToastFor = 2.4f;
+
+        internal void AskedUp(int id) => _askedUp[id] = Time.time;
+
+        private void UpToast(PieceState was, PieceState s)
+        {
+            if (!Hud.Font) return;
+            if (!_toast)
+            {
+                _toast = Hud.Box(Hud.Root, new Vector2(0.5f, 0.5f), new Vector2(0f, -46f), new Vector2(400f, 52f), Hud.Panel, 26f); // under the crosshair, over the look card
+                _toastGroup = _toast.gameObject.AddComponent<CanvasGroup>();
+                _toastGroup.blocksRaycasts = false;
+                _toastPic = Hud.PictureSlot(_toast.transform, new Vector2(0f, 0.5f), new Vector2(8f, 0f), new Vector2(44f, 44f));
+                _toastText = Hud.Label(_toast.transform, "", 22f, new Vector2(0f, 0.5f), new Vector2(60f, 0f), new Vector2(1200f, 40f), TextAlignmentOptions.Left, bold: true, pivot: new Vector2(0f, 0.5f));
+            }
+            string name = PieceName(s.Type, s.Level), lv = PieceMenu.Paint(PieceMenu.Lv(s.Level), Hud.Gold);
+            string text = s.Branch != was.Branch && s.Branch > 0
+                ? L10n.T("toastBranch", name, PieceMenu.Chip(PieceMenu.Tag(s.Branch) + " " + Catalog.BranchName(s.Type, s.Branch), Hud.Accent, 85)) + "　" + lv
+                : L10n.T("toastUp", name, lv);
+            if (Catalog.IsTurret(s.Type) && Catalog.Milestones(s.Level) > Catalog.Milestones(was.Level))
+                text += "　" + PieceMenu.Paint("★ " + L10n.T("lookPerk", PieceMenu.Perk(s.Type)), Hud.Gold);
+            _toastText.fontSize = 22f;
+            _toastText.text = text;
+            Hud.ShowPicture(_toastPic, PieceMenu.PictureOf(s));
+            float inf = float.PositiveInfinity;
+            _toast.rectTransform.sizeDelta = new Vector2(_toastText.GetPreferredValues(text, inf, inf).x + 60f + 26f, 52f);
+            _toastAt = Time.time;
+        }
+
+        // Pops in, holds, fades.
+        private void ToastTick()
+        {
+            if (!_toast) return;
+            float t = Time.time - _toastAt;
+            bool on = t < ToastFor;
+            if (_toast.gameObject.activeSelf != on) _toast.gameObject.SetActive(on);
+            if (!on) return;
+            _toastGroup.alpha = Mathf.Clamp01((ToastFor - t) / 0.4f);
+            _toast.rectTransform.localScale = Vector3.one * Mathf.Lerp(0.85f, 1f, t / 0.12f);
         }
 
         // ---------- networking ----------
@@ -1352,6 +1462,7 @@ namespace HtfFortress
                 }
                 _pieces.Remove(s.Id);
                 _states.Remove(s.Id);
+                _askedUp.Remove(s.Id);
                 return;
             }
             bool had = _states.TryGetValue(s.Id, out var prev);
@@ -1386,6 +1497,11 @@ namespace HtfFortress
             else if (s.Level > prev.Level) { StartCoroutine(Pop(go.transform)); Fx.SoundRandom("MetallicItemImpact_V", 1, 2, s.Pos, 0.9f, AudioDistance.Short); Fx.Sound("Buy_01", s.Pos, 0.6f, AudioDistance.Short); }
             else if (s.Hp < prev.Hp) { StartCoroutine(Shake(go.transform, s.Id)); if (Time.time > _nextHitSound) { _nextHitSound = Time.time + 0.15f; Fx.SoundRandom("KnifeHit_0", 1, 4, s.Pos, 0.6f, AudioDistance.Short); } }
             else if (s.Hp > prev.Hp) Fx.Sound("Buy_02", s.Pos, 0.6f, AudioDistance.Short);
+            if (had && (s.Level > prev.Level || s.Branch != prev.Branch) && _askedUp.TryGetValue(s.Id, out float asked))
+            {
+                _askedUp.Remove(s.Id);
+                if (Time.time - asked < 5f) UpToast(prev, s); // (a refused one leaves a stale ask behind)
+            }
             _states[s.Id] = s;
             Models.Tint(go, s.MaxHp > 0 ? Mathf.Clamp01((float)s.Hp / s.MaxHp) : 1f);
         }

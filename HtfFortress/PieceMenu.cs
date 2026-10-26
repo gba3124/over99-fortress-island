@@ -327,6 +327,7 @@ namespace HtfFortress
         private void Send(PieceUpgradeRequest r)
         {
             if (InstanceFinder.IsClientStarted) InstanceFinder.ClientManager.Broadcast(r);
+            if (!r.Repair) BuildSystem.Instance.AskedUp(r.Id);
             Fx.Sound("Click", Player.LocalPlayer ? Player.LocalPlayer.Transform.position : Vector3.zero, 0.6f, AudioDistance.Short);
         }
 
