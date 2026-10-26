@@ -1,3 +1,4 @@
+# SUPERSEDED by tools/turret_preview5.py (art pass 5): TurretBase and the <T>Head models this stacks are gone.
 # Turret preview sheets: whole turrets as the game stacks them (TurretBase, the body on the head pivot 0.85 m up, the branch
 # head, the extra barrels Catalog.Barrels hangs beside it, the head grown by level), one column per look
 # (Lv1, A, B at Lv3, A1 / A2 / B1 / B2 at Lv9), a row per OBJ folder and view. Mirrors BuildSystem.SetTurretLook.

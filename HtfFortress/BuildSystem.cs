@@ -630,12 +630,12 @@ namespace HtfFortress
             if (Catalog.IsTurret(t))
             {
                 col.center = new Vector3(0f, size.y * 0.5f, 0f);
-                Models.Attach("TurretBase", go.transform, new Vector3(1.4f, 0.8f, 1.4f), new Vector3(0f, 0.4f, 0f));
+                Models.Attach(Catalog.BaseModel(t), go.transform, new Vector3(1.2f, 0.8f, 1.2f), new Vector3(0f, 0.4f, 0f)); // stays put
                 var head = new GameObject("Head");
                 head.layer = layer;
                 head.transform.SetParent(go.transform, false);
-                head.transform.localPosition = new Vector3(0f, 0.85f, 0f);
-                Models.Attach(Catalog.BodyModel(t), head.transform, new Vector3(0.6f, 0.5f, 1.4f));
+                head.transform.localPosition = new Vector3(0f, Catalog.HeadHeight(t), 0f);
+                Models.Attach(Catalog.BodyModel(t), head.transform, new Vector3(0.6f, 0.15f, 0.6f));
                 AttachHeadModule(head.transform, t, 0);
             }
             else Models.Attach(t.ToString(), go.transform, size);
@@ -691,12 +691,12 @@ namespace HtfFortress
             return;
         }
 
-        // How a turret shows its level: Lv2 an iron collar on the base, Lv3 a bigger head with a crystal in its branch's colour
-        // (A amber, B cyan), and at Lv5, Lv10 and Lv15 another barrel beside the head: what it does then (one more fish, shell,
-        // harpoon, chain jump...) is Catalog.Milestones. From Lv4 its ring of lamps lights up (SetLamps).
-        private static Material _collarMat, _trimMat, _crystalA, _crystalB, _studMat;
-        // The branch module of a modular turret (the Gun for now): the same body every level, a different barrel/armour
-        // assembly for default, A, A1, A2, B, B1, B2. Swapped whenever the branch changes.
+        // How a turret shows its level (art pass 5): every level from Lv2 to Lv8 adds a piece round its plinth, Lv3 and Lv9 swap
+        // in the class's head, Lv9 adds the final class's dressing (Catalog.TurretKit); at Lv5, Lv10 and Lv15 another barrel
+        // stands on the turntable (what it does then, one more fish, shell, harpoon, chain jump..., is Catalog.Milestones);
+        // from Lv4 its ring of lamps lights up, one a level (SetLamps); the head grows a little up to Lv13.
+        private static Material _collarMat, _trimMat, _studMat;
+        // The class head on the turntable: Default, then A / B from Lv3, A1 / A2 / B1 / B2 from Lv9; swapped whenever the branch changes.
         private static void AttachHeadModule(Transform head, PieceType type, int branch)
         {
             if (!head) return;
@@ -704,25 +704,8 @@ namespace HtfFortress
             if (!Catalog.HasModules(type)) return;
             var model = Catalog.ModuleModel(type, branch);
             if (string.IsNullOrEmpty(model)) return;
-            var module = Models.Attach(model, head, Vector3.one * 0.4f, shadows: false);
+            var module = Models.Attach(model, head, Vector3.one * 0.4f);
             if (module) module.name = "HeadModule";
-        }
-
-        // Where a branch ornament sits on each head (authored around the head origin) and how big it is drawn there.
-        private static (Vector3, float) BranchMount(PieceType type)
-        {
-            switch (type)
-            {
-                case PieceType.Gun: return (new Vector3(0f, 0.06f, 0.58f), 0.95f);
-                case PieceType.Cannon: return (new Vector3(0f, 0.1f, 0.7f), 1.0f);
-                case PieceType.Harpoon: return (new Vector3(0f, 0.08f, 0.38f), 0.85f);
-                case PieceType.Mortar: return (new Vector3(0f, 0.1f, 0.9f), 0.85f);
-                case PieceType.Tesla: return (new Vector3(0f, 0f, 1.18f), 0.72f);
-                case PieceType.Flame: return (new Vector3(0f, 0.08f, 0.34f), 0.9f);
-                case PieceType.Sniper: return (new Vector3(0f, 0.04f, 0.33f), 0.8f);
-                case PieceType.Bubble: return (new Vector3(0f, 0f, 1.0f), 0.85f);
-                default: return (new Vector3(0f, 0.04f, 0.78f), 0.85f); // Mender
-            }
         }
 
         private static void SetTurretLook(GameObject go, PieceType type, int level, int branch)
@@ -732,65 +715,28 @@ namespace HtfFortress
             if (head)
             {
                 foreach (Transform c in head.Cast<Transform>().ToList()) if (c.name.StartsWith("Barrel")) Drop(c);
-                head.localScale = Vector3.one * (1f + 0.08f * Mathf.Min(level - 1, 2) + 0.04f * Mathf.Min(Catalog.Beyond(level), 12)); // the gun itself grows with every level
+                head.localScale = Vector3.one * Catalog.HeadScale(level);
             }
             var look = new GameObject("LevelLook").transform;
             look.SetParent(go.transform, false);
             if (!_collarMat) { _collarMat = Models.Make(new Color(0.24f, 0.26f, 0.3f)); _trimMat = Models.Make(new Color(1f, 0.78f, 0.3f), new Color(0.9f, 0.6f, 0.15f)); }
-            if (!_crystalA) { _crystalA = Models.Make(new Color(1f, 0.6f, 0.2f), new Color(1f, 0.5f, 0.1f)); _crystalB = Models.Make(new Color(0.35f, 0.85f, 1f), new Color(0.25f, 0.8f, 1f)); }
-            GameObject Part(PrimitiveType p, Transform parent, Vector3 at, Vector3 size, Material m, Quaternion? rot = null)
-            {
-                var x = GameObject.CreatePrimitive(p);
-                Destroy(x.GetComponent<Collider>());
-                x.transform.SetParent(parent, false);
-                x.transform.localPosition = at;
-                x.transform.localRotation = rot ?? Quaternion.identity;
-                x.transform.localScale = size;
-                x.GetComponent<Renderer>().sharedMaterial = m;
-                return x;
-            }
-            if (level >= 2) Part(PrimitiveType.Cylinder, look, new Vector3(0f, 0.5f, 0f), new Vector3(1.5f, 0.07f, 1.5f), _collarMat);
-            if (level >= 3) Part(PrimitiveType.Cylinder, look, new Vector3(0f, 0.58f, 0f), new Vector3(1.38f, 0.03f, 1.38f), _trimMat);
+            Models.AttachAll(Catalog.TurretKit(type, level, branch), look, "Pieces"); // one renderer for them all
             AttachHeadModule(head, type, branch);
-            if (type == PieceType.Mender && head)
-            {
-                Drop(head.Find("MendBadge"));
-                if (!_mendRimMat) _mendRimMat = BossVfx.Wash(new Color(0.36f, 1f, 0.52f, 0.55f));
-                var badge = new GameObject("MendBadge").transform;
-                badge.SetParent(head, false);
-                badge.localPosition = new Vector3(0f, 1.45f, -0.1f);
-                badge.localRotation = Quaternion.Euler(0f, 0f, 8f);
-                CrossMark(badge, 0.46f, 0.16f, _mendRimMat);
-            }
-            if (level >= 3 && head && branch > 0 && !Catalog.HasModules(type))
-            {
-                var crystal = Part(PrimitiveType.Cube, head, new Vector3(0f, 0.42f, -0.32f), Vector3.one * 0.16f, Catalog.FirstOf(branch) == 2 ? _crystalB : _crystalA, Quaternion.Euler(45f, 0f, 45f));
-                crystal.name = "BarrelCrystal";
-                // The upgrade path grows its own ornament (Owen: different paths should look different): A amber, B cyan,
-                // then A1 turbine / A2 ice / B1 heavy rail / B2 coil crown.
-                Drop(head.Find("BranchLook"));
-                var (at, sc) = BranchMount(type);
-                var ornament = Models.Attach(Catalog.BranchOrnament(branch), head, Vector3.one * 0.4f, shadows: false);
-                if (ornament)
-                {
-                    ornament.name = "BranchLook";
-                    ornament.transform.localPosition = at;
-                    ornament.transform.localScale = Vector3.one * sc;
-                }
-            }
             // One barrel per simultaneous shot/target (the real stat), not per milestone: a Cluster cannon shows three, a
-            // Barrage mortar three, and every Lv5/10/15 milestone adds another because Catalog.Turret adds the shot too.
+            // Barrage mortar three, and every Lv5/10/15 milestone adds another because Catalog.Turret adds the shot too. They
+            // stand on the turntable beside the head, right then left, each further pair one Catalog.BarrelStep on.
             int extra = Catalog.Barrels(type, level, branch) - 1;
+            var mount = Catalog.BarrelMount(type);
+            var step = Catalog.BarrelStep(type);
             for (int i = 1; i <= extra && head; i++)
             {
                 var barrel = new GameObject("Barrel" + i).transform;
                 barrel.SetParent(head, false);
-                float side = (i - (extra + 1) / 2f) * Mathf.Lerp(0.62f, 0.34f, Mathf.Clamp01((extra - 1) / 5f));
-                var mount = Catalog.BarrelMount(type);
-                barrel.localPosition = new Vector3(side, mount.y, mount.z);
-                barrel.localRotation = Quaternion.identity;
-                barrel.localScale = Vector3.one * (0.82f - 0.04f * i);
-                Models.Attach(Catalog.BarrelModel(type), barrel, new Vector3(0.25f, 0.2f, 0.8f));
+                float side = i % 2 == 1 ? 1f : -1f;
+                int k = (i - 1) / 2;
+                barrel.localPosition = new Vector3(side * (mount.x + k * step.x), mount.y + k * step.y, mount.z + k * step.z);
+                barrel.localScale = new Vector3(Catalog.BarrelMirror(type) && side < 0f ? -1f : 1f, 1f, 1f);
+                Models.Attach(Catalog.BarrelModel(type), barrel, new Vector3(0.1f, 0.12f, 0.5f));
             }
             SetLamps(look, level);
         }

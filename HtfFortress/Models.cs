@@ -109,12 +109,48 @@ namespace HtfFortress
 
         // Builds the model as a child of `parent`. Falls back to a plain cube of `fallbackSize` if the OBJ is missing.
         public static GameObject Attach(string name, Transform parent, Vector3 fallbackSize, Vector3 fallbackOffset = default, bool shadows = true, bool share = false)
+            => Spawn(Load(name), name + "Model", parent, fallbackSize, fallbackOffset, shadows, share);
+
+        // Several models as one: a single renderer with a material per colour (a turret's pieces round its plinth, up to eight
+        // models, cost what one does). Each list is merged once.
+        private static readonly Dictionary<string, Model> Merged = new Dictionary<string, Model>();
+        public static GameObject AttachAll(IList<string> names, Transform parent, string name)
         {
-            var model = Load(name);
+            if (names.Count == 0) return null;
+            string key = string.Join("+", names);
+            if (!Merged.TryGetValue(key, out var model))
+            {
+                var colours = new List<(Color kd, Color ke)>();
+                var groups = new List<List<CombineInstance>>();
+                foreach (var m in names.Select(Load).Where(m => m != null))
+                    for (int i = 0; i < m.Mesh.subMeshCount; i++)
+                    {
+                        int g = colours.IndexOf((m.Colors[i], m.Emits[i]));
+                        if (g < 0) { colours.Add((m.Colors[i], m.Emits[i])); groups.Add(new List<CombineInstance>()); g = groups.Count - 1; }
+                        groups[g].Add(new CombineInstance { mesh = m.Mesh, subMeshIndex = i, transform = Matrix4x4.identity });
+                    }
+                var parts = groups.Select(gr =>
+                {
+                    var part = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+                    part.CombineMeshes(gr.ToArray(), true, true);
+                    return part;
+                }).ToList();
+                var mesh = new Mesh { name = key, indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+                mesh.CombineMeshes(parts.Select(part => new CombineInstance { mesh = part, transform = Matrix4x4.identity }).ToArray(), false, true);
+                foreach (var part in parts) Object.Destroy(part);
+                mesh.RecalculateBounds();
+                Merged[key] = model = new Model { Mesh = mesh, Colors = colours.Select(c => c.kd).ToArray(), Emits = colours.Select(c => c.ke).ToArray(),
+                                                  Names = colours.Select((c, i) => "merged" + i).ToArray() };
+            }
+            return Spawn(model, name, parent, Vector3.one * 0.2f, default, true, false);
+        }
+
+        private static GameObject Spawn(Model model, string name, Transform parent, Vector3 fallbackSize, Vector3 fallbackOffset, bool shadows, bool share)
+        {
             GameObject go;
             if (model != null)
             {
-                go = new GameObject(name + "Model");
+                go = new GameObject(name);
                 go.AddComponent<MeshFilter>().sharedMesh = model.Mesh;
                 go.AddComponent<MeshRenderer>().sharedMaterials = model.Colors.Select((c, i) => share ? MakeShared(c, model.Emits[i]) : Make(c, model.Emits[i])).ToArray();
             }
@@ -189,7 +225,7 @@ namespace HtfFortress
             }
         }
 
-        // Upgrades change the look: walls/floors go wood -> stone -> metal, turrets gain gold trim.
+        // Upgrades change the look: walls/floors go wood -> stone -> metal.
         public static void SetLevelLook(GameObject root, PieceType type, int level)
         {
             foreach (var r in root.GetComponentsInChildren<Renderer>())
@@ -203,8 +239,7 @@ namespace HtfFortress
         {
             if (level <= 1) return c;
             float lum = c.grayscale;
-            if (Catalog.IsTurret(type))
-                return Color.Lerp(c, new Color(1f, 0.85f, 0.45f), level == 2 ? 0.08f : 0.16f);
+            if (Catalog.IsTurret(type)) return c; // a turret shows its level with pieces of its own (BuildSystem.SetTurretLook), not a tint
             var target = level == 2 ? new Color(0.58f, 0.58f, 0.6f) : new Color(0.38f, 0.43f, 0.52f);
             return Color.Lerp(new Color(lum, lum, lum), target, 0.75f) * (0.7f + lum);
         }

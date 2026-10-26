@@ -1,3 +1,4 @@
+# SUPERSEDED by art pass 5 (tools/t5_<turret>.py): running this would overwrite the v5 <T>Body / <T>Default / A... heads.
 # Turret art pass 4 (TURRET-UPGRADE-DESIGN.md, Owen's picks): each turret is its own base (<T>Body: plinth + chassis, the
 # "Head" the game aims) plus seven swappable heads (<T>Default for Lv1-2, <T>A / <T>B at the Lv3 split, <T>A1 / <T>A2 /
 # <T>B1 / <T>B2 at the Lv9 split: each second split keeps its first split's mechanism and adds the parts the design names)

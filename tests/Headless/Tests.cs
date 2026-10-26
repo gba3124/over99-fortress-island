@@ -543,25 +543,67 @@ namespace HtfFortress.Headless
                   "repair tower: heals, doesn't shoot; A reaches further, B heals more");
             v.Unlocked.Add(PieceType.Bubble);
             Check(v.CanBuild(PieceType.Bubble) && !v.CanBuild(PieceType.Sniper), "a blueprint unlocks just its turret");
-            // Every turret's art (tools/make_turrets_v4.py): a body, seven branch heads and an extra barrel, each on disk and
-            // within the budget (TURRET-UPGRADE-DESIGN: at most 2500 triangles and 5 materials a model).
+            // Every turret's art (art pass 5, tools/t5_<turret>.py): a static plinth, a turntable, seven class heads, the
+            // extra barrel, a piece for each of Lv2..Lv8 and a dressing for each final class, each on disk and in budget; the
+            // numbers the models were built round (tools/layout5) are the ones the game stacks them with.
             foreach (var t in all.Where(Catalog.IsTurret))
             {
                 Check(Catalog.HasModules(t) && Catalog.BodyModel(t) == t + "Body", $"{t}: not modular");
-                var names = new List<string> { Catalog.BodyModel(t), Catalog.BarrelModel(t) };
-                for (int b = 0; b <= 6; b++) names.Add(Catalog.ModuleModel(t, b));
-                Check(names.Distinct().Count() == 9, $"{t}: its nine models aren't distinct ({string.Join(",", names)})");
+                var heads = Enumerable.Range(0, 7).Select(b => Catalog.ModuleModel(t, b)).ToList();
+                var kits = Enumerable.Range(Catalog.FirstKit, Catalog.LastKit - Catalog.FirstKit + 1).Select(n => t + "Kit" + n).ToList();
+                var dresses = new[] { 3, 4, 5, 6 }.Select(b => Catalog.DressModel(t, b)).ToList();
+                var names = new List<string> { Catalog.BaseModel(t), Catalog.BodyModel(t), Catalog.BarrelModel(t) }.Concat(heads).Concat(kits).Concat(dresses).ToList();
+                Check(names.Distinct().Count() == 21, $"{t}: its 21 models aren't distinct ({string.Join(",", names)})");
                 foreach (var n in names)
                 {
                     string path = Path.Combine(Src, "Models", n + ".obj");
                     if (!File.Exists(path) || !File.Exists(Path.ChangeExtension(path, ".mtl"))) { Check(false, $"{t}: no {n}.obj/.mtl"); continue; }
                     var lines = File.ReadLines(path).ToList();
                     int tris = lines.Where(l => l.StartsWith("f ")).Sum(l => l.Split(' ').Length - 3), mats = lines.Where(l => l.StartsWith("usemtl ")).Distinct().Count();
-                    Check(tris > 0 && tris <= 2500 && mats <= 5, $"{n}: {tris} triangles, {mats} materials (budget 2500 / 5)");
+                    int budget = n == Catalog.BaseModel(t) ? 1500 : n == Catalog.BodyModel(t) ? 600 : n == Catalog.BarrelModel(t) ? 400
+                               : kits.Contains(n) ? 800 : dresses.Contains(n) ? 1800 : 2500;
+                    Check(tris > 0 && tris <= budget && mats <= 6, $"{n}: {tris} triangles, {mats} materials (budget {budget} / 6)");
+                    // the plinth inside the ring of lamps (radius 1, BuildSystem.LampRing), what stands round it no further out
+                    float reach = lines.Where(l => l.StartsWith("v ")).Select(l => l.Split(' ')).Select(q => (x: float.Parse(q[1], System.Globalization.CultureInfo.InvariantCulture), z: float.Parse(q[3], System.Globalization.CultureInfo.InvariantCulture)))
+                                       .Max(v => Mathf.Sqrt(v.x * v.x + v.z * v.z));
+                    if (n == Catalog.BaseModel(t)) Check(reach <= 0.8f, $"{n}: reaches {reach:0.00} m from the middle, into the lamps (0.8 at most)");
+                    if (kits.Contains(n) || dresses.Contains(n)) Check(reach <= 0.9f, $"{n}: reaches {reach:0.00} m from the middle, into the lamps (0.9 at most)");
                 }
-                var mount = Catalog.BarrelMount(t);
-                Check(mount.y > 0.2f && mount.y < 1.3f && mount.z >= 0f, $"{t}: extra barrels mount at {mount}, off the head");
+                string lay = Path.Combine(Program.Repo, "tools", "layout5", t + ".json");
+                if (!File.Exists(lay)) { Check(false, $"{t}: no tools/layout5/{t}.json"); continue; }
+                var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(lay)).RootElement;
+                float F(System.Text.Json.JsonElement e) => (float)e.GetDouble();
+                Check(Mathf.Abs(F(json.GetProperty("head")) - Catalog.HeadHeight(t)) < 0.005f && Mathf.Abs(F(json.GetProperty("muzzle")) - Catalog.MuzzleHeight(t)) < 0.005f,
+                      $"{t}: Catalog head {Catalog.HeadHeight(t)} / muzzle {Catalog.MuzzleHeight(t)}, the model's {json.GetProperty("head")} / {json.GetProperty("muzzle")}");
+                bool pods = json.TryGetProperty("pod", out var pod) && pod.ValueKind == System.Text.Json.JsonValueKind.Array;
+                Check(pods == (Catalog.Barrels(t, 15, 3) > 1 || Catalog.Barrels(t, 15, 5) > 1), $"{t}: extra barrels in the game and the model's layout disagree");
+                if (pods)
+                {
+                    var step = json.TryGetProperty("step", out var st) ? st : default;
+                    var m = Catalog.BarrelMount(t);
+                    var k = Catalog.BarrelStep(t);
+                    Check((new Vector3(F(pod[0]), F(pod[1]), F(pod[2])) - m).magnitude < 0.005f
+                          && (step.ValueKind != System.Text.Json.JsonValueKind.Array || (new Vector3(F(step[0]), F(step[1]), F(step[2])) - k).magnitude < 0.005f)
+                          && (json.TryGetProperty("mirror", out var mi) && mi.GetBoolean()) == Catalog.BarrelMirror(t),
+                          $"{t}: Catalog barrel mount {m} step {k}, the model's {pod} / {step}");
+                }
             }
+            // A turret looks different after every upgrade (Owen: "每次升等的變化"): on each path a new model at every level up to
+            // Lv9, and past that a lamp a level up to Lv20; every final class looks unlike the others.
+            foreach (var t in all.Where(Catalog.IsTurret))
+                foreach (int final in new[] { 3, 4, 5, 6 })
+                {
+                    int Branch(int lv) => lv < Catalog.BranchLevel ? 0 : lv < Catalog.SecondBranchLevel ? Catalog.FirstOf(final) : final;
+                    string Look(int lv) => string.Join(",", Catalog.TurretKit(t, lv, Branch(lv))) + "|" + Catalog.ModuleModel(t, Branch(lv)) + "|" + Catalog.Barrels(t, lv, Branch(lv));
+                    for (int lv = 2; lv <= 20; lv++)
+                    {
+                        bool changed = lv <= Catalog.SecondBranchLevel ? Look(lv) != Look(lv - 1)
+                                     : Look(lv) != Look(lv - 1) || BuildSystem.LampsLit(lv) != BuildSystem.LampsLit(lv - 1);
+                        Check(changed, $"{t} on the {Catalog.BranchKey(t, final)} path: Lv{lv} looks like Lv{lv - 1}");
+                    }
+                }
+            foreach (var t in all.Where(Catalog.IsTurret))
+                Check(new[] { 3, 4, 5, 6 }.Select(b => string.Join(",", Catalog.TurretKit(t, 9, b)) + Catalog.ModuleModel(t, b)).Distinct().Count() == 4, $"{t}: two final classes look alike");
         }
 
         // ---------- enemies ----------

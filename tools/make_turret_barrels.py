@@ -1,3 +1,4 @@
+# SUPERSEDED by art pass 5 (tools/t5_<turret>.py exports each turret's own <T>Barrel pod): these parts are no longer loaded.
 # Extra barrels a turret grows at Lv5 / Lv10 / Lv15 (Owen: upgrades should make the gun bigger and give it more barrels):
 # each is the turret's own kind of barrel/prong/coil, mounted beside the head by BuildSystem.SetTurretLook.
 # Run: Blender -b HtfFortress/Models/fortress_models.blend --python tools/make_turret_barrels.py

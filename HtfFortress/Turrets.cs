@@ -87,7 +87,7 @@ namespace HtfFortress
             if (p.Type == PieceType.Tesla) s.Chain += Mathf.RoundToInt(Perks.Team(Gear.TeslaCoil));
             _owner = BuildSystem.Instance.OwnerOf(p.Id);
             _from = p.Pos;
-            Vector3 muzzle = p.Pos + Vector3.up * 1.1f;
+            Vector3 muzzle = p.Pos + Vector3.up * Catalog.MuzzleHeight(p.Type, p.Level); // where its model's muzzle is
 
             // Range is measured flat (a cylinder): a turret up on a rise reaches the beach below it, and one on the ground the
             // flyers over it (the playtest's high turret couldn't hit what was under it).
@@ -222,7 +222,7 @@ namespace HtfFortress
                 case PieceType.Tesla:
                 {
                     var hitSet = new HashSet<Creature>();
-                    Creature cur = target; Vector3 from = muzzle + Vector3.up * 0.3f;
+                    Creature cur = target; Vector3 from = muzzle; // the electrode on top (Catalog.MuzzleHeight)
                     for (int n = 0; n < s.Chain && cur; n++)
                     {
                         hitSet.Add(cur);
@@ -378,7 +378,7 @@ namespace HtfFortress
                     healed.Add(core + Vector3.up * 2f);
                 if (healed.Count == 0) continue;
                 AutoTest.Count("mended");
-                if (fx) foreach (var to in healed.Take(3)) Fx.Send(FxKind.Mend, p.Pos + Vector3.up * 1.4f, to + Vector3.up * 0.6f, p.Id);
+                if (fx) foreach (var to in healed.Take(3)) Fx.Send(FxKind.Mend, p.Pos + Vector3.up * Catalog.MuzzleHeight(p.Type, p.Level), to + Vector3.up * 0.6f, p.Id);
             }
         }
 

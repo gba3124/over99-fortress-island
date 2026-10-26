@@ -5,6 +5,7 @@
 #           or:  ... --python tools/make_icons.py -- export-gear   (the gear's models as Models/Gear<Kind>.obj: what a drop on
 #                the ground looks like; still nothing saved into the .blend)
 # Also writes Icons/_sheet.png: all of them on the HUD's dark panel colour, to check they read at a glance.
+import json
 import math
 import os
 import sys
@@ -243,7 +244,7 @@ def shockwave():  # rings spreading out from a burst
 def net_cannon():  # the cannon turret's head with a balled-up net at its mouth
     b = Builder("IconNetBall", [rope])
     for k in range(6):
-        torus(b, (0, -0.62, 0.1), (math.cos(k * math.pi / 6), 0, math.sin(k * math.pi / 6)), 0.13, 0.012, rope, segs=14, tsegs=3)
+        torus(b, (0, -1.27, 0.55), (math.cos(k * math.pi / 6), 0, math.sin(k * math.pi / 6)), 0.16, 0.014, rope, segs=14, tsegs=3)
     return b.finish()
 
 
@@ -350,7 +351,7 @@ ICONS["GearDecoy"] = ([("Decoy", (0, 0, 0))], FRONT)
 ICONS["GearBigNet"] = ([("HandNet", (0, 0, 0)), ("HandNetBag", (0, 0, 0))], (-0.45, -1.0, 0.55))
 if not ONLY or "GearNetCannon" in ONLY:
     built["IconNetBall"] = net_cannon()
-ICONS["GearNetCannon"] = ([("CannonHead", (0, 0, 0)), ("IconNetBall", (0, 0, 0))], FRONT)
+ICONS["GearNetCannon"] = ([("CannonDefault", (0, 0, 0)), ("IconNetBall", (0, 0, 0))], FRONT)
 for name, fn in (("StallHelper", stall_helper), ("StallSpeed", stall_speed), ("StallBasket", stall_basket), ("StallOven", stall_oven), ("StallFood", stall_food)):
     if not ONLY or name in ONLY:
         built["Icon" + name] = fn()
@@ -379,8 +380,10 @@ if not ONLY or "GearAbsorber" in ONLY:
 ICONS["GearAbsorber"] = ([("Absorber", (0, 0, 0)), ("IconAbsorberGlass", (0, 0, 0))], SIDE)
 FRAME = {}  # icon: (objects the frame is fitted to, how much lower the frame reaches, in parts of its height)
 for t in ("Gun", "Cannon", "Harpoon", "Mortar", "Tesla", "Flame", "Sniper", "Bubble", "Mender"):
-    ICONS["Piece" + t] = ([("TurretBase", (0, 0, 0)), (t + "Body", (0, 0, 0.85)), (t + "Default", (0, 0, 0.85))], FRONT)
-    FRAME["Piece" + t] = ([t + "Body", t + "Default"], 0.35)
+    # art pass 5: the static plinth, the head on its pivot (tools/layout5); framed on the head with the plinth's top under it
+    head = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "layout5", t + ".json")))["head"]
+    ICONS["Piece" + t] = ([(t + "Base", (0, 0, 0)), (t + "Body", (0, 0, head)), (t + "Default", (0, 0, head))], FRONT)
+    FRAME["Piece" + t] = ([t + "Body", t + "Default"], 0.6)
 
 # ---------- the help panel's pictures (Tips.cs): the lighthouse and its pearl, the village, each kind of fish ----------
 # A part can carry a rotation and a scale too: (object, location, rotation, scale).

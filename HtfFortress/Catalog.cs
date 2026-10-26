@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace HtfFortress
@@ -26,14 +27,10 @@ namespace HtfFortress
         public static bool NeedsBlueprint(PieceType t) => t >= PieceType.Flame && t != PieceType.Mender;
         public static bool Shoots(PieceType t) => IsTurret(t) && t != PieceType.Bubble && t != PieceType.Mender;
         public static bool HasBranches(PieceType t) => IsTurret(t);
-        public static string HeadModel(PieceType t) => t + "Head";
-        // A modular turret keeps one shared body and swaps a branch module into it (starting with the Gun). The body is what
-        // is attached as the "Head"; the module carries the barrels and the branch's silhouette.
-        // Art pass 3 split every turret into Body + swappable head modules; Owen preferred the original, characterful
-        // single-piece heads (the build poster's silhouettes), so use those by default and keep the modular set as an option.
-        public static bool ClassicHeads = false; // art pass 4 (tools/make_turrets_v4.py): every turret modular again, each with its own body
-        public static bool HasModules(PieceType t) => !ClassicHeads && IsTurret(t);
-        public static string BodyModel(PieceType t) => HasModules(t) ? t + "Body" : HeadModel(t);
+        // Every turret (art pass 5, tools/t5_<turret>.py) is modular: a turntable "Body" on the aimed Head and a swappable
+        // class module carrying the branch's silhouette.
+        public static bool HasModules(PieceType t) => IsTurret(t);
+        public static string BodyModel(PieceType t) => t + "Body";
         public static string ModuleModel(PieceType t, int branch)
         {
             if (!HasModules(t)) return null;
@@ -43,22 +40,91 @@ namespace HtfFortress
         }
         // The extra gun a turret grows at Lv5/10/15 (its own kind of barrel, not a copy of the whole head).
         public static string BarrelModel(PieceType t) => t + "Barrel";
-        // Where an extra barrel sits on the head (x across, y up, z forward): just under the module's own barrel, its rear
-        // where the module's barrel starts (the <T>Barrel models point +Z from their rear; tools/make_turrets_v4.py).
+
+        // Art pass 5 (tools/t5_<turret>.py, Owen's reference sheets): a turret is a static plinth (<T>Base, it doesn't turn
+        // with the aim), the head on the plinth's top (<T>Body, the turntable, and the class head), one more piece round the
+        // plinth at each of Lv2..Lv8 (<T>Kit2..Kit8: iron caps, brass band, supplies, armour, a second supply, its pennant,
+        // its crest) and from Lv9 its final class's own dressing (<T>DressA1..B2), which takes the supplies' places.
+        public static string BaseModel(PieceType t) => t + "Base";
+        public const int FirstKit = 2, LastKit = 8;
+        public static bool Dressed(int level, int branch) => level >= SecondBranchLevel && branch >= 3;
+        public static string DressModel(PieceType t, int branch) => t + "Dress" + (FirstOf(branch) == 1 ? "A" : "B") + SecondOf(branch);
+        public static List<string> TurretKit(PieceType t, int level, int branch)
+        {
+            var kit = new List<string>();
+            bool dressed = Dressed(level, branch);
+            for (int n = FirstKit; n <= Mathf.Min(level, LastKit); n++)
+                if (!(dressed && (n == 4 || n == 6))) kit.Add(t + "Kit" + n);
+            if (dressed) kit.Add(DressModel(t, branch));
+            return kit;
+        }
+        // The head grows a little with every level up to Lv13 (the pieces round the plinth show the rest).
+        public static float HeadScale(int level) => 1f + 0.025f * Mathf.Clamp(level - 1, 0, 12);
+
+        // The numbers each turret's model was built round (tools/layout5/<T>.json; tests/Headless checks they agree): the
+        // head pivot on top of the plinth, the muzzle at Lv1, and where the extra barrels stand on the turntable (head space:
+        // x either side, up, forward), the first pair at BarrelMount and each further pair one BarrelStep on.
+        public static float HeadHeight(PieceType t)
+        {
+            switch (t)
+            {
+                case PieceType.Gun: return 1.1f;
+                case PieceType.Cannon: return 0.78f;
+                case PieceType.Harpoon: return 0.74f;
+                case PieceType.Mortar: return 0.8f;
+                case PieceType.Tesla: return 0.52f;
+                case PieceType.Flame: return 0.56f;
+                case PieceType.Sniper: return 1.12f;
+                case PieceType.Bubble: return 0.46f;
+                default: return 0.76f; // Mender
+            }
+        }
+        public static float MuzzleHeight(PieceType t)
+        {
+            switch (t)
+            {
+                case PieceType.Gun: return 1.424f;
+                case PieceType.Cannon: return 1.332f;
+                case PieceType.Harpoon: return 1.364f;
+                case PieceType.Mortar: return 1.71f;
+                case PieceType.Tesla: return 1.756f;
+                case PieceType.Flame: return 1.064f;
+                case PieceType.Sniper: return 1.48f;
+                case PieceType.Bubble: return 1.022f;
+                default: return 1.4f; // Mender
+            }
+        }
+        // Where the shot leaves at this level (the head, muzzle and all, grows with HeadScale).
+        public static float MuzzleHeight(PieceType t, int level) => HeadHeight(t) + (MuzzleHeight(t) - HeadHeight(t)) * HeadScale(level);
         public static Vector3 BarrelMount(PieceType t)
         {
             switch (t)
             {
-                case PieceType.Gun: return new Vector3(0f, 0.54f, 0.4f);
-                case PieceType.Cannon: return new Vector3(0f, 0.56f, 0.3f);
-                case PieceType.Harpoon: return new Vector3(0f, 0.83f, 0.3f);
-                case PieceType.Mortar: return new Vector3(0f, 0.55f, 0.1f);
-                case PieceType.Tesla: return new Vector3(0f, 1.12f, 0.3f);
-                case PieceType.Flame: return new Vector3(0f, 0.36f, 0.2f);
-                case PieceType.Sniper: return new Vector3(0f, 0.83f, 0.4f);
-                default: return new Vector3(0f, 0.6f, 0.3f); // Bubble, Mender: never get one
+                case PieceType.Gun: return new Vector3(0.372f, 0.192f, 0.144f);
+                case PieceType.Cannon: return new Vector3(0.432f, 0.096f, -0.132f);
+                case PieceType.Harpoon: return new Vector3(0.36f, 0.096f, -0.144f);
+                case PieceType.Mortar: return new Vector3(0.396f, 0.06f, 0.144f);
+                case PieceType.Tesla: return new Vector3(0.24f, 0.06f, 0.06f);
+                case PieceType.Flame: return new Vector3(0.324f, 0.096f, 0.06f);
+                case PieceType.Sniper: return new Vector3(0.282f, 0.084f, 0.024f);
+                default: return Vector3.zero; // no extra barrels
             }
         }
+        public static Vector3 BarrelStep(PieceType t)
+        {
+            switch (t)
+            {
+                case PieceType.Gun: return new Vector3(0f, 0.156f, 0f);
+                case PieceType.Cannon: return new Vector3(0f, 0.18f, 0f);
+                case PieceType.Harpoon: return new Vector3(0f, 0.156f, 0f);
+                case PieceType.Mortar: return new Vector3(0f, 0f, -0.192f);
+                case PieceType.Tesla: return new Vector3(0f, 0f, -0.24f);
+                case PieceType.Flame: return new Vector3(0f, 0.144f, 0f);
+                case PieceType.Sniper: return new Vector3(0f, 0.12f, 0f);
+                default: return Vector3.zero;
+            }
+        }
+        public static bool BarrelMirror(PieceType t) => false;
         // How many barrels the volley physically has (and how many fish/shells it fires at once): the model follows the stat, so
         // an upgrade that adds a shot also grows a barrel (Owen: "要跟他同時可以射幾發有關").
         public static int Barrels(PieceType t, int level, int branch)
@@ -71,11 +137,6 @@ namespace HtfFortress
                 default: return 1; // bubble/mender: no barrels
             }
         }
-        // The ornament a path grows: A/B at Lv3, A1/A2/B1/B2 at Lv6 (BranchA... models).
-        public static string BranchOrnament(int branch) => branch <= 0 ? null : branch <= 2
-            ? "Branch" + (branch == 1 ? "A" : "B")
-            : "Branch" + (FirstOf(branch) == 1 ? "A" : "B") + (SecondOf(branch) == 1 ? "1" : "2");
-
         public static int BuildCost(PieceType t) => Siege.Money(BaseCost(t)); // in the game's dollars
 
         private static int BaseCost(PieceType t)
