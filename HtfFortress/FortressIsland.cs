@@ -49,6 +49,24 @@ namespace HtfFortress
         public static readonly Vector3 KeeperLocal = new Vector3(-2.6f, 0f, -3.4f); // the lighthouse keeper, beside the start circle
         public static readonly Vector3 BoardLocal = new Vector3(3.6f, 0f, -6.2f);   // the record board, the other side of it
         public const float BoardYaw = 35f;                                          // read from the road up from the dock
+        // Where the stall's villagers have a coffee when there's nothing to pick up (Helpers): north of the vault, behind the
+        // stall (between it and the smithy), on the beach by the dock south of the vault. Flat open ground clear of the doors,
+        // the stall's front and the roads, with no plants underfoot (tests/Headless). Yaw: where they're mostly seen from (the
+        // road), so a pair stands side on to it.
+        public static readonly (Vector3 at, float yaw)[] RestSpots = { (new Vector3(-8.2f, 0f, -12.9f), 90f), (new Vector3(9.6f, 0f, -13.9f), -90f), (new Vector3(-7f, 0f, -21f), 100f) };
+        // The seagulls' nests (GullNest.obj), each flat on a real surface (tests/Headless checks them against the models): two on
+        // the lighthouse's gallery (its own frame: the door on +z, the ladder up on -x), two on pile caps along the pier's east
+        // side (the lamps are on the west), one on the smithy's roof (its frame: the roof falls 10 degrees to the front). Yaw, in
+        // the same frame: where its gull looks out.
+        public enum NestOn { Lighthouse, Island, Smithy }
+        public static readonly (NestOn on, Vector3 at, float yaw, float scale)[] NestSpots =
+        {
+            (NestOn.Lighthouse, new Vector3(0.5f, Ladder.DeckY, 0.866f), 30f, 1f), (NestOn.Lighthouse, new Vector3(-0.5f, Ladder.DeckY, 0.866f), -30f, 1f),
+            (NestOn.Island, new Vector3(1.4f, 1.23f, -28.5f), 90f, 0.85f), (NestOn.Island, new Vector3(1.4f, 1.23f, -36.5f), 90f, 0.85f),
+            (NestOn.Smithy, new Vector3(-1.1f, 2.881f, -0.5f), 0f, 1f),
+        };
+        public const float SmithyRoofTilt = 10f;
+        public readonly List<Transform> GullNests = new List<Transform>();
         public const float BuildRadius = 27f;
         public const float IslandRadius = 36f;
         public static readonly float[] GapAngles = { 90f, 210f, 330f };
@@ -429,6 +447,21 @@ namespace HtfFortress
             // The lighthouse keeper walks a slow ring round the tower instead of standing still on the plaza.
             foreach (var k in Keepers)
                 if (k && k.Role == "Lighthouse") { k.WanderAround(Center, 5.2f); break; }
+
+            // The seagulls' nests. The lighthouse isn't under the island's root (Siege moves it), so its two go on the root where
+            // it stands, turned as it is.
+            GullNests.Clear();
+            foreach (var (on, at, yaw, scale) in NestSpots)
+            {
+                var nest = new GameObject("GullNest").transform;
+                nest.SetParent(on == NestOn.Smithy ? smithy.transform : _root.transform, false);
+                var turn = Quaternion.Euler(0f, on == NestOn.Lighthouse ? 180f : 0f, 0f);
+                nest.localPosition = on == NestOn.Lighthouse ? _lighthouseLocal + turn * at : at;
+                nest.localRotation = (on == NestOn.Smithy ? Quaternion.Euler(SmithyRoofTilt, 0f, 0f) : turn) * Quaternion.Euler(0f, yaw, 0f);
+                nest.localScale = Vector3.one * scale;
+                Models.Attach("GullNest", nest, new Vector3(0.46f, 0.12f, 0.46f), new Vector3(0f, 0.06f, 0f), share: true);
+                GullNests.Add(nest);
+            }
             BuildSystem.Log.LogInfo($"Fortress island at {Center} (off island at {_anchor}).");
         }
 
