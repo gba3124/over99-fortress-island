@@ -42,7 +42,8 @@ namespace HtfFortress
                     break;
                 case "sky":
                     Run(Streak(a, b, 0.3f, Color.white, 0.7f));
-                    WeaponFx.Emit(WeaponFx.Rings, a, 1, (b - a).normalized, color: Color.white, size: 5f);
+                    // Flying out along the gust as it grows (left at the muzzle it swelled to 5 m round the shooter's own camera).
+                    WeaponFx.Emit(WeaponFx.Rings, a + (b - a).normalized * 0.6f, 1, (b - a).normalized, color: Color.white, size: 5f, velocity: (b - a) / 0.5f, life: 0.5f);
                     Fx.Sound("PunchSwoosh", a, 1f, AudioDistance.Long); Sound("Seagull_V", 1, 11, a, 0.8f);
                     break;
                 case "bomb": Explode(a, 2.6f); break;

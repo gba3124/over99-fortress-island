@@ -200,6 +200,10 @@ namespace HtfFortress
 
         // A flash: a hot core shrinking away inside a see-through halo of `c` that swells and fades, lighting the ground
         // round it for a moment: the heart of an impact.
+        // The halo stops growing at HaloMax across (a legendary chest's 7.8 m, the steed's 5 m, were a wall of colour over
+        // the screen up close); the light still reaches as far as the size asks.
+        public const float HaloMax = 4f;
+        public static float HaloSize(float size) => Mathf.Min(size, HaloMax);
         public static void Flash(Vector3 at, float size, Color c, float seconds = 0.25f) => Run(FlashRun(at, size, c, seconds));
         private static IEnumerator FlashRun(Vector3 at, float size, Color c, float seconds)
         {
@@ -207,15 +211,26 @@ namespace HtfFortress
             var halo = WeaponFx.Piece(WeaponFx.Ball, Wash(new Color(c.r, c.g, c.b, 0.45f)));
             var hm = halo.GetComponent<MeshRenderer>().sharedMaterial;
             core.position = halo.position = at;
-            var l = new GameObject("BossVfxLight").AddComponent<Light>();
-            l.type = LightType.Point; l.color = c; l.range = size * 4f; l.shadows = LightShadows.None; l.transform.position = at;
+            // A light only while few are lit (a nova flashes on every fish in reach at once).
+            // Counted by the live ones, so a flash cut short (a scene change) never holds a slot.
+            Light l = null;
+            Lights.RemoveAll(x => !x);
+            if (Lights.Count < MaxLights)
+            {
+                l = new GameObject("BossVfxLight").AddComponent<Light>();
+                Lights.Add(l);
+                l.type = LightType.Point; l.color = c; l.range = size * 4f; l.shadows = LightShadows.None; l.transform.position = at;
+            }
+            var cam = GameInfo.CurCamera;
             for (float s = 0f; s < seconds && core; s += Time.deltaTime)
             {
                 float k = s / seconds, swell = 1f - (1f - k) * (1f - k);
-                core.localScale = Vector3.one * size * 0.35f * (1f - k);
-                halo.localScale = Vector3.one * size * (0.45f + 0.55f * swell);
+                // Never round the camera either: standing in it tinted the whole screen.
+                float across = cam ? Mathf.Min(HaloSize(size), Room(Vector3.Distance(cam.transform.position, at))) : HaloSize(size);
+                core.localScale = Vector3.one * across * 0.35f * (1f - k);
+                halo.localScale = Vector3.one * across * (0.45f + 0.55f * swell);
                 hm.color = new Color(c.r, c.g, c.b, 0.45f * (1f - k));
-                l.intensity = 3f * (1f - k);
+                if (l) l.intensity = 3f * (1f - k);
                 yield return null;
             }
             if (core) Object.Destroy(core.gameObject);
@@ -223,6 +238,10 @@ namespace HtfFortress
             Object.Destroy(hm);
             if (l) Object.Destroy(l.gameObject);
         }
+        public const int MaxLights = 4;
+        private static readonly List<Light> Lights = new List<Light>();
+        // How wide a flash `dist` from the camera may be and still leave it outside (0.4 m to spare).
+        public static float Room(float dist) => 2f * Mathf.Max(0.1f, dist - 0.4f);
 
         // Chunks thrown out of the ground (lit, in `c`, falling back under gravity).
         public static void Debris(Vector3 at, int n, Color c, float speed = 6f, float size = 0.25f)

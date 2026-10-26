@@ -1558,7 +1558,7 @@ namespace HtfFortress
 
         // ---------- effects (every client), in the game's own effect language (see WeaponFx) ----------
 
-        private class BeamView { public Transform Beam, Core, Hit, HaloIn, HaloOut; public Transform[] Streaks, Bands; public Material Sheath, Glow, HaloInMat, HaloOutMat; public Material[] BandMats; public Vector3 A, B; public float Width, Until, NextFlash, NextSmoke, Heat; }
+        private class BeamView { public Transform Beam, Core, Hit, HaloIn, HaloOut; public Transform[] Streaks, Bands; public Material Sheath, Glow, HaloInMat, HaloOutMat; public Material[] BandMats; public Vector3 A, B; public float Width, Until, NextFlash, NextSmoke, Heat; public System.Func<Vector3> Muzzle; }
         private readonly Dictionary<int, BeamView> _beams = new Dictionary<int, BeamView>();
         private float _nextBoomerangPick;
         private class SharkView
@@ -1575,23 +1575,30 @@ namespace HtfFortress
             return objectId != 0 && cm != null && cm.Objects.Spawned.TryGetValue(objectId, out NetworkObject nob) && nob ? nob.transform : null;
         }
 
-        public void PlayFx(FxEvent e)
+        // Where a shot the host sent from `e.From` leaves on this screen: my own from the gun in my view (which kicks back),
+        // a friend's from their gun as I see it, when what the host sent is near it (a chained hook, a bounce or a burst
+        // starts somewhere else, and keeps that). `follow` gives the same point again later, following the gun as it moves.
+        public Vector3 Origin(FxEvent e) => Origin(e, out _);
+        private Vector3 Origin(FxEvent e, out System.Func<Vector3> follow)
         {
-            // My own shot: drawn from the gun in my view, which kicks back (a chained hook or a burst starts elsewhere).
             var cam = GameInfo.CurCamera;
             bool fromMe = Player.LocalPlayer && e.Who == Player.LocalPlayer.ObjectId && e.Kind != FxKind.Shark && e.Kind != FxKind.WeaponHit
                           && cam && (e.From - cam.transform.position).sqrMagnitude < 2f * 2f;
             if (fromMe) _kick = e.Kind == FxKind.Beam || e.Kind == FxKind.Gatling ? Mathf.Max(_kick, 0.3f) : 1f;
-            // A friend's shot: from their gun as I see it, when what the host sent is near it (a chained hook, a bounce or a
-            // burst starts somewhere else, and keeps that).
             bool theirs = !fromMe && e.Kind != FxKind.Shark && e.Kind != FxKind.WeaponHit && e.Kind != FxKind.Soul;
             var shooter = theirs ? PlayerById(e.Who) : null;
             Vector3 from = fromMe ? MyMuzzle(e.From) : shooter ? HeldMuzzle(shooter, e.From, 1.5f) ?? e.From : e.From;
-            System.Func<Vector3> muzzle = () => fromMe ? MyMuzzle(from) : shooter ? HeldMuzzle(shooter, from, 1.5f) ?? from : from; // follows the gun while it moves
+            follow = () => fromMe ? MyMuzzle(from) : shooter ? HeldMuzzle(shooter, from, 1.5f) ?? from : from;
+            return from;
+        }
+
+        public void PlayFx(FxEvent e)
+        {
+            Vector3 from = Origin(e, out var muzzle);
             switch (e.Kind)
             {
                 case FxKind.Beam:
-                    Beam(e.Who, from, e.To, 0.07f + 0.04f * Mathf.Clamp(e.Arg / 100f - 1f, 0f, 2f), e.PieceId / 100f);
+                    Beam(e.Who, from, e.To, 0.07f + 0.04f * Mathf.Clamp(e.Arg / 100f - 1f, 0f, 2f), e.PieceId / 100f, muzzle);
                     if (Time.time >= _nextBeamSound) { _nextBeamSound = Time.time + 0.3f; Fx.Sound("Ignite", from, 0.25f, AudioDistance.Short); }
                     break;
                 case FxKind.Gas:
@@ -1720,7 +1727,7 @@ namespace HtfFortress
         public const int RainbowBands = 12; // the sheath of a rainbow beam, cut in bands of the spectrum racing down it
         private static IEnumerable<Transform> Parts(BeamView v) => new[] { v.Beam, v.Core, v.Hit, v.HaloIn, v.HaloOut }.Concat(v.Streaks);
 
-        private void Beam(int who, Vector3 a, Vector3 b, float width, float heat)
+        private void Beam(int who, Vector3 a, Vector3 b, float width, float heat, System.Func<Vector3> muzzle = null)
         {
             if (!_beams.TryGetValue(who, out var v) || !v.Beam)
             {
@@ -1731,7 +1738,7 @@ namespace HtfFortress
                 foreach (var t in Parts(v)) DontDestroyOnLoad(t.gameObject);
                 _beams[who] = v;
             }
-            v.A = a; v.B = b; v.Width = width; v.Heat = heat; v.Until = Time.time + 0.22f;
+            v.A = a; v.B = b; v.Width = width; v.Heat = heat; v.Until = Time.time + 0.22f; v.Muzzle = muzzle;
         }
 
         private void AnimateBeams(float now)
@@ -1740,6 +1747,9 @@ namespace HtfFortress
             {
                 if (!v.Beam) continue;
                 bool on = now <= v.Until;
+                // The host says where the beam starts ten times a second; between those the gun has moved on (turning, the
+                // beam's foot hung in the air behind the muzzle): its foot follows the gun every frame.
+                if (on && v.Muzzle != null) { Vector3 m = v.Muzzle(); if (Finite(m) && (m - v.A).sqrMagnitude < 1.5f * 1.5f) v.A = m; }
                 float rainbow = v.Heat - RainbowHeat; // 0 and up: past white, how hard it bites (BeamShown)
                 bool bands = on && rainbow >= 0f;
                 if (bands && v.Bands == null)
@@ -1945,16 +1955,24 @@ namespace HtfFortress
             if (t) t.position = b;
         }
 
-        // Water cannon (sent ten times a second while spraying): a stream of drops, foam and a splash where it hits.
+        // Water cannon (sent ten times a second while spraying): a jet of drops leaving the nozzle fast enough to reach where
+        // it hits (they used to be scattered along the line and die halfway: a thin dotted spray), a thread of mist along
+        // it, foam and a splash where it lands. WaterJet: how many drops an event, their life from the reach.
+        public const int WaterJetDrops = 10;
+        public static float WaterJetLife(float reach) => Mathf.Clamp(reach / 16f, 0.25f, 0.7f);
         private void WaterView(Vector3 a, Vector3 b)
         {
             Vector3 d = b - a;
-            for (int i = 0; i < 6; i++)
+            float reach = d.magnitude, life = WaterJetLife(reach);
+            Vector3 dir = reach > 1e-3f ? d / reach : Vector3.forward;
+            for (int i = 0; i < WaterJetDrops; i++)
             {
-                float k = Random.value;
-                WeaponFx.Emit(WeaponFx.Drops, a + d * k + Random.insideUnitSphere * 0.08f, 1, default, null, Random.Range(0.08f, 0.16f), d.normalized * Random.Range(8f, 14f) + Random.insideUnitSphere, 0.35f);
+                float k = Random.value * 0.25f; // all from the nozzle, a little staggered down the jet
+                WeaponFx.Emit(WeaponFx.Drops, a + d * k + Random.insideUnitSphere * 0.05f, 1, default, null, Random.Range(0.1f, 0.18f), dir * (reach / life) * Random.Range(0.9f, 1.1f) + Random.insideUnitSphere * 0.6f, life);
             }
+            WeaponFx.Emit(WeaponFx.Foam, a + d * Random.Range(0.3f, 0.8f), 1, default, new Color(0.85f, 0.95f, 1f, 0.6f), Random.Range(0.25f, 0.4f), dir * 2f, 0.3f);
             WeaponFx.Emit(WeaponFx.Foam, b + Vector3.up * 0.1f, 3, Vector3.up);
+            WeaponFx.Emit(WeaponFx.Drops, b + Vector3.up * 0.1f, 3, Vector3.up);
             if (Random.value < 0.3f) WeaponFx.Game("WaterSplash", b);
             if (Time.time >= _nextSpraySound) { _nextSpraySound = Time.time + 0.35f; Fx.SoundRandom("ItemHitWaterLight_V", 1, 3, b, 0.6f); }
         }
@@ -1988,13 +2006,20 @@ namespace HtfFortress
                 WeaponFx.Emit(WeaponFx.Gas, at + Vector3.up * 0.4f, 1, default, null, Random.Range(0.6f, 1.1f), Random.onUnitSphere.Flat().normalized * Random.Range(1f, 3f) * k + Vector3.up * 0.6f, 1f);
         }
 
-        // Rocket: a little rocket flying straight with fire and smoke behind it, bursting where it ends.
+        // Rocket: a little rocket flying straight on a plume of fire, a rope of smoke puffs growing out behind it (every
+        // RocketPuffEvery seconds, so the trail is a line and not a count that climbs with the frame rate), the game's
+        // muzzle smoke as it leaves. Where it ends it only winks out in a small flash: the explosion itself comes from
+        // the host's Blast event at the real radius (Fx.Explosion), which used to be drawn on top of a second one here.
+        public const float RocketPuffEvery = 0.03f;
         private IEnumerator RocketView(Vector3 a, Vector3 b, float flight)
         {
             var rocket = new GameObject("FortressRocket").transform;
             Models.Attach("RocketShell", rocket, new Vector3(0.12f, 0.12f, 0.5f));
             Vector3 dir = (b - a).sqrMagnitude > 0.01f ? (b - a).normalized : Vector3.forward;
             rocket.rotation = Quaternion.LookRotation(dir);
+            WeaponFx.Game("SmallSmoke", a + dir * 0.3f, dir);
+            BossVfx.Flash(a + dir * 0.4f, 0.7f, new Color(1f, 0.75f, 0.35f), 0.1f);
+            var flame = WeaponFx.FlameFor(new Color(1f, 0.6f, 0.15f));
             float nextPuff = 0f;
             for (float t = 0f; t < flight && rocket; t += Time.deltaTime)
             {
@@ -2002,18 +2027,16 @@ namespace HtfFortress
                 rocket.Rotate(0f, 0f, 720f * Time.deltaTime, Space.Self);
                 if (t >= nextPuff)
                 {
-                    nextPuff = t + 0.025f;
+                    nextPuff = t + RocketPuffEvery;
                     Vector3 tail = rocket.position - dir * 0.3f;
-                    WeaponFx.Emit(WeaponFx.Sparks("Orange"), tail, 2, -dir);
-                    WeaponFx.Emit(WeaponFx.Dust, tail, 1, -dir, new Color(0.75f, 0.75f, 0.75f), Random.Range(0.35f, 0.6f), -dir * 0.6f + Random.insideUnitSphere * 0.4f, 0.9f);
+                    WeaponFx.Emit(flame, tail, 1, -dir, null, Random.Range(0.3f, 0.45f), -dir * 2.5f + Random.insideUnitSphere * 0.3f, Random.Range(0.1f, 0.16f));
+                    WeaponFx.Emit(WeaponFx.Sparks("Orange"), tail, 1, -dir);
+                    WeaponFx.Emit(WeaponFx.Dust, tail - dir * 0.2f, 1, -dir, new Color(0.8f, 0.78f, 0.75f, 0.85f), Random.Range(0.3f, 0.45f), -dir * 0.4f + Random.insideUnitSphere * 0.25f + Vector3.up * 0.3f, Random.Range(0.8f, 1.2f));
                 }
                 yield return null;
             }
             if (rocket) Destroy(rocket.gameObject);
-            WeaponFx.Game("SmallExplosion", b + Vector3.up * 0.3f, Vector3.up);
-            Fx.Sound("Explosion", b, 0.55f, AudioDistance.Long);
-            for (int i = 0; i < 16; i++)
-                WeaponFx.Emit(WeaponFx.Sparks("Orange"), b + Vector3.up * 0.4f, 1, default, null, 0.12f, Random.onUnitSphere * Random.Range(6f, 11f) + Vector3.up * 2f, 0.3f);
+            BossVfx.Flash(b + Vector3.up * 0.3f, 0.9f, new Color(1f, 0.85f, 0.5f), 0.1f);
             if (b.y <= WaterManager.GetWaterHeight(b) + 0.2f) WeaponFx.Game("WaterSplash", b);
         }
 

@@ -140,7 +140,7 @@ namespace HtfFortress
             var mark = (at, Time.time + 120f, name);
             DeathMarks.Add(mark);
             var pillar = WeaponFx.Piece(WeaponFx.Cyl, BossVfx.Glow(new Color(1f, 0.78f, 0.25f), 4f));
-            pillar.position = at + Vector3.up * 15f;
+            pillar.position = at; // Cyl runs 0..1 up from its foot: it stood 15-30 m up, over the island, not at the body
             pillar.localScale = new Vector3(0.18f, 15f, 0.18f);
             bool backAlive = false;
             for (float t = 0f; t < 120f && pillar; t += 0.25f)
@@ -290,7 +290,13 @@ namespace HtfFortress
                 }
                 return;
             }
-            if (e.Kind == FxKind.Absorber) { if (BossFx.Instance) BossMoves.PlayAbsorber(BossFx.Instance, e); return; }
+            if (e.Kind == FxKind.Absorber)
+            {
+                // Its moves that leave the gun start at the muzzle as this screen sees it (the weapons' rule), not where the host guessed.
+                if (Weapons.Instance && (e.Key == "suck" || e.Key == "shot" || e.Key == "warden" || e.Key == "angler" || e.Key == "eye")) e.From = Weapons.Instance.Origin(e);
+                if (BossFx.Instance) BossMoves.PlayAbsorber(BossFx.Instance, e);
+                return;
+            }
             if (e.Kind >= FxKind.Beam && e.Kind <= FxKind.WeaponHit || e.Kind >= FxKind.Net && e.Kind <= FxKind.Claw || e.Kind == FxKind.Rocket || e.Kind == FxKind.Drip || e.Kind == FxKind.Gatling) { if (Weapons.Instance) Weapons.Instance.PlayFx(e); return; } // PieceId there is a fish or a shark, Arg is not damage
             if (e.Kind == FxKind.Absorb) { StartCoroutine(Swallow.View(e)); return; }
             if (e.Kind == FxKind.BossIntro) { Reveal.Instance.Boss((EnemyKind)e.Arg, e.To, e.From, e.PieceId); return; }
@@ -298,19 +304,22 @@ namespace HtfFortress
             if (e.Arg > 0 && e.Kind != FxKind.Proc && e.Kind != FxKind.Decoy) { try { PlayerUI.AddDamageNumber(e.To + Vector3.up * 0.8f, e.Arg, false); } catch { } }
             if (!_tracer)
             {
-                _tracer = Models.Make(new Color(1f, 0.85f, 0.4f), new Color(1f, 0.7f, 0.2f));
+                // Energy (tracers, zaps, blasts, fire, heals) glows in the game's own emissive particle look, shared with the
+                // weapons' and the bosses' (BossVfx.Glow caches one material a colour); matter (balls, shells, stone, spit,
+                // dust, water) stays lit.
+                _tracer = BossVfx.Glow(new Color(1f, 0.82f, 0.35f), 7f);
                 _ball = Models.Make(new Color(0.15f, 0.15f, 0.15f));
-                _blast = Models.Make(new Color(1f, 0.55f, 0.1f), new Color(1f, 0.5f, 0.1f));
+                _blast = BossVfx.Glow(new Color(1f, 0.55f, 0.12f), 6f);
                 _spit = Models.Make(new Color(0.35f, 0.85f, 0.4f), new Color(0.2f, 0.6f, 0.25f));
                 _bolt = Models.Make(new Color(0.75f, 0.78f, 0.82f));
-                _zap = Models.Make(new Color(0.55f, 0.85f, 1f), new Color(0.4f, 0.8f, 1f));
-                _fire = Models.Make(new Color(1f, 0.45f, 0.1f), new Color(1f, 0.4f, 0.05f));
-                _heal = Models.Make(new Color(0.45f, 1f, 0.5f), new Color(0.3f, 1f, 0.4f));
+                _zap = BossVfx.Glow(new Color(0.55f, 0.85f, 1f), 8f);
+                _fire = BossVfx.Glow(new Color(1f, 0.42f, 0.08f), 5f);
+                _heal = BossVfx.Glow(new Color(0.45f, 1f, 0.5f), 5f);
                 _dust = Models.Make(new Color(0.62f, 0.5f, 0.36f));
                 _water = Models.Make(new Color(0.55f, 0.8f, 1f), new Color(0.4f, 0.7f, 1f));
                 _stone = Models.Make(new Color(0.32f, 0.32f, 0.34f));
                 _shell = Models.Make(new Color(0.18f, 0.16f, 0.15f), new Color(0.4f, 0.12f, 0.05f));
-                _sniperTracer = Models.Make(new Color(0.75f, 0.95f, 1f), new Color(0.4f, 0.8f, 1f));
+                _sniperTracer = BossVfx.Glow(new Color(0.6f, 0.92f, 1f), 8f);
                 _flameCore = Models.Make(new Color(1f, 0.9f, 0.45f), new Color(1f, 0.7f, 0.15f));
                 _flameMesh = BuildFlameMesh();
             }
@@ -322,8 +331,8 @@ namespace HtfFortress
                 case FxKind.Spit: StartCoroutine(Arc(e.From, e.To, _spit, 0.3f, SpitFlight, 6f, false)); SoundRandom("PiranhaVomit_V", 1, 3, e.From, 0.8f); break; // higher lob for the spitter
                 case FxKind.Blast:
                     // Weapon explosions carry their real radius (cm) in Arg; turrets keep their level-scaled default.
-                    float blastSize = e.Arg > 0 ? e.Arg / 100f : 3.5f * (e.PieceId != 0 ? 1f + 0.055f * (TurretLevel(e.PieceId) - 1) : 1f);
-                    StartCoroutine(Blast(e.To, blastSize));
+                    float blastRadius = e.Arg > 0 ? e.Arg / 100f : BlastDefault * (e.PieceId != 0 ? 1f + 0.055f * (TurretLevel(e.PieceId) - 1) : 1f);
+                    Explosion(e.To, blastRadius);
                     if (e.PieceId != 0 && TurretLevel(e.PieceId) >= 20) StartCoroutine(ScreenPulse(new Color(1f, 0.55f, 0.12f), 0.22f));
                     Sound("Explosion", e.To, e.PieceId != 0 ? 1f : 0.85f, AudioDistance.Long);
                     break;
@@ -339,7 +348,7 @@ namespace HtfFortress
                 case FxKind.Heal: StartCoroutine(Zap(e.From, e.To, _heal)); if (!ClientSettings.Reduced) StartCoroutine(Blast(e.To, 0.9f, _heal)); Sound("QuestReceived", e.To, 0.25f, AudioDistance.Short); break;
                 case FxKind.Mend: AimTurret(e.PieceId, e.To); StartCoroutine(Zap(e.From, e.To, _heal)); if (!ClientSettings.Reduced) StartCoroutine(Blast(e.To, 0.6f, _heal)); break; // quiet: it goes off every other second
                 case FxKind.Dust: StartCoroutine(Blast(e.To, 2.2f, _dust)); SoundRandom("ItemImpactHeavy_V", 1, 3, e.To, 0.8f); break;
-                case FxKind.Wave: StartCoroutine(Blast(e.To, 6f, _water)); SoundRandom("WhaleLanding_0", 1, 3, e.To, 1f, AudioDistance.Long); break;
+                case FxKind.Wave: Splash(e.To, 3f); SoundRandom("WhaleLanding_0", 1, 3, e.To, 1f, AudioDistance.Long); break;
                 case FxKind.Decoy: StartCoroutine(Duck(e.To, e.Arg)); break;
                 case FxKind.Proc: GearCards.Instance.Proc((Gear)e.Arg, e.To); break;
                 case FxKind.Snipe: StartCoroutine(Tracer(e.From, e.To, "Sniper", TurretLevel(e.PieceId))); SoundRandom("SniperrifleFireOutside_V", 1, 4, e.From, 0.9f, AudioDistance.Long); break;
@@ -422,8 +431,9 @@ namespace HtfFortress
             go.transform.SetPositionAndRotation(from + d * 0.5f, Quaternion.LookRotation(d));
             float w = (sniper ? 0.035f : gun ? 0.06f : 0.05f) * grow;
             go.transform.localScale = new Vector3(w, w, d.magnitude);
-            if (gun) WeaponFx.Emit(WeaponFx.Sparks("Gold"), from, Mathf.RoundToInt(4 + level * 0.4f), d.normalized);
-            else if (sniper) WeaponFx.Emit(WeaponFx.Sparks("Cyan"), from, Mathf.RoundToInt(6 + level * 0.5f), d.normalized);
+            // Sparks leave the muzzle; where it lands, a few chips fly back out of the fish (the gatling's hit look).
+            if (gun) { WeaponFx.Emit(WeaponFx.Sparks("Gold"), from, Mathf.RoundToInt(4 + level * 0.4f), d.normalized); WeaponFx.Emit(WeaponFx.Sparks("Gold"), to, 3, -d.normalized + Vector3.up * 0.5f); }
+            else if (sniper) { WeaponFx.Emit(WeaponFx.Sparks("Cyan"), from, Mathf.RoundToInt(6 + level * 0.5f), d.normalized); WeaponFx.Emit(WeaponFx.Sparks("Cyan"), to, 6, -d.normalized + Vector3.up * 0.5f); }
             yield return new WaitForSeconds(sniper ? 0.09f : 0.05f);
             Done(go);
         }
@@ -443,20 +453,27 @@ namespace HtfFortress
             Done(go);
         }
 
-        // Harpoon: a thin bolt flying the whole line.
+        // Harpoon: a thin bolt flying the whole line, its rope paying out behind it from the turret (it used to be a bare
+        // bar, nothing to say what fired it), a spray of water where it ends, then the rope gone with it.
         private IEnumerator Bolt(Vector3 from, Vector3 to, string key = null)
         {
             var go = Shape(PrimitiveType.Cube, _bolt);
             go.transform.localScale = key == "Harpoon" ? new Vector3(0.06f, 0.06f, 1.8f) : new Vector3(0.08f, 0.08f, 1.4f);
             go.transform.rotation = Quaternion.LookRotation(to - from);
+            var rope = key == "Harpoon" ? WeaponFx.Line("HarpoonRope", WeaponFx.RopeMat, 0.035f) : null;
+            if (rope) { rope.positionCount = 2; rope.SetPosition(0, from); rope.SetPosition(1, from); }
             const float flight = 0.3f;
             for (float t = 0f; t < flight; t += Time.deltaTime)
             {
                 go.transform.position = Vector3.Lerp(from, to, t / flight);
+                if (rope) rope.SetPosition(1, go.transform.position - go.transform.forward * 0.9f);
                 if (key == "Harpoon" && Random.value < 0.25f) WeaponFx.Emit(WeaponFx.Sparks("Gray"), go.transform.position, 1, Vector3.up);
                 yield return null;
             }
+            WeaponFx.Emit(WeaponFx.Drops, to, 6, Vector3.up);
+            yield return new WaitForSeconds(0.08f);
             Done(go);
+            if (rope) Destroy(rope.gameObject);
         }
 
         // Tesla: a jagged bright line that flickers out.
@@ -511,8 +528,41 @@ namespace HtfFortress
                 yield return null;
             }
             Done(ball);
-            if (blastAtEnd) { Sound("Explosion", to, 0.6f); yield return Blast(to, 2.5f * (1f + 0.05f * (Mathf.Max(1, level) - 1))); }
+            if (blastAtEnd) { Sound("Explosion", to, 0.6f); Explosion(to, Mathf.Min(3.5f, 1.6f * (1f + 0.05f * (Mathf.Max(1, level) - 1)))); }
             else { SoundRandom("ItemHitWaterMedium_V", 1, 3, to, 0.8f); yield return Blast(to, 1.2f, _spit); }
+        }
+
+        // ---------- explosions and splashes: layered so their size reads on the ground, never a ball over the screen ----------
+
+        // A blast's look from its real radius (m): the flash in the middle stops growing at BlastCoreMax (a Lv20 cannon used
+        // to be a 7 m solid orange ball in your face), the ring of shock on the ground is the radius itself, and the sparks
+        // and smoke are bounded. BlastDefault: a turret's at Lv1 when the host sends no radius.
+        public const float BlastCoreMax = 2.4f, BlastDefault = 2f;
+        public static (float flash, float ring, int sparks, int smoke) BlastLook(float radius) =>
+            (Mathf.Clamp(radius * 1.1f, 0.8f, BlastCoreMax), Mathf.Max(0.6f, radius),
+             Mathf.Clamp(Mathf.RoundToInt(8f + radius * 4f), 8, 32), Mathf.Clamp(Mathf.RoundToInt(3f + radius * 2f), 3, 10));
+
+        private static readonly Color BlastOrange = new Color(1f, 0.55f, 0.15f), Smoke = new Color(0.36f, 0.33f, 0.3f, 0.85f), SeaBlue = new Color(0.5f, 0.78f, 1f);
+
+        public static void Explosion(Vector3 at, float radius)
+        {
+            var look = BlastLook(radius);
+            BossVfx.Flash(at + Vector3.up * 0.3f, look.flash, BlastOrange, 0.22f);
+            BossVfx.Shock(at, look.ring, BlastOrange, 0.45f);
+            WeaponFx.Emit(WeaponFx.Sparks("Orange"), at + Vector3.up * 0.3f, look.sparks, Vector3.up);
+            float puff = Mathf.Min(1.6f, 0.6f + radius * 0.25f);
+            for (int i = 0; i < look.smoke; i++)
+                WeaponFx.Emit(WeaponFx.Dust, at + Vector3.up * 0.4f, 1, Vector3.up, Smoke, Random.Range(0.6f, 1.1f) * puff,
+                              Random.onUnitSphere.Flat().normalized * Random.Range(1f, 2.5f) + Vector3.up * Random.Range(1f, 2.5f), Random.Range(0.6f, 1f));
+        }
+
+        // Water coming down (the whale's wave, a tide): a ring on the sea, foam and drops thrown up, the game's splash.
+        public static void Splash(Vector3 at, float radius)
+        {
+            BossVfx.Shock(at, radius, SeaBlue, 0.5f);
+            WeaponFx.Emit(WeaponFx.Foam, at + Vector3.up * 0.2f, Mathf.Clamp(Mathf.RoundToInt(radius * 4f), 6, 16), Vector3.up);
+            WeaponFx.Emit(WeaponFx.Drops, at + Vector3.up * 0.3f, Mathf.Clamp(Mathf.RoundToInt(radius * 6f), 8, 24), Vector3.up);
+            WeaponFx.Game("WaterSplash", at);
         }
 
         private static bool _bossMusicOn;

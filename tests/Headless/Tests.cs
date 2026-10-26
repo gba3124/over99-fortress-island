@@ -1053,6 +1053,30 @@ namespace HtfFortress.Headless
             // Fewer effects (WeaponFx.Thin): two in five, a lone one at that chance; everything with the setting off.
             Check(WeaponFx.Thin(10, 0.99f, true) == 4 && WeaponFx.Thin(1, 0.3f, true) == 1 && WeaponFx.Thin(1, 0.5f, true) == 0 && WeaponFx.Thin(7, 0.5f, false) == 7,
                   "fewer effects thins the wrong amount");
+            FxChecks();
+        }
+
+        // The effects stay readable and bounded (FX-ART-REPORT): a blast's flash never outgrows BlastCoreMax while its ring
+        // is the real radius; a boss flash's halo stops at HaloMax and never rounds the camera; the water jet's drops live
+        // long enough to reach what they hit; a rocket's explosion is drawn once (the host's Blast), its beam's foot follows
+        // the gun, and the absorber's shots start at the muzzle like the weapons'.
+        private static void FxChecks()
+        {
+            foreach (float r in new[] { 0.5f, 2f, 4.5f, 12f })
+            {
+                var look = Fx.BlastLook(r);
+                Check(look.flash <= Fx.BlastCoreMax && look.flash >= 0.8f && look.ring == Math.Max(0.6f, r) && look.sparks <= 32 && look.smoke <= 10, $"blast of {r} m: flash {look.flash}, ring {look.ring}, {look.sparks} sparks, {look.smoke} smoke");
+            }
+            Check(Fx.BlastLook(12f).flash == Fx.BlastCoreMax && Fx.BlastLook(1f).flash < Fx.BlastLook(2f).flash, "a blast's flash doesn't grow with the radius, then stop");
+            Check(BossVfx.HaloSize(9f) == BossVfx.HaloMax && BossVfx.HaloSize(2f) == 2f && BossVfx.Room(0.3f) < 0.5f && BossVfx.Room(3f) > BossVfx.HaloMax, "a flash's halo isn't capped, or rounds the camera");
+            Check(Weapons.WaterJetLife(2f) == 0.25f && Weapons.WaterJetLife(8f) == 0.5f && Weapons.WaterJetLife(40f) == 0.7f && Weapons.WaterJetDrops <= 12 && Weapons.RocketPuffEvery >= 0.02f, "the water jet / rocket trail aren't bounded");
+            string weapons = File.ReadAllText(Path.Combine(Src, "Weapons.cs")), fx = File.ReadAllText(Path.Combine(Src, "Fx.cs"));
+            string rocket = weapons.Substring(weapons.IndexOf("private IEnumerator RocketView"));
+            rocket = rocket.Substring(0, rocket.IndexOf("private IEnumerator", 10));
+            Check(!rocket.Contains("Explosion") && !rocket.Contains("Fx.Sound"), "the rocket draws its own explosion on top of the host's Blast");
+            Check(weapons.Contains("v.Muzzle()") && weapons.Contains("v.Muzzle = muzzle"), "the beam's foot doesn't follow the gun between host updates");
+            Check(fx.Contains("e.From = Weapons.Instance.Origin(e)") && fx.Contains("Explosion(e.To, blastRadius)") && !fx.Contains("Vector3.up * 15f"), "turret blasts still a ball; the absorber's shots not from the muzzle; the death pillar in the air");
+            Check(fx.Contains("WeaponFx.Line(\"HarpoonRope\"") && Regex.IsMatch(fx, @"_tracer = BossVfx\.Glow"), "the harpoon has no rope; the turret tracers don't glow");
         }
 
         private static void HelperChecks()
