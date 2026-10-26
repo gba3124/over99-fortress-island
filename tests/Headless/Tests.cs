@@ -1022,11 +1022,23 @@ namespace HtfFortress.Headless
                 }
             float bestBoss = kinds.Max(g => Sim.Dps(g, Rarity.Legendary, 5).one);
             Check(Sim.AbsorberDps(Rarity.Legendary, 5, boss: true).one <= 1.6f * bestBoss, "the absorber melts bosses far faster than the best other legendary");
-            // Bosses last (Owen: "王血太少"): the wave-50 one isn't down in seconds to a legendary with its mods at 5, and the first
-            // one doesn't outlast its crash timer for a newcomer's common gun.
-            float wave50 = Sim.BossHp(50) / Sim.BestSingle(Rarity.Legendary, 5), wave10 = Sim.BossHp(10) / Sim.BestSingle(Rarity.Common, 0);
-            Check(wave50 >= 20f && wave10 <= Bosses.CrashAfter / 2f, $"a boss lasts {wave50:0.0} s at wave 50 (legendary Lv5), {wave10:0.0} s at wave 10 (common Lv0), solo");
+            // Bosses are the turrets' to wear down (their health is a ladder against what a save carries over); the players'
+            // weapons break their moves, by what a player deals by then (Bosses.PlayerDps), which has to follow the weapons.
             Check(Enumerable.Range(1, 99).All(w => FortressPlugin.BossHpMult(w + 1) >= FortressPlugin.BossHpMult(w)), "boss health doesn't keep growing with the wave");
+            foreach (var (wave, r, l) in new[] { (10, Rarity.Common, 0), (20, Rarity.Rare, 1), (30, Rarity.Epic, 2), (50, Rarity.Legendary, 5), (70, Rarity.Legendary, 8), (100, Rarity.Legendary, 12) })
+            {
+                float want = Sim.BestSingle(r, l), got = BossBrain.PlayerDps(wave);
+                Check(got >= 0.85f * want && got <= 1.15f * want, $"breaking a wave-{wave} boss's move assumes {got:0} a second a player; the best {r} Lv{l} weapon deals {want:0}");
+            }
+            // The last boss for four players is past an int: kept at MaxBossHp, hits scaled down, not to nothing.
+            double full = (double)EnemyCatalog.Of(EnemyKind.Eye).BaseHp * FortressPlugin.HpMult(100) * FortressPlugin.BossHpMult(100) * 2.5;
+            Check(full > FortressPlugin.MaxBossHp && FortressPlugin.MaxBossHp / full > 0.1, $"the wave-100 boss for four: {full:0.00e0} health, hits x{FortressPlugin.MaxBossHp / full:0.00}");
+            // Souls: every run pays a little; crit is a flat 2 a level to 100%; the discount compounds, its last level still counts.
+            Check(Loot.RunSouls(39) == 9 && Loot.RunSouls(3) == 0 && Loot.SoulUpgradeCost(1, 0) == 2 && Loot.SoulUpgradeCost(1, 49) == 2 && Loot.SoulMaxLevel(1) == 50,
+                  "per-run souls or the crit line changed");
+            int top = Loot.SoulMaxLevel(5);
+            Check(VaultData.DiscountAt(top) == 0.1f && VaultData.DiscountAt(top - 1) > 0.1f && Mathf.Abs(VaultData.DiscountAt(9) - 0.387f) < 0.001f,
+                  $"tower discount: Lv{top} {VaultData.DiscountAt(top):0.000}, Lv{top - 1} {VaultData.DiscountAt(top - 1):0.000}, Lv9 {VaultData.DiscountAt(9):0.000}");
             Check(Weapons.AbsorberBoost > 1f, "the absorber isn't boosted against fish");
         }
 

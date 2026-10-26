@@ -844,7 +844,7 @@ namespace HtfFortress
                 Send("stone.spines", Pos, Pos, 1200); // over before the next burst's: two throbs at once would leave it swollen
                 for (int i = 1; i < springs.Count; i++) WarnOnly("circle", springs[i], springs[i], 2.2f, 1.5f);
                 var pump = Lean(hole, 9f); // it heaves, and the springs burst as it bears down
-                yield return Warn("circle", springs[0], springs[0], 2.2f, 1.5f, breakable: true, breakShare: 0.03f, during: Coil(pump, 1.5f)); // three short windows: a smaller share each
+                yield return Warn("circle", springs[0], springs[0], 2.2f, 1.5f, breakable: true, breakShare: 0.4f, during: Coil(pump, 1.5f)); // three short windows: a smaller share each
                 pump(-Over, 1f);
                 foreach (var s in springs)
                 {
@@ -1209,7 +1209,7 @@ namespace HtfFortress
             foreach (var t in turrets) Send("kraken.reach", t.Pos, s, 2000, t.Id);
             foreach (var t in turrets.Skip(1)) WarnOnly("circle", t.Pos, t.Pos, 2.2f, 2f);
             var haul = Lean(turrets[0].Pos, 10f, back: 0.5f, rise: 1f); // leaning back on its arm as it takes hold, then a heave
-            yield return Warn("circle", turrets[0].Pos, turrets[0].Pos, 2.2f, 2.0f, breakable: true, breakShare: 0.05f, during: Coil(haul, 2.0f));
+            yield return Warn("circle", turrets[0].Pos, turrets[0].Pos, 2.2f, 2.0f, breakable: true, breakShare: 0.6f, during: Coil(haul, 2.0f));
             haul(-Over, 1f);
             var ids = new HashSet<int>(Pieces.Select(p => p.Id));
             foreach (var t in turrets)
@@ -1272,7 +1272,7 @@ namespace HtfFortress
             foreach (var g in picks) Send("kraken.reach", g.at, s, 2000, g.key);
             for (int i = 1; i < picks.Count; i++) WarnOnly("circle", picks[i].at, picks[i].at, 2.2f, 2f);
             var haul = Lean(picks[0].at, 10f, back: 0.5f, rise: 1f);
-            yield return Warn("circle", picks[0].at, picks[0].at, 2.2f, 2.0f, breakable: true, breakShare: 0.05f, during: Coil(haul, 2.0f));
+            yield return Warn("circle", picks[0].at, picks[0].at, 2.2f, 2.0f, breakable: true, breakShare: 0.6f, during: Coil(haul, 2.0f));
             haul(-Over, 1f);
             foreach (var g in picks)
             {
@@ -1402,7 +1402,7 @@ namespace HtfFortress
             Send("voxel.undo", Pos, Pos, 3000);
             Vector3 g = new Vector3(Pos.x, GroundY(Pos), Pos.z);
             Quaternion r0 = T.rotation; // turning once round backwards: rewinding
-            yield return Warn("ring", g, g, Reach + 3f, 3f, breakable: true, breakShare: 0.03f, extra: Mathf.RoundToInt((Reach + 1f) * 100f), during: k => Put(Pos, r0 * Quaternion.Euler(0f, -360f * Ease(k), 0f)));
+            yield return Warn("ring", g, g, Reach + 3f, 3f, breakable: true, breakShare: 0.4f, extra: Mathf.RoundToInt((Reach + 1f) * 100f), during: k => Put(Pos, r0 * Quaternion.Euler(0f, -360f * Ease(k), 0f)));
             Put(Pos, r0);
             Body.ServerChangeHp(-Mathf.RoundToInt(MaxHp * 0.12f));
             Send("voxel.restored", Pos, Pos);
@@ -1759,7 +1759,7 @@ namespace HtfFortress
             Shout("eyeGaze");
             Send("eye.open", Pos, Pos, 1600);
             Vector3 p0 = Pos;
-            yield return Warn("cone", g, g + dir * range, 0f, 1.6f, breakable: true, breakShare: 0.035f, extra: Mathf.RoundToInt(sweep), during: Coil(Lean(Core, 10f, back: 1.2f), 1.6f));
+            yield return Warn("cone", g, g + dir * range, 0f, 1.6f, breakable: true, breakShare: 0.45f, extra: Mathf.RoundToInt(sweep), during: Coil(Lean(Core, 10f, back: 1.2f), 1.6f));
             Send("eye.beam", Pos, g + dir * range, 2400, Mathf.RoundToInt(sweep));
             float next = 0f;
             for (float t = 0f; t < 2.4f && Alive; t += Time.deltaTime)
@@ -1786,7 +1786,7 @@ namespace HtfFortress
             Shout("eyePupil");
             Send("eye.pupil", Pos, Pos, 2000);
             var glare = Lean(Core, 10f, back: 1.2f);
-            yield return Warn("cone", g, g + dir * range, 0f, 2f, breakable: true, breakShare: 0.035f, extra: Mathf.RoundToInt(sweep), during: Coil(glare, 2f));
+            yield return Warn("cone", g, g + dir * range, 0f, 2f, breakable: true, breakShare: 0.45f, extra: Mathf.RoundToInt(sweep), during: Coil(glare, 2f));
             Send("eye.twin", Pos, g + dir * range, 2800, Mathf.RoundToInt(sweep));
             float next = 0f;
             for (float t = 0f; t < 2.8f && Alive; t += Time.deltaTime)
@@ -1908,7 +1908,7 @@ namespace HtfFortress
             Send("eye.judgment", Pos, Core, 8000, Mathf.RoundToInt(Field * 100f));
             WarnOnly("circle", Center, Center, Field, 8f);
             var verdict = Lean(Core, 0f, rise: 3f); // rising slowly all eight seconds, shaking, then down on it
-            yield return Warn("circle", Core, Core, 12f, 8f, breakable: true, breakShare: 0.06f, during: Coil(verdict, 8f, 0.25f));
+            yield return Warn("circle", Core, Core, 12f, 8f, breakable: true, breakShare: 0.75f, during: Coil(verdict, 8f, 0.25f));
             verdict(-Over, 1f);
             Siege.Instance.DamageCore(Mathf.RoundToInt(Siege.Instance.CoreMax * 0.3f));
             var ring = Circle(Core, 12f);

@@ -11,13 +11,16 @@ namespace HtfFortress
     // The ten bosses (one every tenth wave) are ours from top to bottom: each is one of the game's creatures, blown up and
     // dressed (BossLooks), but none of the game's own behaviour runs it. On the host its brain (BossBrains.cs) holds it
     // kinematic, moves it and casts its skills, each warned on the ground first (BossFx draws the warnings and the hits on
-    // every screen). A big move can be broken: hit the boss hard enough while it winds up (or blast it with the conch)
-    // and the move is off, it reels and takes half again for a moment. At half health each turns into its second form.
-    // One that's still alive after CrashAfter seconds throws itself at the lighthouse.
+    // every screen). A big move can be broken: keep hitting the boss while it winds up (or blast it with the conch) and the
+    // move is off, it reels and takes x2.5 for a moment. Its health shows as Bars bars, each broken with a jolt; at half
+    // (the sixth) it turns into its second form. One still alive after CrashAfter seconds throws itself at the lighthouse.
     public class Bosses : MonoBehaviour
     {
         public static Bosses Instance;
-        public const float CrashAfter = 200f;
+        public const float CrashAfter = 240f;
+        // Its health bar is this many bars (Siege's HUD); BarsLeft counts the one being worn down.
+        public const int Bars = 12;
+        public static int BarsLeft(float hp01) => Mathf.Clamp(Mathf.CeilToInt(hp01 * Bars - 0.001f), 0, Bars);
         // Everything moved by us rather than by the game (bosses and their summons), on every machine: their own movement
         // code stays off (BossPuppetPatches).
         internal static readonly HashSet<Creature> Puppets = new HashSet<Creature>();
@@ -37,10 +40,11 @@ namespace HtfFortress
         // ---------- host ----------
 
         // A boss just spawned (FortressPlugin.ServerSpawnBoss): its brain takes over when its entrance is done (`hold` s).
-        public void ServerAdd(Creature c, EnemyKind kind, int wave, float hold, Vector3 home)
+        public void ServerAdd(Creature c, EnemyKind kind, int wave, float hold, Vector3 home, float armor = 1f)
         {
             var b = BossBrains.Make(kind);
             b.Init(c, kind, wave, home);
+            b.Armor = armor;
             _brains[c] = b;
             Puppets.Add(c);
             if (!_musicOn) { _musicOn = true; Fx.Send(FxKind.BossMusic, c.transform.position, c.transform.position, 0, 1); }
@@ -101,7 +105,7 @@ namespace HtfFortress
             // The change is a set piece, not a window: nothing lands while it plays. Owen: too many bosses died before
             // anyone saw the second form; this is the guarantee (Transforming covers the freeze and every SecondForm beat).
             if (b.IsBoss && b.Transforming && !TestKill) { AutoTest.Count("boss_hit_in_transition"); return 0; }
-            float m = b.TakeMult * (Turrets.Firing ? b.TurretMult : 1f);
+            float m = b.TakeMult * b.Armor * (Turrets.Firing ? b.TurretMult : 1f);
             int d = Mathf.Max(1, Mathf.RoundToInt(dmg * m));
             // A boss that has not changed yet cannot be deleted by one late burst: leave it at 1, so the next Tick plays
             // the change. Without this a crit from 60% to 0 removes the second form entirely.
@@ -215,10 +219,12 @@ namespace HtfFortress
         public bool Phase2;
         public bool IsBoss = true;
         public float TakeMult = 1f, TurretMult = 1f; // >1 while it reels, TurretMult < 1 behind a guard
+        public float Armor = 1f; // health past FortressPlugin.MaxBossHp: kept at that, every hit lands this much lighter
         protected float Born, Foot, Reach, Height; // spawned at; its origin above its lowest point; its size round; how tall
         protected Vector3 Home; // where it stands at the end of its entrance
         internal readonly Runner Run = new Runner();
         private bool _warned, _stunned;
+        private int _bars = Bosses.Bars;
         // the move being wound up, if it can be broken: broken when the players' damage since it began reaches _breakAt
         private int _breakDealt, _breakAt;
         private bool _breakable;
@@ -293,7 +299,7 @@ namespace HtfFortress
             long dealt = ByPlayers + ByTurrets;
             int players = dealt > 0 ? (int)(ByPlayers * 100 / dealt) : 0;
             int taken = down ? 100 : MaxHp > 0 && Body ? Mathf.Clamp(Mathf.RoundToInt(100f * (MaxHp - Body._hp.Value) / MaxHp), 0, 100) : 0;
-            BuildSystem.Log.LogInfo($"Boss fight: {Kind}, wave {Wave}, {PlayerManager.Players.Count} players, {MaxHp} health: {(down ? "down" : "rammed the lighthouse")} after {seconds} s, " +
+            BuildSystem.Log.LogInfo($"Boss fight: {Kind}, wave {Wave}, {PlayerManager.Players.Count} players, {MaxHp / (double)Armor:0} health: {(down ? "down" : "rammed the lighthouse")} after {seconds} s, " +
                                     $"{taken}% taken (players {ByPlayers}, turrets {ByTurrets}).");
             Fx.BossFight(Kind, down, seconds, players, taken);
         }
@@ -359,6 +365,10 @@ namespace HtfFortress
         public virtual void Tick()
         {
             if (_breakable && _breakDealt >= _breakAt) TryBreak(false);
+            // A bar of its health gone: a jolt on every screen (the HUD flashes it white).
+            int bars = Bosses.BarsLeft(Hp01);
+            if (IsBoss && bars < _bars && bars > 0) Send("bar", Pos + Vector3.up * (Reach + 0.5f), Pos, bars);
+            _bars = bars;
             // Bosses only: a summon worn to half (a glitch copy) would otherwise stop and announce a change it doesn't have.
             if (IsBoss && !Phase2 && Hp01 <= 0.5f && !_stunned && _live)
             {
@@ -391,13 +401,13 @@ namespace HtfFortress
             return true;
         }
 
-        // It reels: dizzy, open to everything (x1.5) for a few seconds. One up in the air drops to the ground first.
+        // It reels: dizzy, open to everything (x2.5) for a few seconds. One up in the air drops to the ground first.
         protected virtual IEnumerator Reel()
         {
             _stunned = true;
             Fx.Announce("bossBroken");
             Send("broken", Pos + Vector3.up * (Reach + 0.5f), Pos, 3000);
-            TakeMult = 1.5f;
+            TakeMult = 2.5f;
             yield return Fall();
             yield return Sag(3f);
             TakeMult = 1f;
@@ -704,9 +714,10 @@ namespace HtfFortress
         // ---------- warnings ----------
 
         // Shows the warning on every screen (shape: circle, lane, cone, ring, box; see BossFx) and waits it out. A breakable
-        // one is broken by `breakShare` of its health in players' damage meanwhile, or by the conch: then the move is off
-        // (Broken; the brain's runner has already moved on to reeling, so code after the yield doesn't run).
-        protected IEnumerator Warn(string shape, Vector3 a, Vector3 b, float size, float seconds, bool breakable = false, float breakShare = 0.04f, int extra = 0, Action<float> during = null)
+        // one is broken by the conch, or by the players keeping on it for `breakShare` of the wind-up (what everyone alive
+        // deals a second by this wave, PlayerDps): then the move is off (Broken; the brain's runner has already moved on to
+        // reeling, so code after the yield doesn't run). Their weapons, not the boss's health: that is the turrets' job.
+        protected IEnumerator Warn(string shape, Vector3 a, Vector3 b, float size, float seconds, bool breakable = false, float breakShare = 0.5f, int extra = 0, Action<float> during = null)
         {
             Broken = false;
             Send("w." + shape, a, b, Mathf.RoundToInt(seconds * 1000f), Mathf.RoundToInt(size * 100f) + extra * 100000);
@@ -714,7 +725,7 @@ namespace HtfFortress
             {
                 _breakable = true;
                 _breakDealt = 0;
-                _breakAt = Mathf.Max(1, Mathf.RoundToInt(MaxHp * breakShare));
+                _breakAt = Mathf.Max(1, Mathf.RoundToInt(PlayerDps(Wave) * Mathf.Max(1, PlayerManager.AlivePlayers.Count) * seconds * breakShare * Armor));
                 Send("winding", Pos + Vector3.up * (Reach + 0.3f), Pos, Mathf.RoundToInt(seconds * 1000f));
             }
             if (during == null) yield return seconds;
@@ -727,6 +738,10 @@ namespace HtfFortress
             Send("w." + shape, a, b, Mathf.RoundToInt(seconds * 1000f), Mathf.RoundToInt(size * 100f) + extra * 100000);
 
         // ---------- hitting ----------
+
+        // What one player's weapon deals a second to one target by this wave, kitted as a run gets (Sim's boss lines: common
+        // Lv0 at wave 10, rare Lv1 at 20, epic Lv2 at 30, legendary Lv5 at 50, Lv8 at 70, Lv12 at 100; within 10%).
+        public static float PlayerDps(int wave) { float x = Mathf.Max(1f, wave / 10f); return 55f * Mathf.Pow(x, 0.89f + 0.305f * Mathf.Log(x)); }
 
         // Damage that grows with the wave, like the fish's bites.
         protected int Scaled(float baseDmg) => Mathf.Max(1, Mathf.RoundToInt(baseDmg * (1f + 0.06f * (Wave - 1))));
@@ -919,7 +934,8 @@ namespace HtfFortress
         }
 
         // Too slow: it throws itself at the lighthouse and is gone. A boss that is still nearly full does far more damage
-        // than one that was already worn down (Owen: "扣王剩餘血量的比例"): 60 % of the core at full health, 15 % when spent.
+        // than one that was already worn down (Owen: "扣王剩餘血量的比例"): all of the core at full health, half when spent.
+        // A boss the team can't touch yet ends the run; one nearly down costs half the tower.
         private void Crash()
         {
             float hp = MaxHp > 0 ? Mathf.Clamp01(Body._hp.Value / (float)MaxHp) : 1f;
@@ -934,7 +950,7 @@ namespace HtfFortress
             }
             else
             {
-                Siege.Instance.DamageCore(Mathf.RoundToInt(Siege.Instance.CoreMax * Mathf.Lerp(0.15f, 0.6f, hp)));
+                Siege.Instance.DamageCore(Mathf.RoundToInt(Siege.Instance.CoreMax * Mathf.Lerp(0.5f, 1f, hp)));
                 Fx.Send(FxKind.Crash, Core + Vector3.up * 2f, Core + Vector3.up * 2f);
                 Fx.Announce("bossCrashed");
             }

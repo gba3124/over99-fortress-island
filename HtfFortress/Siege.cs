@@ -62,7 +62,12 @@ namespace HtfFortress
         private RectTransform _top;
         private GameObject _roundGroup;
         private TextMeshProUGUI _waveText, _hpText, _enemyText, _coinText, _phaseText, _titleText, _bossText;
-        private Hud.Bar _hpBar, _bossBar;
+        private Hud.Bar _hpBar, _bossBar, _bossUnder;
+        private TextMeshProUGUI _bossCount;
+        private int _bossBars, _bossBarsOf;
+        private float _barFlashUntil;
+        // A boss's bars, the last one red: each a different colour from the one under it.
+        private static readonly Color[] BarColours = { Hud.Bad, new Color(1f, 0.62f, 0.25f), new Color(0.95f, 0.42f, 0.78f), new Color(0.62f, 0.47f, 1f) };
         private Image _phaseBox, _bossBox;
         private int _lastCoreHp; private float _hpFlashUntil;
         private NetworkManager _registeredOn;
@@ -1333,7 +1338,15 @@ namespace HtfFortress
                     int left = _view.BossCrashIn;
                     string crash = left > 0 ? $"  <size=75%><color={Hud.Hex(left <= 30 ? Hud.Bad : Hud.Muted)}>{L10n.T("bossCrashIn", left / 60, (left % 60).ToString("00"))}</color></size>" : "";
                     _bossText.text = L10n.T("bossName" + (EnemyKind)_view.BossKind) + crash;
-                    _bossBar.Set((float)_view.BossHp / _view.BossMax);
+                    // Its health in Bosses.Bars bars (Owen: 「王會是血量xN 然後一條一條打掉」): the top one drains over the next
+                    // one's colour, the count of bars left beside it; a bar broken flashes white.
+                    float f = (float)_view.BossHp / _view.BossMax;
+                    int bars = Bosses.BarsLeft(f);
+                    if (bars < _bossBars && _view.BossMax == _bossBarsOf) _barFlashUntil = Time.time + 0.18f;
+                    _bossBars = bars; _bossBarsOf = _view.BossMax;
+                    _bossUnder.Set(bars > 1 ? 1f : 0f, BarColours[(bars + 2) % BarColours.Length] * 0.7f);
+                    _bossBar.Set(bars > 0 ? f * Bosses.Bars - (bars - 1) : 0f, Time.time < _barFlashUntil ? Color.white : BarColours[(bars + 3) % BarColours.Length]);
+                    _bossCount.text = bars > 1 ? "×" + bars : "";
                 }
             }
             else if (_view.BossMax <= 0 && _bossBox.gameObject.activeSelf) _bossBox.gameObject.SetActive(false);
@@ -1379,7 +1392,10 @@ namespace HtfFortress
             _phaseText = Hud.Label(_phaseBox.transform, "", 22f, C, Vector2.zero, new Vector2(1400f, 42f), TextAlignmentOptions.Center);
             _bossBox = Hud.Box(root, new Vector2(0.5f, 1f), new Vector2(0f, -136f), new Vector2(660f, 46f), Hud.Panel, 16f);
             _bossText = Hud.Label(_bossBox.transform, "", 22f, L, new Vector2(18f, 0f), new Vector2(190f, 40f), TextAlignmentOptions.Left, Hud.Bad, bold: true);
-            _bossBar = Hud.Bar.Make(_bossBox.transform, L, new Vector2(206f, 0f), new Vector2(436f, 18f), Hud.Bad);
+            _bossUnder = Hud.Bar.Make(_bossBox.transform, L, new Vector2(206f, 0f), new Vector2(386f, 18f), Hud.Bad);
+            _bossBar = Hud.Bar.Make(_bossBox.transform, L, new Vector2(206f, 0f), new Vector2(386f, 18f), Hud.Bad);
+            _bossBar.Back.color = Color.clear; // the bar under it shows through
+            _bossCount = Hud.Label(_bossBox.transform, "", 22f, L, new Vector2(598f, 0f), new Vector2(56f, 40f), TextAlignmentOptions.Left, Hud.Ink, bold: true);
             return true;
         }
 

@@ -263,13 +263,14 @@ namespace HtfFortress
         public readonly Dictionary<Gear, int> Enhance = new Dictionary<Gear, int>(); // +levels on a kind's legendaries (not weapons)
         public readonly Dictionary<(ulong, Gear, int), int> Mods = new Dictionary<(ulong, Gear, int), int>(); // (player, weapon kind, line): level (WeaponMods)
         public int Best;                                                        // most waves cleared in a real round on this save
-        public int Souls;                                                       // souls from records (wave 100 and beyond): paid at the lighthouse keeper
+        public int Souls;                                                       // souls (records, and a few every run): paid at the lighthouse keeper
         public int SoulDmg, SoulCrit, SoulCoins, SoulScales, SoulCore, SoulDiscount, SoulTurretDmg, SoulKnock, SoulHealth; // the keeper's permanent tree (levels, bought with souls)
         public float DamageMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulDmg));
         public float CritChance => Mathf.Min(1f, 0.02f * Mathf.Max(0, SoulCrit));
         public float ScaleMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulScales));
         public float CoreMult => Mathf.Pow(1.15f, Mathf.Max(0, SoulCore));
-        public float TowerDiscount => Mathf.Max(0.1f, 1f - 0.1f * Mathf.Max(0, SoulDiscount)); // 10% a level, capped at 90% off
+        public float TowerDiscount => DiscountAt(SoulDiscount);
+        public static float DiscountAt(int lvl) => Mathf.Max(0.1f, Mathf.Pow(0.9f, Mathf.Max(0, lvl))); // another 10% off a level, capped at 90% off
         public float TurretDamageMult => Mathf.Pow(1.10f, Mathf.Max(0, SoulTurretDmg)); // tower damage only: +10% a level
         public float KnockbackMult => 1f + 0.25f * Mathf.Max(0, SoulKnock); // explosions / water push +25% a level
         public float HealthTakenMult => 1f / (1f + 0.10f * Mathf.Max(0, SoulHealth)); // character health: +10% effective HP a level

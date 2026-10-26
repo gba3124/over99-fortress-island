@@ -1482,7 +1482,7 @@ namespace HtfFortress
                 if (c) { Bosses.Instance.Interrupt(c); yield return new WaitForSecondsRealtime(0.5f); FortressPlugin.Shot($"boss_{kind}_broken"); }
                 yield return new WaitForSecondsRealtime(6f);
                 Note($"{kind}: second form {C("boss_phase2_" + kind)}, broken {C("boss_broken_" + kind)}, moves {Moves(kind)}");
-                if (c) c.ServerChangeHp(1000000);
+                if (c) c.ServerChangeHp(int.MaxValue / 4);
                 yield return new WaitForSecondsRealtime(2.5f);
                 Note($"{kind}: died {C("boss_died_" + kind)}, alive left {FortressPlugin.Alive.Count(x => x && x._hp.Value > 0)}, trophy dropped {C("trophy_dropped_" + kind)}");
                 // Its trophy: a look at it where it fell, then into the fish crate for money (the first one), or the vault.
@@ -1501,7 +1501,7 @@ namespace HtfFortress
                     yield return new WaitForSecondsRealtime(1f);
                     Note($"{kind}: trophy '{trophy.GetName()}' worth {trophy.TotalWorth}: money {money0} -> {Siege.Instance.ServerCoins}, in the vault {stored0} -> {Loot.Instance.Vault.CountItem(BossTrophies.IdOf(kind))}");
                 }
-                foreach (var x in FortressPlugin.Alive.ToList()) if (x) x.ServerChangeHp(1000000);
+                foreach (var x in FortressPlugin.Alive.ToList()) if (x) x.ServerChangeHp(int.MaxValue / 4);
                 yield return new WaitForSecondsRealtime(1f);
             }
             if (_arg.Length > 0) { plugin.DebugStopRound(); yield break; }
@@ -1510,9 +1510,10 @@ namespace HtfFortress
             int coreBefore = Siege.Instance.CoreHp;
             var late = plugin.ServerSpawnBoss(EnemyKind.Warden, 25f, 1, 10, 1f);
             yield return new WaitForSecondsRealtime(2f);
+            if (late) late._hp.Value = Mathf.RoundToInt(late._hp.Value * 0.6f); // a full one would take the whole lighthouse
             Bosses.Instance.DebugAge(Bosses.CrashAfter - 1f);
             yield return new WaitForSecondsRealtime(2.5f);
-            Note($"crash: core {coreBefore} -> {Siege.Instance.CoreHp} (expect about -60% at full health), boss gone {late == null || !late.IsSpawned || late.IsDestroying}, crashes {C("boss_crashed")}");
+            Note($"crash: core {coreBefore} -> {Siege.Instance.CoreHp} (expect about -80% at 60% health), boss gone {late == null || !late.IsSpawned || late.IsDestroying}, crashes {C("boss_crashed")}");
             // Wave 100 cleared: the run is won.
             Siege.Instance.DamageCore(-Siege.Instance.CoreMax);
             plugin.DebugJumpToWave(EnemyCatalog.FinalWave);
@@ -1761,7 +1762,7 @@ namespace HtfFortress
                 yield return new WaitForSecondsRealtime(1f);
                 FortressPlugin.Frozen = false;
                 Reveal.Instance.TestViewEnd();
-                c.ServerChangeHp(10000000);
+                c.ServerChangeHp(int.MaxValue / 4);
                 yield return new WaitForSecondsRealtime(3f);
                 Note($"{kind}: shown; trophy dropped {(Counters.TryGetValue("trophy_dropped_" + kind, out int td) ? td : 0)}");
             }

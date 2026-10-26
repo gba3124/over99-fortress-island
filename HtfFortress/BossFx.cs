@@ -46,6 +46,13 @@ namespace HtfFortress
                     Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, e.From, 0.9f, AudioDistance.Long);
                     BossMoves.Shake(e.From, 0.5f);
                     return;
+                case "bar": // one of its health bars broken (Bosses.Bars): held a beat, white, a crack
+                    if (BossBody.Of(e.PieceId) is BossBody bb) bb.Stagger();
+                    Fx.Sound("Hitmarker", e.From, 0.9f, AudioDistance.Long);
+                    Fx.SoundRandom("MetallicItemImpact_V", 1, 3, e.From, 0.9f, AudioDistance.Long);
+                    Burst(e.From, "White", 28, 0.15f);
+                    BossMoves.Shake(e.From, 0.25f);
+                    return;
                 case "stomp": WeaponFx.Emit(WeaponFx.Dust, e.From, 8, Vector3.up); Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, e.From, 0.7f); return;
                 case "phase2": StartCoroutine(Transform2(e.PieceId)); return;
                 case "secondform": StartCoroutine(SecondFormFx(e.PieceId)); return;

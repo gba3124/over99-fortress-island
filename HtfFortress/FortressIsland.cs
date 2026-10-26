@@ -633,9 +633,10 @@ namespace HtfFortress
                 var bt = box.transform;
                 Hud.Label(bt, L10n.T("soulSettleTitle"), 24f, new Vector2(0f, 1f), new Vector2(18f, -10f), new Vector2(420f, 30f), TextAlignmentOptions.Left, Hud.Gold, bold: true);
                 string left = r.Souls > 0
-                    ? L10n.T("soulSettleFrom", r.SoulsFrom, r.Waves) + "\n" + r.SoulLines + "\n" + L10n.T("soulSettleHint")
+                    ? (r.Waves > r.SoulsFrom ? L10n.T("soulSettleFrom", r.SoulsFrom, r.Waves) + "\n" : "") + r.SoulLines + "\n" + L10n.T("soulSettleHint")
                     : L10n.T("soulSettleNone");
-                Hud.Label(bt, left, 16f, new Vector2(0f, 1f), new Vector2(18f, -46f), new Vector2(580f, 92f), TextAlignmentOptions.TopLeft, Hud.Ink);
+                var leftLabel = Hud.Label(bt, left, 16f, new Vector2(0f, 1f), new Vector2(18f, -46f), new Vector2(580f, 92f), TextAlignmentOptions.TopLeft, Hud.Ink);
+                leftLabel.enableAutoSizing = true; leftLabel.fontSizeMin = 11f; leftLabel.fontSizeMax = 16f; // a first run's many records still fit
                 soulValue = Hud.Label(bt, $"<size=165%><color={Hud.Hex(Hud.Gold)}><b>+0</b></color></size>", 34f, new Vector2(1f, 1f), new Vector2(-24f, -34f), new Vector2(320f, 66f), TextAlignmentOptions.Center);
                 Hud.Label(bt, L10n.T("soulSettleHave", r.SoulsTotal), 18f, new Vector2(1f, 0f), new Vector2(-24f, 22f), new Vector2(320f, 26f), TextAlignmentOptions.Center, Hud.Muted);
                 y -= 154f;

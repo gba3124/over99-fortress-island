@@ -165,8 +165,9 @@ namespace HtfFortress
                 int lvl = v != null ? Loot.SoulLevel(v, i) : 0, cost = Loot.SoulUpgradeCost(i, lvl);
                 _upName[i].text = L10n.T("soulUp" + new[] { "Dmg", "Crit", "Coins", "Scales", "Core", "Discount", "TurretDmg", "Knock", "Health" }[i]);
                 _upEffect[i].text = L10n.T("soulNow", Loot.SoulNow(i, lvl));
-                _upCost[i].text = L10n.T("soulUpLevel", lvl, cost);
-                _upBtn[i].interactable = host && v != null && souls >= cost;
+                bool max = lvl >= Loot.SoulMaxLevel(i);
+                _upCost[i].text = max ? "Lv" + lvl + " · MAX" : L10n.T("soulUpLevel", lvl, cost);
+                _upBtn[i].interactable = host && v != null && souls >= cost && !max;
             }
             for (int i = 0; i < 3; i++)
             {
