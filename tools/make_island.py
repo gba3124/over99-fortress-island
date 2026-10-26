@@ -126,13 +126,17 @@ VILLAGE = [(-8.0, -17.0, 3.7), (5.5, -16.8, 2.8), (6.2, -10.8, 3.2), (0.5, -18.5
 VILLAGE_PATHS = [(-1.0, -17.0, -6.0, -17.0), (1.0, -16.8, 3.8, -16.8), (1.0, -10.8, 4.0, -10.8)]
 
 
-def near_village_path(x, z, width=0.85):
+def village_d(x, z):  # distance to the nearest footpath's centre line
+    best = 99.0
     for x0, z0, x1, z1 in VILLAGE_PATHS:
         dx, dz = x1 - x0, z1 - z0
         t = max(0.0, min(1.0, ((x - x0) * dx + (z - z0) * dz) / (dx * dx + dz * dz)))
-        if math.hypot(x - (x0 + dx * t), z - (z0 + dz * t)) < width:
-            return True
-    return False
+        best = min(best, math.hypot(x - (x0 + dx * t), z - (z0 + dz * t)))
+    return best
+
+
+def near_village_path(x, z, width=0.85):
+    return village_d(x, z) < width
 
 
 def village_flat(x, z):
@@ -163,32 +167,64 @@ def height(x, z):
     return max(-4.0, y + n * 0.4 * max(0.0, 1.0 - (r - 19.5) / 6.0))
 
 
-def ground_mat(x, z, y):
-    r = math.hypot(x, z)
-    if r < 6.0:
-        return grout  # under the flagstones (the plaza paving below)
+# The ground's colours: each a field that is negative where it applies, tried in order (the first that applies wins).
+def jit(x, z):  # the edges wander, no straight cut
+    return noise.noise(Vector((x * 0.45, z * 0.45, 9.0))) * 0.6
+
+
+def lane(x, z):
+    return lane_d(x, z, math.hypot(x, z))
+
+
+def beach_w(x, z):
+    return 1.4 + (math.hypot(x, z) - 19.5) * 0.05
+
+
+def f_gate(x, z, y):  # the gate's threshold, paved
     along, across = gate_frame(x, z)
-    if abs(along) < 1.5 and abs(across) < 3.2:
-        return gatestone  # the gate's threshold, paved
-    d = lane_d(x, z, r)
-    j = noise.noise(Vector((x * 0.45, z * 0.45, 9.0))) * 0.6  # the edges wander, no straight cut
-    if r < 19.5:
-        if d < 0.55:
-            return pathwet
-        if d < 1.5 + j * 0.4 or near_village_path(x, z):
-            return path
-        if d < 2.2 + j or near_village_path(x, z, 1.35):
-            return pathedge
-        return grass2 if noise.noise(Vector((x * 0.15, z * 0.15, 5.0))) > 0.25 else grass
-    w = 1.4 + (r - 19.5) * 0.05
-    if r < 26.5:
-        if d < 0.5:
-            return pathwet
-        if d < w + j * 0.4:
-            return path
-        if d < w + 0.8 + j:
-            return wet
-    return wet if -1.6 < y < -0.6 else sand
+    return max(abs(along) - 1.5, abs(across) - 3.2)
+
+
+def f_rut(x, z, y):  # a road's trodden middle
+    return lane(x, z) - 0.55
+
+
+def f_road(x, z, y):
+    return min(lane(x, z) - 1.5 - jit(x, z) * 0.4, village_d(x, z) - 0.85)
+
+
+def f_dust(x, z, y):  # dust where a road meets the grass
+    return min(lane(x, z) - 2.2 - jit(x, z), village_d(x, z) - 1.35)
+
+
+def f_grass2(x, z, y):
+    return 0.25 - noise.noise(Vector((x * 0.15, z * 0.15, 5.0)))
+
+
+def f_beach_rut(x, z, y):
+    return lane(x, z) - 0.5
+
+
+def f_beach_road(x, z, y):
+    return lane(x, z) - beach_w(x, z) - jit(x, z) * 0.4
+
+
+def f_beach_damp(x, z, y):  # damp sand either side of a road on the beach
+    return lane(x, z) - beach_w(x, z) - 0.8 - jit(x, z)
+
+
+def f_tide(x, z, y):  # wet sand by the waterline
+    return max(-1.6 - y, y + 0.6)
+
+
+def ground_layers(r_out):  # for the ring of faces out to r_out: [(field, material)] and the material left over
+    if r_out <= 6.0:
+        return [], grout  # under the flagstones (the plaza paving below)
+    if r_out <= 19.5:
+        return [(f_gate, gatestone), (f_rut, pathwet), (f_road, path), (f_dust, pathedge), (f_grass2, grass2)], grass
+    if r_out <= 26.5:
+        return [(f_gate, gatestone), (f_beach_rut, pathwet), (f_beach_road, path), (f_beach_damp, wet), (f_tide, wet)], sand
+    return [(f_gate, gatestone), (f_tide, wet)], sand
 
 
 island = Builder("FortressIsland", MATS)
@@ -196,30 +232,121 @@ bm = island.bm
 KEEP = bm.faces.layers.int.new("keep")  # the ground sheet: its faces are wound to face up, and stay that way
 RINGS = [0.0, 0.8, 1.6, 2.5, 3.5, 4.5, 5.5, 6.0] + [6.0 + 0.9 * i for i in range(1, 16)] + [19.5 + 1.0 * i for i in range(1, 12)] + [31.0 + 2.0 * i for i in range(1, 8)]
 SEG = 144
+# Each grid face is cut where those fields cross zero (found on its edges by bisection), so a road's edge runs smooth instead
+# of stepping cell by cell (Owen: 「土路顆粒感還是有點重」). A cut point sits on the edge it cuts, at that edge's own height, so
+# the ground keeps its shape; a point on an edge two faces share is made once and used by both.
+P = []  # points (x, z, y), game coordinates
+ON = {}  # point -> (grid edge (a, b) with a < b, how far along it) for the points cut into the grid's edges
+EDGE_PTS = {}  # grid edge -> the points cut into it
+CUT, FV = {}, {}
+
+
+def pt(x, z, y):
+    P.append((x, z, y))
+    return len(P) - 1
+
+
+def on_edge(p, q):  # (grid edge, p's and q's places along it) when the segment p-q runs along one, else None
+    ep, eq = ON.get(p), ON.get(q)
+    if ep is None and eq is None:  # two grid points next to each other on a face
+        return (min(p, q), max(p, q)), float(p > q), float(q > p)
+    if ep is None:
+        return (eq[0], float(p == eq[0][1]), eq[1]) if p in eq[0] else None
+    if eq is None:
+        return (ep[0], ep[1], float(q == ep[0][1])) if q in ep[0] else None
+    return (ep[0], ep[1], eq[1]) if ep[0] == eq[0] else None
+
+
+def val(p, f):
+    if (p, f) not in FV:
+        FV[p, f] = f(*P[p])
+    return FV[p, f]
+
+
+def cut(p, q, f):  # the point between p and q where field f changes sign
+    a, b = min(p, q), max(p, q)
+    if (a, b, f) not in CUT:
+        (xa, za, ya), (xb, zb, yb) = P[a], P[b]
+        at = lambda s: (xa + (xb - xa) * s, za + (zb - za) * s, ya + (yb - ya) * s)
+        lo, hi, ina = 0.0, 1.0, val(a, f) < 0
+        for _ in range(14):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if (f(*at(mid)) < 0) == ina else (lo, mid)
+        s = (lo + hi) / 2
+        c = pt(*at(s))
+        e = on_edge(a, b)
+        if e:
+            ON[c] = (e[0], e[1] + (e[2] - e[1]) * s)
+            EDGE_PTS.setdefault(e[0], []).append(c)
+        CUT[a, b, f] = c
+    return CUT[a, b, f]
+
+
+def split(poly, f):  # a convex polygon's parts inside and outside field f (either may be None)
+    ins = [val(p, f) < 0 for p in poly]
+    if all(ins):
+        return poly, None
+    if not any(ins):
+        return None, poly
+    if sum(ins[i] != ins[i - 1] for i in range(len(poly))) > 2:  # crossed twice (a saddle): whole, by its middle
+        x, z, y = (sum(P[p][n] for p in poly) / len(poly) for n in range(3))
+        return (poly, None) if f(x, z, y) < 0 else (None, poly)
+    inside, outside = [], []
+    for i, p in enumerate(poly):
+        (inside if ins[i] else outside).append(p)
+        if ins[i] != ins[(i + 1) % len(poly)]:
+            c = cut(p, poly[(i + 1) % len(poly)], f)
+            inside.append(c)
+            outside.append(c)
+    return inside, outside
+
+
 grid = []
 for r in RINGS:
     row = []
     for i in range(SEG):
         a = i * TAU / SEG
         x, z = r * math.cos(a), r * math.sin(a)
-        y = height(x, z)
-        row.append(bm.verts.new(G(x, y, z)))
+        row.append(pt(x, z, height(x, z)))
         if r == 0.0:
             break
     grid.append(row)
+pieces = []
 for j in range(1, len(grid)):
     A, B = grid[j - 1], grid[j]
+    layers, rest = ground_layers(RINGS[j])
     for i in range(SEG):
         k = (i + 1) % SEG
-        if len(A) == 1:
-            vs = (A[0], B[i], B[k])
-        else:
-            vs = (A[i], B[i], B[k], A[k])
-        f = bm.faces.new(vs)  # inner, outer, outer next, inner next: counter-clockwise from above, so it faces up
+        todo = [[A[0], B[i], B[k]] if len(A) == 1 else [A[i], B[i], B[k], A[k]]]  # inner, outer, outer next, inner next: counter-clockwise from above, so it faces up
+        for f, m in layers:
+            left = []
+            for poly in todo:
+                inside, outside = split(poly, f)
+                if inside:
+                    pieces.append((inside, m))
+                if outside:
+                    left.append(outside)
+            todo = left
+        pieces += [(poly, rest) for poly in todo]
+V = [bm.verts.new(G(x, y, z)) for x, z, y in P]
+for poly, m in pieces:
+    full = []  # with the points the face across an edge cut into it (where the two use different fields): no T-junctions
+    for i, p in enumerate(poly):
+        full.append(p)
+        e = on_edge(p, poly[(i + 1) % len(poly)])
+        if e:
+            E, t0, t1 = e
+            full += sorted((c for c in EDGE_PTS.get(E, ()) if min(t0, t1) < ON[c][1] < max(t0, t1)), key=lambda c: ON[c][1], reverse=t1 < t0)
+    if len(full) == len(poly):
+        faces = [[V[p] for p in full]]
+    else:  # points in a row along an edge: fanned from the middle, so triangulating can't leave flat slivers facing anywhere
+        x, z, y = (sum(P[p][n] for p in full) / len(full) for n in range(3))
+        mid = bm.verts.new(G(x, y, z))
+        faces = [[mid, V[full[i]], V[full[(i + 1) % len(full)]]] for i in range(len(full))]
+    for vs in faces:
+        f = bm.faces.new(vs)
         f[KEEP] = 1
-        c = sum((v.co for v in vs), Vector()) / len(vs)
-        gx, gz, gy = -c.x, -c.y, c.z
-        f.material_index = MATS.index(ground_mat(gx, gz, gy))
+        f.material_index = MATS.index(m)
 
 # ---------- rocks: cliffs between the beaches, layered, grassy tops; sea stacks offshore ----------
 def rock_blob(cx, cz, w, h, d, yaw, base=None):
@@ -806,6 +933,7 @@ if PREVIEW:
     shot("island_dock_head", G(-4.0, 2.6, -27.5), G(0.0, 0.7, -22.5), lens=28)
     shot("island_signpost", G(-1.4, 2.7, -17.6), G(spx, 1.7, spz), lens=34)
     shot("island_lanes", G(0.0, 26.0, -14.0), G(0.0, 0.0, 10.0), lens=30)
+    shot("island_lane_eye", G(2.0, 2.9, -3.5), G(0.0, 0.9, -20.0), lens=20)  # a player at the plaza's edge looking down the dock road
     shot("island_vault_front", G(-1.2, 3.2, -15.6), G(-8.0, 2.2, -17.0), lens=30)
     shot("island_smithy_front", G(1.6, 2.5, -10.2), G(6.2, 1.9, -10.8), lens=35)
     for i, gap in enumerate(GAPS + [DOCK]):
