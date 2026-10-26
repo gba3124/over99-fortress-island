@@ -13,7 +13,6 @@ namespace HtfFortress
     {
         public Gear Gear;
         public Rarity Rarity;
-        public int Stars;
     }
 
     // Fortress weapons are the game's own items: picked up with E, carried in the hotbar (1-9), dropped with Q, held
@@ -30,6 +29,7 @@ namespace HtfFortress
         public static bool Ready { get; private set; }
         private static readonly Dictionary<(Gear, Rarity), Item> Prefabs = new Dictionary<(Gear, Rarity), Item>();
         public static readonly Gear[] Kinds = GearCatalog.All.Where(GearCatalog.IsWeapon).ToArray();
+        private static readonly AccessTools.FieldRef<Item, SkinPreset> SkinPresetOf = AccessTools.FieldRefAccess<Item, SkinPreset>("_skinPreset");
 
         public static byte IdOf(Gear g, Rarity r) => (byte)(g < Gear.Rocket ? FirstId + (g - Gear.Laser) * 4 + (int)r
                                                          : g < Gear.Absorber ? SecondId + (g - Gear.Rocket) * 4 + (int)r : ThirdId + (g - Gear.Absorber) * 4 + (int)r);
@@ -108,6 +108,7 @@ namespace HtfFortress
                     var tag = go.AddComponent<FortressWeaponItem>();
                     tag.Gear = g;
                     tag.Rarity = r;
+                    SkinPresetOf(item) = null; // its skin byte carries its stars instead (StarsOf); no skin key can change it now
                     if (GearCatalog.IsGameGun(g)) go.AddComponent<RarityGem>().Rarity = r; // its own look; the gem says what it is
                     else Dress(go, item, g, r, pistol);
                     network.AddObject(go.GetComponent<NetworkObject>(), checkForDuplicates: true);
@@ -352,11 +353,13 @@ namespace HtfFortress
             var prefab = Prefab(g, r);
             if (!prefab || !ItemManager.Instance) return null;
             var item = ItemManager.Instance.SpawnNewItem(prefab, at, Quaternion.Euler(0f, Random.Range(0f, 360f), 0f));
-            if (item && item.GetComponent<FortressWeaponItem>() is FortressWeaponItem tag) tag.Stars = Mathf.Clamp(stars, 0, GearCatalog.MaxStars);
+            if (Is(item, out _, out _)) item._curSkin.Value = (byte)Mathf.Clamp(stars, 0, GearCatalog.MaxStars);
             AutoTest.Count("weapon_item_spawned");
             return item;
         }
-        public static int StarsOf(Item item) => item && item.GetComponent<FortressWeaponItem>() is FortressWeaponItem tag ? tag.Stars : 0;
+        // A weapon's stars ride in the game's skin byte: a synced value (clients saw every weapon as 0-star when it was a field
+        // only the host had) that the game saves with the world and inventories (they were lost at every reload).
+        public static int StarsOf(Item item) => Is(item, out _, out _) ? Mathf.Min(item.CurSkin, GearCatalog.MaxStars) : 0;
 
         // The fortress weapon this player holds right now (the host knows everyone's held item).
         public static bool Held(Player p, out Gear g, out Rarity r)
