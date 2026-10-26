@@ -621,31 +621,37 @@ namespace HtfFortress
         // the first wall or turret on the way, so nobody reels fish into the fort. `onWater`: a spitter stays on the surface.
         private readonly HashSet<Creature> _reeled = new HashSet<Creature>();
 
-        public void ServerPull(Creature c, Vector3 to, float seconds, bool onWater = false)
+        public void ServerPull(Creature c, Vector3 to, float seconds, bool onWater = false, float lift = 1.2f)
         {
             if (!(c is Creature fish) || fish.IsDead || !fish.Rig || _reeled.Contains(c) || IsBubbled(c)) return;
             Vector3 from = fish.transform.position;
             to = StopAtWall(from, to);
             if (onWater) to.y = WaterManager.GetWaterHeight(to);
             else if (Loot.Ground(to + Vector3.up * 4f, 12f, out var g)) to = g + Vector3.up * 0.4f;
-            StartCoroutine(Reel(fish, from, to, seconds));
+            StartCoroutine(Reel(fish, from, to, seconds, lift));
         }
 
-        private System.Collections.IEnumerator Reel(Creature fish, Vector3 from, Vector3 to, float seconds)
+        // lift: how high it goes on the way. Blown up high (a rocket), it turns head over tail once in the air.
+        private System.Collections.IEnumerator Reel(Creature fish, Vector3 from, Vector3 to, float seconds, float lift)
         {
             _reeled.Add(fish);
             var rig = fish.Rig;
             bool wasKinematic = rig.isKinematic;
             rig.isKinematic = true;
+            Quaternion was = rig.rotation;
+            Vector3 along = (to - from).Flat();
+            bool flip = lift > 2f && along.sqrMagnitude > 0.01f;
+            Vector3 axis = flip ? Vector3.Cross(Vector3.up, along.normalized) : Vector3.right;
             for (float t = 0f; t < seconds && fish && !fish.IsDead; t += Time.deltaTime)
             {
-                rig.MovePosition(Vector3.Lerp(from, to, t / seconds) + Vector3.up * Mathf.Sin(t / seconds * Mathf.PI) * 1.2f);
+                rig.MovePosition(Vector3.Lerp(from, to, t / seconds) + Vector3.up * Mathf.Sin(t / seconds * Mathf.PI) * lift);
+                if (flip) rig.MoveRotation(Quaternion.AngleAxis(360f * t / seconds, axis) * was);
                 Synced(fish);
                 yield return null;
             }
             _reeled.Remove(fish);
             if (!fish) yield break;
-            if (!fish.IsDead) { rig.position = to; fish.transform.position = to; Synced(fish); }
+            if (!fish.IsDead) { rig.position = to; fish.transform.position = to; if (flip) { rig.rotation = was; fish.transform.rotation = was; } Synced(fish); }
             if (!wasKinematic) { rig.isKinematic = false; rig.linearVelocity = Vector3.zero; }
         }
 
@@ -674,10 +680,13 @@ namespace HtfFortress
         }
 
         // Conch: shove a fish along the ground (not a spitter out in the deep).
-        public void ServerPush(Creature c, Vector3 push)
+        // lift > 0: thrown up that high on the way (a blast), not hopped along the ground.
+        public void ServerPush(Creature c, Vector3 push, float lift = 0f)
         {
             if (!c || push.sqrMagnitude < 0.01f || (Enemies.Instance.TryGet(c, out var tag) && tag.Kind == EnemyKind.Spitter)) return;
-            ServerPull(c, c.transform.position + new Vector3(push.x, 0f, push.z), 0.25f);
+            Vector3 to = c.transform.position + new Vector3(push.x, 0f, push.z);
+            if (lift > 0f) ServerPull(c, to, 0.4f + 0.1f * lift, lift: lift);
+            else ServerPull(c, to, 0.25f);
         }
 
         // Conch: a blast of sound breaks the move a boss is winding up (Bosses).

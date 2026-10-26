@@ -832,13 +832,46 @@ namespace HtfFortress
                 Vector3 d = Body(c) - at;
                 float fall = 1f - Mathf.Clamp01(Mathf.Sqrt(d.sqrMagnitude) / Mathf.Max(0.01f, radius));
                 Vector3 dir = d.Flat().sqrMagnitude > 0.01f ? d.Flat().normalized : Vector3.forward;
-                // The blast's knockback grows with its modded radius (Owen: the shove was stuck at the old distance).
+                // The blast's knockback grows with its modded radius (Owen: the shove was stuck at the old distance). Blown up into
+                // the air, 1.5 m at the rim to 4 m at the middle, as dynamite throws things (Owen: "火箭槍要有物理效果 跟炸藥一樣"):
+                // it only slid them along the ground.
                 float knock = Mathf.Clamp(radius / RocketRadius, 1f, 6f);
-                Siege.Instance.ServerPush(c, dir * (2f + 4f * fall) * knock * Perks.Knockback); // 2 m at the rim, 6 m at the middle, times radius and soul knockback
+                Siege.Instance.ServerPush(c, dir * (2f + 4f * fall) * knock * Perks.Knockback, 1.5f + 2.5f * fall); // 2 m at the rim, 6 m at the middle, times radius and soul knockback
                 Siege.Instance.Slow(c, 0.3f * fall, 0.5f);
             }
+            Blow(at, radius);
             Fx.Send(FxKind.Blast, at, at, 0, Mathf.RoundToInt(radius * 100f)); // the explosion grows with the modded radius
             AutoTest.Count("rocket_blast");
+        }
+
+        // Everything else in the blast flies off it as from the game's own dynamite (ExplosionManager.ServerExplode, with its
+        // ItemForce / BoatForce): the bodies and things lying about, the game's debris, boats. Live fish are thrown above (the
+        // host steers those), a lit stick is left be, and so are the players (a friend's every rocket would knock you down).
+        private static readonly HashSet<Item> _blown = new HashSet<Item>();
+        private static float _itemForce = -1f, _boatForce;
+        private static void Blow(Vector3 at, float radius)
+        {
+            if (_itemForce < 0f)
+            {
+                var info = Loot.ShopItems.Select(id => GameInfo.GetSpawnable(id) as Explosive).FirstOrDefault(e => e)?.GetExplosionInfo();
+                _itemForce = info != null ? info.ItemForce : 1000f;
+                _boatForce = info != null ? info.BoatForce : 1000f;
+            }
+            _blown.Clear();
+            foreach (var col in Physics.OverlapSphere(at, radius, GameInfo.AffectedByExplosionLayer))
+            {
+                if (RigidbodyManager.Debris.TryGetValue(col, out var debris) && debris) debris.AddExplosionForce(_itemForce, at + Vector3.down, radius);
+                if (BoatManager.ColToBoat.TryGetValue(col, out var boat) && boat && boat.HiddenPhysicsRig) boat.HiddenPhysicsRig.AddExplosionForce(_boatForce, at, radius, 2f);
+                var it = ItemManager.Get(col);
+                if (!it || !_blown.Add(it) || !it.Rig || !it.RigidbodySync || it.Holder || it.IsInInventory || it.Explosive || Swallow.IsGoing(it)
+                    || (it.Creature && !it.Creature.IsDead) || it.Rig.linearVelocity.sqrMagnitude > 25f * 25f) continue;
+                it.RigidbodySync.StartSimulateLocal();
+                Vector3 f = it.transform.position - at;
+                f.y += 2f;
+                it.Rig.AddForce(f.normalized * _itemForce);
+                it.WasInteractedWith();
+            }
+            AutoTest.Count("rocket_blew", _blown.Count);
         }
 
         // The pufferfish bursts: spines into everything round it, and two stacks of poison (which then works like the gas's).

@@ -630,11 +630,31 @@ namespace HtfFortress
                 WeaponFx.Emit(WeaponFx.Rings, at + Vector3.up * (0.5f + i * 0.25f), 1, Vector3.up, color: c, size: 4f + tier * 1.4f + i * 1.2f);
                 yield return new WaitForSeconds(0.06f);
             }
-            // A short beam of the best thing's colour, so a legendary chest is visible across the island.
-            var beam = WeaponFx.Line("ChestBeam", BossVfx.Glow(c, 4f + tier), 0.8f + tier * 0.35f);
-            beam.positionCount = 2; beam.SetPosition(0, at + Vector3.up * 0.3f); beam.SetPosition(1, at + Vector3.up * (7f + tier * 2f));
-            yield return new WaitForSeconds(0.3f);
-            if (beam) Object.Destroy(beam.gameObject);
+            // A beam of the best thing's colour, so a legendary chest is visible across the island: a bright thread in a
+            // see-through shaft, narrowing as it goes up, held a moment, then drawn in slowly and fading (Owen: "光太粗了 可以
+            // 細一點點 然後收的非線性慢一點透明一點": it was 0.8-1.85 m of solid glow, gone at once after 0.3 s).
+            float w = 0.4f + tier * 0.18f, alpha = 0.55f;
+            var shaft = WeaponFx.Line("ChestBeam", BossVfx.Wash(new Color(c.r, c.g, c.b, alpha)), w);
+            var core = WeaponFx.Line("ChestBeamCore", BossVfx.Glow(c, 4f + tier), w * 0.28f);
+            foreach (var lr in new[] { shaft, core })
+            {
+                lr.positionCount = 2; lr.SetPosition(0, at + Vector3.up * 0.3f); lr.SetPosition(1, at + Vector3.up * (7f + tier * 2f));
+                lr.widthCurve = AnimationCurve.Linear(0f, 1f, 1f, 0.45f);
+            }
+            var shaftMat = shaft.sharedMaterial;
+            yield return new WaitForSeconds(0.35f);
+            const float draw = 1.1f;
+            for (float s = 0f; s < draw && shaft && core; s += Time.deltaTime)
+            {
+                float k = s / draw, smooth = k * k * (3f - 2f * k);
+                shaft.widthMultiplier = w * (1f - smooth);
+                core.widthMultiplier = w * 0.28f * (1f - k) * (1f - k);
+                shaftMat.color = new Color(c.r, c.g, c.b, alpha * (1f - k) * (1f - k));
+                yield return null;
+            }
+            Object.Destroy(shaftMat);
+            if (shaft) Object.Destroy(shaft.gameObject);
+            if (core) Object.Destroy(core.gameObject);
         }
 
         // A real flamethrower cone instead of three balls: an expanding cone mesh plus a spray of short-lived embers.
