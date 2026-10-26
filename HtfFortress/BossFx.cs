@@ -341,8 +341,8 @@ namespace HtfFortress
             for (float t = 0f; t < 2.5f && pillar; t += Time.deltaTime)
             {
                 float k01 = t / 2.5f, w = 0.5f * (1f - k01) + 0.05f;
-                pillar.position = ground + Vector3.up * 6f;
-                pillar.localScale = new Vector3(w, 6f, w);
+                pillar.position = ground; // Cyl runs 0..1 up from its foot (it stood 6-12 m up in the air)
+                pillar.localScale = new Vector3(w, 8f, w);
                 if (Random.value < 0.5f) Burst(ground + Vector3.up * Random.Range(0.5f, 10f) + Random.insideUnitSphere.Flat() * 0.6f, "Gold", 2, 0.1f);
                 yield return null;
             }
