@@ -3276,9 +3276,16 @@ namespace HtfFortress
             yield return Until(() => C("helper_sold") >= 2 && FortressNet.Instance.ServerCorpses().Count() == 0, 60f, "helpers selling");
             Note($"helpers: picked {C("helper_picked")} of {corpses}, sold {C("helper_sold")} times for {C("helper_money")} (money {money0} -> {Siege.Instance.ServerCoins}), corpses left {FortressNet.Instance.ServerCorpses().Count()}");
 
-            // Knocked out: four fish held round a helper standing at the stall.
-            yield return new WaitForSecondsRealtime(4f);
-            Vector3 hp = Helpers.Instance.DebugPos(0);
+            // Nothing left to pick up: a coffee at one of the rest spots (Helpers.Rest). Then knocked out: four fish held round
+            // the first of them there.
+            yield return Until(() => Helpers.Instance.DebugState().StartsWith("#1 coffee") || Helpers.Instance.DebugState().StartsWith("#1 talking"), 20f, "helper 1 on its coffee break");
+            Vector3 hp = Helpers.Instance.DebugPos(0), by = hp + new Vector3(3f, 0f, 3f);
+            by.y = BossFx.Ground(by) + stand;
+            me.LocalTeleport(by, YawTo(by, hp), true);
+            Aim(YawTo(by, hp), 14f);
+            yield return new WaitForSecondsRealtime(2f);
+            FortressPlugin.Shot("helpers_coffee");
+            Note("on a break: " + Helpers.Instance.DebugState());
             var biters = new List<Creature>();
             for (int i = 0; i < 4; i++) biters.Add(plugin.ServerSpawnMinion(EnemyKind.Runner, hp + Quaternion.Euler(0f, 90f * i, 0f) * Vector3.forward * 1.1f + Vector3.up * 1f));
             foreach (var b in biters) if (b) Siege.Instance.Slow(b, 1f, 60f);

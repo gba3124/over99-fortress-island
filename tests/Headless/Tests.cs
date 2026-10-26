@@ -900,23 +900,6 @@ namespace HtfFortress.Headless
             }
             Check(Weapons.GatlingShots(0f) == Weapons.GatlingRate * Weapons.GatlingFloor && Weapons.GatlingShots(1f) == Weapons.GatlingRate && Weapons.GatlingShots(2f) == Weapons.GatlingRate
                   && Weapons.GatlingShots(0.5f) > Weapons.GatlingShots(0.4f), "the gatling: a quarter of its rate as the barrels start, all of it spun up");
-            List<(Vector3 a, Vector3 b, Vector3 c)> Tris(string name)
-            {
-                var v = new List<Vector3>();
-                var t = new List<(Vector3, Vector3, Vector3)>();
-                foreach (var line in File.ReadLines(Path.Combine(Src, "Models", name + ".obj")))
-                {
-                    var q = line.Split(' ');
-                    float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
-                    if (q[0] == "v") v.Add(new Vector3(-F(1), F(2), F(3))); // as Models.Parse: x flipped
-                    else if (q[0] == "f")
-                    {
-                        var idx = q.Skip(1).Select(s => int.Parse(s.Split('/')[0]) - 1).ToList();
-                        for (int k = 1; k + 1 < idx.Count; k++) t.Add((v[idx[0]], v[idx[k]], v[idx[k + 1]]));
-                    }
-                }
-                return t;
-            }
             var whole = Tris("Gatling");
             int cut = whole.Count(t => WeaponItems.GatlingBarrel(t.a) && WeaponItems.GatlingBarrel(t.b) && WeaponItems.GatlingBarrel(t.c));
             int across = whole.Count(t => new[] { t.a, t.b, t.c }.Count(WeaponItems.GatlingBarrel) is int n && n > 0 && n < 3);
@@ -928,19 +911,6 @@ namespace HtfFortress.Headless
         // sharks ever made, the game's guns lying on the ground as nothing).
         private static void GunSpecChecks(List<Gear> weapons)
         {
-            (Vector3 min, Vector3 max) Box(string name)
-            {
-                Vector3 lo = Vector3.one * 99f, hi = -lo;
-                foreach (var line in File.ReadLines(Path.Combine(Src, "Models", name + ".obj")))
-                {
-                    var q = line.Split(' ');
-                    if (q[0] != "v") continue;
-                    float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
-                    var v = new Vector3(-F(1), F(2), F(3)); // as Models.Parse: x flipped
-                    lo = Vector3.Min(lo, v); hi = Vector3.Max(hi, v);
-                }
-                return (lo, hi);
-            }
             var ours = weapons.Where(g => !GearCatalog.IsGameGun(g)).ToList();
             Check(ours.Count == 17, $"{ours.Count} fortress weapons, expected 17");
             foreach (var g in ours)
@@ -1201,6 +1171,26 @@ namespace HtfFortress.Headless
             Check(Siege.Money(Helpers.HirePrice(Helpers.MaxHelpers - 1)) > 0 && Siege.Money(Helpers.UpgradePrice(Helpers.MaxLevel - 1)) > 0, "the dearest helper prices still fit");
             var v = new VaultData { Helpers = Helpers.MaxHelpers, HelperSpeed = Helpers.MaxLevel, HelperLoad = Helpers.MaxLevel };
             Check(Helpers.PriceOf(0, v) < 0 && Helpers.PriceOf(1, v) < 0 && Helpers.PriceOf(2, v) < 0, "nothing past the top");
+            // Nothing to pick up (Helpers.Rest): up to five round a coffee, a step between each, the ring small; anything to pick
+            // up is seen within a think and sent within a tick, so they're back at work well inside 2 s.
+            for (int n = 1; n <= Helpers.HumanHelpers; n++)
+            {
+                float apart = n < 2 ? 1f : Enumerable.Range(0, n).Min(k => Vector3.Distance(Helpers.CircleSlot(0f, n, k), Helpers.CircleSlot(0f, n, (k + 1) % n)));
+                Check(Helpers.CircleRadius(n) < 0.9f && apart >= 0.9f && (n > 1 || Helpers.CircleSlot(0f, 1, 0) == Vector3.zero), $"{n} at a coffee: {Helpers.CircleRadius(n):0.00} m round, {apart:0.00} m apart");
+            }
+            Check(Helpers.IdleThink + Helpers.SendEvery < 2f && Helpers.IdleThink <= 0.5f, "resting helpers aren't back at work within 2 s (or think less often than before)");
+            // The mug (Person.HoldCup: its body the first material, the one coloured; about 8 cm across and 9 tall) and the nest
+            // (40-50 cm across; the gull's belly, NestSeat, over its bowl's floor and under its rim; SeagullSit's belly, as drawn
+            // at 0.95, GullBelly under the gull).
+            var (cupLo, cupHi) = Box("CoffeeCup");
+            string cupBody = File.ReadLines(Path.Combine(Src, "Models", "CoffeeCup.obj")).First(l => l.StartsWith("usemtl "));
+            Check(cupHi.z - cupLo.z > 0.07f && cupHi.z - cupLo.z < 0.09f && cupHi.y - cupLo.y > 0.08f && cupHi.y - cupLo.y < 0.1f && cupBody == "usemtl MugBody",
+                  $"the mug: {(cupHi.z - cupLo.z) * 100f:0.0} cm across, {(cupHi.y - cupLo.y) * 100f:0.0} cm tall, first {cupBody}");
+            var (nestLo, nestHi) = Box("GullNest");
+            float across = Math.Max(nestHi.x - nestLo.x, nestHi.z - nestLo.z), floor = Under(Tris("GullNest"), 0f, 0f).Where(y => y < Helpers.NestSeat + 0.02f).DefaultIfEmpty(9f).Max();
+            Check(across >= 0.4f && across <= 0.5f && nestLo.y > -0.01f && floor <= Helpers.NestSeat && nestHi.y > Helpers.NestSeat + 0.04f,
+                  $"the nest: {across:0.00} m across, its floor at {floor:0.000} m, rim {nestHi.y:0.000} m, the gull's belly at {Helpers.NestSeat} m");
+            Check(Math.Abs(Box("SeagullSit").min.y * 0.95f - Helpers.GullBelly) < 0.01f, $"the sitting gull's belly {Box("SeagullSit").min.y * 0.95f:0.000} m under it, not GullBelly");
             Console.WriteLine($"  hire: $" + string.Join(" / ", new[] { 1, 2, 5, 10, 20, 30 }.Select(n => Siege.Money(Helpers.HirePrice(n - 1)).ToString("N0"))) + $"; a level: $" + string.Join(" / ", new[] { 1, 5, 10, 20, 30, 40 }.Select(l => Siege.Money(Helpers.UpgradePrice(l - 1)).ToString("N0"))));
         }
 
@@ -1277,6 +1267,56 @@ namespace HtfFortress.Headless
 
         private static bool IsPatch(object a) => a.GetType().Name == "HarmonyPatch";
 
+        // A model's triangles and its bounds, in the game's frame (as Models.Parse loads it: x flipped).
+        private static List<(Vector3 a, Vector3 b, Vector3 c)> Tris(string name)
+        {
+            var v = new List<Vector3>();
+            var t = new List<(Vector3, Vector3, Vector3)>();
+            foreach (var line in File.ReadLines(Path.Combine(Src, "Models", name + ".obj")))
+            {
+                var q = line.Split(' ');
+                float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
+                if (q[0] == "v") v.Add(new Vector3(-F(1), F(2), F(3)));
+                else if (q[0] == "f")
+                {
+                    var idx = q.Skip(1).Select(s => int.Parse(s.Split('/')[0]) - 1).ToList();
+                    for (int k = 1; k + 1 < idx.Count; k++) t.Add((v[idx[0]], v[idx[k]], v[idx[k + 1]]));
+                }
+            }
+            return t;
+        }
+
+        private static (Vector3 min, Vector3 max) Box(string name)
+        {
+            Vector3 lo = Vector3.one * 99f, hi = -lo;
+            foreach (var line in File.ReadLines(Path.Combine(Src, "Models", name + ".obj")))
+            {
+                var q = line.Split(' ');
+                if (q[0] != "v") continue;
+                float F(int i) => float.Parse(q[i], System.Globalization.CultureInfo.InvariantCulture);
+                var v = new Vector3(-F(1), F(2), F(3));
+                lo = Vector3.Min(lo, v); hi = Vector3.Max(hi, v);
+            }
+            return (lo, hi);
+        }
+
+        // Every surface of `mesh` straight above or below (x, z), lowest first.
+        private static List<float> Under(List<(Vector3 a, Vector3 b, Vector3 c)> mesh, float x, float z)
+        {
+            var hs = new List<float>();
+            foreach (var (a, b, c) in mesh)
+            {
+                if (Math.Min(a.x, Math.Min(b.x, c.x)) > x || Math.Max(a.x, Math.Max(b.x, c.x)) < x || Math.Min(a.z, Math.Min(b.z, c.z)) > z || Math.Max(a.z, Math.Max(b.z, c.z)) < z) continue;
+                float d = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+                if (Math.Abs(d) < 1e-9f) continue;
+                float l1 = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / d, l2 = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / d, l3 = 1f - l1 - l2;
+                if (l1 < -1e-5f || l2 < -1e-5f || l3 < -1e-5f) continue;
+                hs.Add(l1 * a.y + l2 * b.y + l3 * c.y);
+            }
+            hs.Sort();
+            return hs;
+        }
+
         // ---------- the island: what players walk to stands on open ground, reachable from the pier ----------
 
         private static void IslandLayout()
@@ -1299,6 +1339,8 @@ namespace HtfFortress.Headless
             string mat = "";
             int groundDown = 0, ground = 0;
             var groundMats = new HashSet<string> { "Sand", "Grass", "IslPath", "IslWetSand", "IslTileDark", "IslGrout", "IslPathWet", "IslPathEdge", "IslGateStone" };
+            var unpaved = new HashSet<string> { "Sand", "Grass", "IslGrassDark", "IslWetSand", "IslSandDrift", "IslWetDrift" }; // off the roads and the plaza
+            var unpavedTris = new List<(Vector3 a, Vector3 b, Vector3 c)>();
             foreach (var line in File.ReadLines(Path.Combine(Src, "Models", "FortressIsland.obj")))
             {
                 var p = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -1308,7 +1350,11 @@ namespace HtfFortress.Headless
                 else if (p[0] == "f")
                 {
                     var idx = p.Skip(1).Select(q => int.Parse(q.Split('/')[0]) - 1).ToArray();
-                    for (int i = 1; i < idx.Length - 1; i++) tris.Add((v[idx[0]], v[idx[i]], v[idx[i + 1]]));
+                    for (int i = 1; i < idx.Length - 1; i++)
+                    {
+                        tris.Add((v[idx[0]], v[idx[i]], v[idx[i + 1]]));
+                        if (unpaved.Contains(mat)) unpavedTris.Add(tris[tris.Count - 1]);
+                    }
                     if (groundMats.Contains(mat))
                     {
                         // The loader mirrors x and reverses the winding, so in this (mirrored) frame a face that ends up facing
@@ -1323,22 +1369,7 @@ namespace HtfFortress.Headless
             // The ground is one open sheet: faces turned upside down are invisible from above and can't be stood on
             // (raycasts and the player's feet go straight through: people "fell under the ground").
             Check(ground > 0 && groundDown == 0, $"{groundDown} of {ground} ground faces face down");
-            // Every surface straight above or below (x, z), lowest first.
-            List<float> Hits(float x, float z)
-            {
-                var hs = new List<float>();
-                foreach (var (a, b, c) in tris)
-                {
-                    if (Math.Min(a.x, Math.Min(b.x, c.x)) > x || Math.Max(a.x, Math.Max(b.x, c.x)) < x || Math.Min(a.z, Math.Min(b.z, c.z)) > z || Math.Max(a.z, Math.Max(b.z, c.z)) < z) continue;
-                    float d = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
-                    if (Math.Abs(d) < 1e-9f) continue;
-                    float l1 = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / d, l2 = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / d, l3 = 1f - l1 - l2;
-                    if (l1 < -1e-5f || l2 < -1e-5f || l3 < -1e-5f) continue;
-                    hs.Add(l1 * a.y + l2 * b.y + l3 * c.y);
-                }
-                hs.Sort();
-                return hs;
-            }
+            List<float> Hits(float x, float z) => Under(tris, x, z);
             // The top surface: what the game's ray from above lands on. A rock or a tree in the way shows up as a jump in it.
             float Top(float x, float z) { var h = Hits(x, z); return h.Count > 0 ? h[h.Count - 1] : float.NaN; }
             // A spot people stand at: flat, at beach level, within `r`.
@@ -1390,6 +1421,75 @@ namespace HtfFortress.Headless
             Walk("pier to the stall", pier, new Vector3(pier.x, 0f, stall.z));
             Walk("pier to the stall", new Vector3(pier.x, 0f, stall.z), stall);
             Walk("pier to start circle", pier, ready);
+            // The helpers' coffee (Helpers.Rest): round each rest spot, one to five of them each stand on level open ground (no
+            // road, plaza or plant underfoot), clear of the stations and of the doors and spots people walk to; and one ring
+            // is well apart from the next.
+            (Vector2 lo, Vector2 hi) Footprint(string model, Vector3 at, float yawDeg)
+            {
+                var (lo, hi) = Box(model);
+                float sn = (float)Math.Sin(yawDeg * Mathf.Deg2Rad), cs = (float)Math.Cos(yawDeg * Mathf.Deg2Rad);
+                var corners = new[] { (lo.x, lo.z), (lo.x, hi.z), (hi.x, lo.z), (hi.x, hi.z) }.Select(q => new Vector2(at.x + q.Item1 * cs + q.Item2 * sn, at.z - q.Item1 * sn + q.Item2 * cs)).ToList();
+                return (new Vector2(corners.Min(q => q.x), corners.Min(q => q.y)), new Vector2(corners.Max(q => q.x), corners.Max(q => q.y)));
+            }
+            var built = new[] { Footprint("Vault", vault, FortressIsland.VaultYaw), Footprint("MarketStall", market, FortressIsland.MarketYaw), Footprint("Smithy", smithy, FortressIsland.SmithyYaw) };
+            var walkedTo = new[] { door, stall, forge, ready, FortressIsland.RespawnLocal, FortressIsland.BoardLocal, FortressIsland.KeeperLocal, pier };
+            // The decor's plants are drawn only (nothing stops a foot): kept a body clear of their leaves (a fern's, the widest, 0.9 m).
+            var plants = File.ReadLines(Path.Combine(Src, "Models", "FortressIsland.decor.txt")).Select(l => l.Split(' '))
+                .Where(q => q.Length > 5 && q[0] != "#" && q[0] != "Pool" && !q[0].StartsWith("GrassIsland"))
+                .Select(q => (x: float.Parse(q[1], inv), z: float.Parse(q[3], inv), r: 0.9f * float.Parse(q[5], inv))).ToList();
+            var rests = FortressIsland.RestSpots;
+            float ring = Helpers.CircleRadius(Helpers.HumanHelpers) + 0.3f; // a ring at its biggest, and a body round it
+            for (int s = 0; s < rests.Length; s++)
+            {
+                var (at, yaw) = rests[s];
+                float lo = float.MaxValue, hi = float.MinValue, people = float.MaxValue, walls = float.MaxValue, leaves = float.MaxValue;
+                int paved = 0;
+                for (int n = 1; n <= Helpers.HumanHelpers; n++)
+                    for (int k = 0; k < n; k++)
+                    {
+                        var p = at + Helpers.CircleSlot(yaw, n, k);
+                        float y = Top(p.x, p.z);
+                        lo = Math.Min(lo, y); hi = Math.Max(hi, y);
+                        for (int e = 0; e < 5; e++) // underfoot and half a metre round
+                        {
+                            float ex = p.x + (e == 1 ? 0.5f : e == 2 ? -0.5f : 0f), ez = p.z + (e == 3 ? 0.5f : e == 4 ? -0.5f : 0f), ey = Top(ex, ez);
+                            if (!Under(unpavedTris, ex, ez).Any(u => Math.Abs(u - ey) < 1e-4f)) paved++;
+                        }
+                        people = Math.Min(people, walkedTo.Min(w => new Vector2(w.x - p.x, w.z - p.z).magnitude));
+                        walls = Math.Min(walls, built.Min(b => new Vector2(Math.Max(0f, Math.Max(b.lo.x - p.x, p.x - b.hi.x)), Math.Max(0f, Math.Max(b.lo.y - p.z, p.z - b.hi.y))).magnitude));
+                        leaves = Math.Min(leaves, plants.Min(q => new Vector2(q.x - p.x, q.z - p.z).magnitude - q.r));
+                    }
+                Check(!float.IsNaN(lo) && hi - lo < 0.3f && paved == 0 && people > 2.5f && walls > 0.4f && leaves > 0.3f,
+                      $"rest spot {s + 1} ({at.x}, {at.z}): ground {lo:0.00} to {hi:0.00} m, {paved} paved, {people:0.0} m from where people go, {walls:0.0} m from a station, {leaves:0.0} m from a plant");
+                for (int o = 0; o < s; o++) Check(Vector3.Distance(at, rests[o].at) >= 2f * ring + 1.5f, $"rest spots {o + 1} and {s + 1} too close for two rings 1.5 m apart");
+                Console.WriteLine($"  rest spot {s + 1}: ground {lo:0.00}-{hi:0.00} m, {people:0.0} m from where people go, {walls:0.0} m from a station, {leaves:0.0} m from a plant");
+            }
+            // The seagulls' nests (FortressIsland.NestSpots): one a gull, each lying on what it's on all round its foot (the
+            // lighthouse's gallery, a pile cap, the smithy's roof: none floating, none sunk in), with nothing over it (its gull comes
+            // straight down onto it).
+            var nests = FortressIsland.NestSpots;
+            int gulls = Helpers.MaxHelpers - Helpers.HumanHelpers;
+            Check(nests.Length >= Math.Max(3, gulls), $"{nests.Length} nests for {gulls} seagulls");
+            var nestTris = Tris("GullNest");
+            float nestFoot = nestTris.SelectMany(t => new[] { t.a, t.b, t.c }).Where(q => q.y < 0.005f).Max(q => new Vector2(q.x, q.z).magnitude);
+            var coreTris = Tris("Core");
+            var smithyTris = Tris("Smithy");
+            foreach (var (on, at, _, scale) in nests)
+            {
+                var mesh = on == FortressIsland.NestOn.Lighthouse ? coreTris : on == FortressIsland.NestOn.Smithy ? smithyTris : tris;
+                float tilt = on == FortressIsland.NestOn.Smithy ? FortressIsland.SmithyRoofTilt * Mathf.Deg2Rad : 0f, off = 0f;
+                int over = 0;
+                for (int k = 0; k <= 12; k++) // round its foot, and its middle
+                {
+                    float a = k * Mathf.PI / 6f, rim = k < 12 ? nestFoot * scale : 0f, lx = rim * (float)Math.Cos(a), lz = rim * (float)Math.Sin(a);
+                    var p = at + new Vector3(lx, -lz * (float)Math.Sin(tilt), lz * (float)Math.Cos(tilt)); // tilted with the roof, Euler(tilt, 0, 0)
+                    var hs = Under(mesh, p.x, p.z);
+                    off = Math.Max(off, hs.Count == 0 ? 9f : hs.Min(y => Math.Abs(y - p.y)));
+                    over += hs.Count(y => y > p.y + 0.03f);
+                }
+                Check(off < 0.03f && over == 0, $"the nest on the {on} at {at.x:0.00}, {at.y:0.00}, {at.z:0.00}: its foot {off * 100f:0.0} cm off what it's on, {over} surfaces over it");
+            }
+            Console.WriteLine($"  {rests.Length} rest spots, {nests.Length} nests (a {nestFoot * 2f:0.00} m foot)");
             // The tide pools (decor file): on the south-west beach, above the waterline.
             var pools = File.ReadLines(Path.Combine(Src, "Models", "FortressIsland.decor.txt")).Where(l => l.StartsWith("Pool ")).Select(l => l.Split(' ')).ToList();
             Check(pools.Count >= 3, $"only {pools.Count} tide pools in the decor file");
