@@ -70,7 +70,7 @@ The team's vault is `BepInEx/fortress-vault/<save name>.txt` on the host; every 
 The same `BepInEx/plugins/HtfFortress/` layout applies inside the Proton/Pixel Port prefix. The game folder on this setup is under the prefix's `drive_c/Program Files (x86)/Steam/steamapps/common/How to Fish/How to Fish/`; the log is in `BepInEx/LogOutput.log` there.
 
 **The cheat menu does not open.**
-Set `Debug/DebugKeys = true` in `BepInEx/config/owen.htf.fortress.cfg` and restart; the menu opens with `Debug/MenuKey` (default F12).
+Set `Debug/DebugKeys = true` in `BepInEx/config/owen.htf.fortress.cfg` and restart; the menu opens with `Debug/MenuKey` (default ~).
 
 ## Meet the fish
 

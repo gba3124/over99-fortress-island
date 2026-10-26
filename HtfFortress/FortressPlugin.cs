@@ -70,8 +70,11 @@ namespace HtfFortress
             _toggleKey = Config.Bind("Debug", "ToggleKey", Key.F9, "Test key: host starts / ends a round (needs DebugKeys).");
             _verboseLogs = Config.Bind("Debug", "VerboseLog", false, "Detailed diagnostics in the BepInEx log: perf lines, per-wall breaches, unstuck teleports and wave screenshots. Leave off for normal play.");
             _debugKeys = Config.Bind("Debug", "DebugKeys", false, "Test keys for the host: F4 teleport to the fortress, F5 +$1,500,000 (Shift: $150M, Ctrl/Alt: $1.5B), F6 god mode, F7 kill all, F8 skip build time (Shift: jump 5 waves), F9 start/end a round. The clickable cheat menu opens with MenuKey.");
-            _menuKey = Config.Bind("Debug", "MenuKey", Key.F12, "Open the clickable cheat menu (needs DebugKeys).");
-            _showKeyHelp = Config.Bind("Debug", "ShowKeyHelp", false, "Show the test-key list in the top-right corner. Off by default: F12 (MenuKey) still opens the clickable menu.");
+            _menuKey = Config.Bind("Debug", "MenuKey", Key.Backquote, "Open the clickable cheat menu (needs DebugKeys). Default: ~ (F12 is Steam's screenshot key).");
+            // Older configs (and the old default) used F12, which Steam captures as a screenshot. Move that one value once so
+            // the menu keeps working after upgrading; a player who deliberately rebinds it can still do so afterwards.
+            if (_menuKey.Value == Key.F12) _menuKey.Value = Key.Backquote;
+            _showKeyHelp = Config.Bind("Debug", "ShowKeyHelp", false, "Show the test-key list in the top-right corner. Off by default: MenuKey (default ~) still opens the clickable menu.");
             _menuScale = Config.Bind("Debug", "MenuScale", 1f, new ConfigDescription("Cheat menu size.", new AcceptableValueRange<float>(0.6f, 1.8f)));
             FortressIsland.Unlock = Config.Bind("Island", "Unlock", IslandUnlock.AfterFinalBoss, "When the fortress island appears: after beating the final boss, or always.");
             Reveal.Seen = Config.Bind("Island", "RevealSeen", false, "The island's entrance (it rises out of the sea) has played on this computer. Set to false to see it again.");
@@ -309,7 +312,7 @@ namespace HtfFortress
         private UnityEngine.UI.Image _testHelp;
         public bool TestKeysOn => _debugKeys.Value;
         public bool VerboseLogs => _debugKeys.Value || (_verboseLogs != null && _verboseLogs.Value);
-        public Key MenuKey => _menuKey != null ? _menuKey.Value : Key.F12;
+        public Key MenuKey => _menuKey != null ? _menuKey.Value : Key.Backquote;
         private static ConfigEntry<bool> _showKeyHelp;
         public bool ShowKeyHelp => _showKeyHelp != null && _showKeyHelp.Value;
         public Key ToggleKey => _toggleKey.Value;
