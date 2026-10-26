@@ -92,8 +92,16 @@ namespace HtfFortress
         {
             if (dmg <= 0 || !(Of(c) is BossBrain b)) return dmg;
             if (b.IsBoss && !b.IsLive && !TestKill) { AutoTest.Count("boss_hit_in_entrance"); return 0; }
+            // The change is a set piece, not a window: nothing lands while it plays. Owen: too many bosses died before
+            // anyone saw the second form; this is the guarantee (Transforming covers the freeze and every SecondForm beat).
+            if (b.IsBoss && b.Transforming && !TestKill) { AutoTest.Count("boss_hit_in_transition"); return 0; }
             float m = b.TakeMult * (Turrets.Firing ? b.TurretMult : 1f);
             int d = Mathf.Max(1, Mathf.RoundToInt(dmg * m));
+            // A boss that has not changed yet cannot be deleted by one late burst: leave it at 1, so the next Tick plays
+            // the change. Without this a crit from 60% to 0 removes the second form entirely.
+            if (b.IsBoss && !b.Phase2 && b.Body && b.Body._hp.Value > 0 && b.Body._hp.Value - d <= 0)
+                d = b.Body._hp.Value - 1;
+            if (d <= 0) return 0;
             if (Turrets.Firing) b.ByTurrets += d;
             else { b.ByPlayers += d; b.PlayerDamage(d); }
             return d;
@@ -309,6 +317,24 @@ namespace HtfFortress
         protected abstract IEnumerator Act();
         protected virtual IEnumerator SecondForm() { Shout("bossPhase2"); Send("phase2", Pos, Pos); yield return 1.5f; }
 
+        // True from the moment the change starts until its show is over (OnHurt lets nothing through meanwhile).
+        public bool Transforming { get; private set; }
+        // The freeze before the boss's own SecondForm (which plays its own 1.5-2.5 s roar and effects).
+        protected virtual float TransformSeconds => 0.9f;
+
+        // The change: freeze, colour swap on every screen, then the boss's own SecondForm. Damage cannot cut it short, so
+        // the second form is always seen at least once.
+        private IEnumerator Transform()
+        {
+            Transforming = true;
+            _breakable = false; // a wind-up left over from the last move cannot be broken mid-change
+            TakeMult = 1f; TurretMult = 1f;
+            Send("secondform", Pos, Pos);
+            for (float t = 0f; t < TransformSeconds && Alive; t += Time.deltaTime) yield return null;
+            yield return SecondForm();
+            Transforming = false;
+        }
+
         public virtual void Tick()
         {
             if (_breakable && _breakDealt >= _breakAt) TryBreak(false);
@@ -317,7 +343,7 @@ namespace HtfFortress
                 Phase2 = true;
                 AutoTest.Count("boss_phase2_" + Kind);
                 Interrupted();
-                Run.Start(Then(SecondForm(), Live()));
+                Run.Start(Then(Transform(), Live()));
             }
             if (Time.time - Born > Bosses.CrashAfter - 30f && !_warned) { _warned = true; Fx.Announce("bossCrashSoon", 30); }
             if (Time.time - Born > Bosses.CrashAfter) { Crash(); return; }

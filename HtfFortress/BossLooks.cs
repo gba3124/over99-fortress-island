@@ -100,21 +100,62 @@ namespace HtfFortress
         // and how much of the original colour shows through.
         private static (Color[] ramp, float keep) Paint(EnemyKind k, bool second)
         {
+            // The second form is a different creature to look at, not just a faster one: each boss gets its own ramp for
+            // it (BOSS-FORMS.md). Repainting happens on every screen when the change plays (BossFx "secondform").
             switch (k)
             {
-                case EnemyKind.Warden: return (new[] { new Color(0.22f, 0.07f, 0.04f), new Color(0.7f, 0.2f, 0.07f), new Color(0.95f, 0.5f, 0.15f), new Color(1f, 0.85f, 0.45f) }, 0f);
-                case EnemyKind.Urchin: return (new[] { new Color(0.12f, 0.02f, 0.18f), new Color(0.45f, 0.06f, 0.55f), new Color(0.85f, 0.2f, 0.75f), new Color(1f, 0.6f, 0.95f) }, 0f);
-                case EnemyKind.Angler: return (new[] { new Color(0.04f, 0.05f, 0.14f), new Color(0.1f, 0.18f, 0.38f), new Color(0.2f, 0.55f, 0.75f), new Color(0.5f, 1f, 1f) }, 0f);
-                case EnemyKind.Steed: return (new[] { new Color(0.45f, 0.47f, 0.55f), new Color(0.9f, 0.92f, 0.98f), new Color(1f, 0.86f, 0.45f) }, 0f);
-                case EnemyKind.Stonefish: return (new[] { new Color(0.14f, 0.15f, 0.13f), new Color(0.33f, 0.36f, 0.28f), new Color(0.45f, 0.6f, 0.3f), new Color(0.65f, 1f, 0.3f) }, 0f);
-                case EnemyKind.Skyfish: case EnemyKind.Squadron: return (new[] { new Color(0.08f, 0.12f, 0.24f), new Color(0.32f, 0.48f, 0.75f), new Color(0.95f, 0.96f, 1f) }, 0.2f);
-                case EnemyKind.Kraken: return (new[] { new Color(0.25f, 0.02f, 0.06f), new Color(0.65f, 0.05f, 0.12f), new Color(0.95f, 0.25f, 0.25f), new Color(1f, 0.7f, 0.6f) }, 0f);
+                case EnemyKind.Warden:
+                    return second
+                        ? (new[] { new Color(0.05f, 0.02f, 0.01f), new Color(0.5f, 0.06f, 0.02f), new Color(1f, 0.45f, 0.05f), new Color(1f, 0.95f, 0.75f) }, 0f) // molten iron
+                        : (new[] { new Color(0.22f, 0.07f, 0.04f), new Color(0.7f, 0.2f, 0.07f), new Color(0.95f, 0.5f, 0.15f), new Color(1f, 0.85f, 0.45f) }, 0f);
+                case EnemyKind.Urchin:
+                    return second
+                        ? (new[] { new Color(0.05f, 0f, 0.08f), new Color(0.35f, 0.02f, 0.5f), new Color(1f, 0.15f, 0.9f), new Color(1f, 0.9f, 1f) }, 0f) // void neon
+                        : (new[] { new Color(0.12f, 0.02f, 0.18f), new Color(0.45f, 0.06f, 0.55f), new Color(0.85f, 0.2f, 0.75f), new Color(1f, 0.6f, 0.95f) }, 0f);
+                case EnemyKind.Angler:
+                    return second
+                        ? (new[] { new Color(0.01f, 0.01f, 0.03f), new Color(0.02f, 0.1f, 0.2f), new Color(0.2f, 0.9f, 1f), new Color(0.9f, 1f, 1f) }, 0f) // abyss light
+                        : (new[] { new Color(0.04f, 0.05f, 0.14f), new Color(0.1f, 0.18f, 0.38f), new Color(0.2f, 0.55f, 0.75f), new Color(0.5f, 1f, 1f) }, 0f);
+                case EnemyKind.Steed:
+                    return second
+                        ? (new[] { new Color(0.15f, 0.08f, 0.02f), new Color(0.6f, 0.35f, 0.05f), new Color(1f, 0.8f, 0.2f), new Color(1f, 1f, 0.85f) }, 0f) // burnished gold
+                        : (new[] { new Color(0.45f, 0.47f, 0.55f), new Color(0.9f, 0.92f, 0.98f), new Color(1f, 0.86f, 0.45f) }, 0f);
+                case EnemyKind.Stonefish:
+                    return second
+                        ? (new[] { new Color(0.02f, 0.05f, 0.02f), new Color(0.15f, 0.4f, 0.05f), new Color(0.5f, 1f, 0.2f), new Color(0.9f, 1f, 0.75f) }, 0f) // toxic bloom
+                        : (new[] { new Color(0.14f, 0.15f, 0.13f), new Color(0.33f, 0.36f, 0.28f), new Color(0.45f, 0.6f, 0.3f), new Color(0.65f, 1f, 0.3f) }, 0f);
+                case EnemyKind.Skyfish: case EnemyKind.Squadron:
+                    return second
+                        ? (new[] { new Color(0.02f, 0.04f, 0.1f), new Color(0.2f, 0.45f, 0.9f), new Color(0.7f, 0.95f, 1f), new Color(1f, 1f, 1f) }, 0f) // stormhead
+                        : (new[] { new Color(0.08f, 0.12f, 0.24f), new Color(0.32f, 0.48f, 0.75f), new Color(0.95f, 0.96f, 1f) }, 0.2f);
+                case EnemyKind.Kraken:
+                    return second
+                        ? (new[] { new Color(0.02f, 0f, 0.02f), new Color(0.4f, 0f, 0.06f), new Color(0.9f, 0.1f, 0.15f), new Color(1f, 0.75f, 0.7f) }, 0f) // black blood
+                        : (new[] { new Color(0.25f, 0.02f, 0.06f), new Color(0.65f, 0.05f, 0.12f), new Color(0.95f, 0.25f, 0.25f), new Color(1f, 0.7f, 0.6f) }, 0f);
+                case EnemyKind.Voxel: case EnemyKind.Glitch:
+                    return second
+                        ? (new[] { new Color(0.2f, 0f, 0.3f), new Color(0.85f, 0.05f, 0.9f), new Color(0.1f, 1f, 1f), new Color(1f, 1f, 1f) }, 0f) // glitch: magenta/cyan
+                        : (new[] { new Color(0.03f, 0.12f, 0.08f), new Color(0.15f, 0.6f, 0.35f), new Color(0.55f, 1f, 0.75f) }, 0f);
                 case EnemyKind.Koi:
-                    return second ? (new[] { new Color(0.4f, 0.02f, 0.02f), new Color(0.92f, 0.5f, 0.08f), new Color(1f, 0.95f, 0.55f) }, 0f)
-                                  : (new[] { new Color(0.62f, 0.08f, 0.05f), new Color(0.97f, 0.94f, 0.9f), new Color(1f, 0.84f, 0.4f) }, 0.25f);
-                case EnemyKind.Eye: return (new[] { new Color(0.03f, 0.02f, 0.04f), new Color(0.12f, 0.06f, 0.14f), new Color(0.35f, 0.08f, 0.2f), new Color(1f, 0.15f, 0.2f) }, 0f);
+                    return second
+                        ? (new[] { new Color(0.5f, 0.02f, 0f), new Color(1f, 0.55f, 0.05f), new Color(1f, 0.9f, 0.4f), new Color(1f, 1f, 1f) }, 0f) // dragon gold
+                        : (new[] { new Color(0.62f, 0.08f, 0.05f), new Color(0.97f, 0.94f, 0.9f), new Color(1f, 0.84f, 0.4f) }, 0.25f);
+                case EnemyKind.Eye:
+                    return second
+                        ? (new[] { new Color(0.02f, 0f, 0.02f), new Color(0.3f, 0f, 0.05f), new Color(1f, 0.1f, 0.1f), new Color(1f, 0.92f, 0.9f) }, 0f) // white-hot judgement
+                        : (new[] { new Color(0.03f, 0.02f, 0.04f), new Color(0.12f, 0.06f, 0.14f), new Color(0.35f, 0.08f, 0.2f), new Color(1f, 0.15f, 0.2f) }, 0f);
                 default: return (null, 1f);
             }
+        }
+
+        // The change, called from BossFx on every screen: the body is repainted for the second form and BossIk/BossBody are
+        // told so (harder posing, faster sway). Safe to call again: components are added only once.
+        public static void Recolor(Transform root, EnemyKind kind, bool second)
+        {
+            if (!root) return;
+            Repaint(root, kind, second);
+            var body = root.GetComponent<BossBody>();
+            if (body) body.Second = second;
         }
 
         // The look goes on when the boss's tag arrives (Enemies.TryDress); the second form swaps the paint (the koi's dragon).
@@ -124,6 +165,10 @@ namespace HtfFortress
             foreach (var rb in root.GetComponentsInChildren<Rigidbody>()) rb.isKinematic = true; // fins and tails: moved by BossBody, not flopping
             var body = root.GetComponent<BossBody>() ?? root.gameObject.AddComponent<BossBody>();
             body.Kind = kind;
+            body.Second = second;
+            // Procedural posing (head look, claw and tentacle IK) lives in BossIk; it disables itself if the body has no
+            // bones we can drive, so the game's own fish still work untouched.
+            if (!root.GetComponent<BossIk>()) root.gameObject.AddComponent<BossIk>().Kind = kind;
             if (kind != EnemyKind.Squadron && kind != EnemyKind.Glitch && !root.Find("BossGlow"))
             {
                 var glow = new GameObject("BossGlow").AddComponent<Light>();
@@ -203,6 +248,8 @@ namespace HtfFortress
     public class BossBody : MonoBehaviour
     {
         public EnemyKind Kind;
+        // Its second form: posing is harder, the sway quicker, the aura thicker (set by BossLooks.Dress/Recolor).
+        public bool Second;
         private readonly List<(Transform bone, Quaternion rest, Vector3 axis, float phase)> _swing = new List<(Transform, Quaternion, Vector3, float)>();
         private Vector3 _last;
         private float _speed, _nextAura, _t;
@@ -228,13 +275,13 @@ namespace HtfFortress
             if (dt <= 0f) return;
             _speed = Mathf.Lerp(_speed, (transform.position - _last).magnitude / dt, 1f - Mathf.Exp(-4f * dt));
             _last = transform.position;
-            _t += dt * (2f + Mathf.Min(10f, _speed * 1.2f));
-            float amp = Mathf.Lerp(12f, 28f, Mathf.Clamp01(_speed / 6f));
+            _t += dt * (2f + Mathf.Min(10f, _speed * 1.2f)) * (Second ? 1.25f : 1f);
+            float amp = Mathf.Lerp(12f, 28f, Mathf.Clamp01(_speed / 6f)) * (Second ? 1.35f : 1f);
             foreach (var (bone, rest, axis, phase) in _swing)
                 if (bone) bone.localRotation = rest * Quaternion.AngleAxis(Mathf.Sin(_t + phase) * amp, axis);
             if (Time.time >= _nextAura)
             {
-                _nextAura = Time.time + 0.12f;
+                _nextAura = Time.time + (Second ? 0.08f : 0.12f);
                 Aura();
             }
         }

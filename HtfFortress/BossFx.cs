@@ -43,6 +43,7 @@ namespace HtfFortress
                     return;
                 case "stomp": WeaponFx.Emit(WeaponFx.Dust, e.From, 8, Vector3.up); Fx.SoundRandom("ItemImpactHeavy_V", 1, 3, e.From, 0.7f); return;
                 case "phase2": StartCoroutine(Transform2(e.PieceId)); return;
+                case "secondform": StartCoroutine(SecondFormFx(e.PieceId)); return;
                 case "died": StartCoroutine(Death(e.PieceId, e.From, e.Arg / 100f)); return;
                 case "dark": Night(e.Arg > 0); return;
                 case "trophy": StartCoroutine(Trophy(e.From, (EnemyKind)e.Who)); return;
@@ -242,6 +243,27 @@ namespace HtfFortress
         }
 
         // Half health: it roars, the screen flashes its colour, a ring of light bursts out of it.
+        // The change itself, on every screen: the body turns into its second form (BossLooks.Recolor swaps the palette; the
+        // brain is untouchable meanwhile, Bosses.OnHurt), with a ring of its own light and a call that carries over the
+        // fight. This is what players were missing: the form is shown, not skipped.
+        private IEnumerator SecondFormFx(int id)
+        {
+            var body = BodyOf(id);
+            if (!body) yield break;
+            EnemyKind kind = KindOf(id);
+            BossLooks.Recolor(body, kind, true);
+            Color c = ColourOf(id);
+            float top = Top(body);
+            Fx.Sound("BossFightIntro", body.position, 1f, AudioDistance.Long);
+            for (int i = 0; i < 4; i++)
+            {
+                if (!body) yield break;
+                Burst(body.position + Vector3.up * top * 0.55f, i % 2 == 0 ? "Gold" : "Red", 26, 0.18f);
+                WeaponFx.Emit(WeaponFx.Rings, body.position + Vector3.up * 0.5f, 1, Vector3.up, color: c, size: 7f + 5f * i);
+                yield return new WaitForSeconds(0.22f);
+            }
+        }
+
         private IEnumerator Transform2(int id)
         {
             var body = BodyOf(id);
