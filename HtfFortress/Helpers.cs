@@ -110,6 +110,7 @@ namespace HtfFortress
         private readonly List<Hand> _hands = new List<Hand>();
         private float _last, _nextSend;
         private int _lastCap = 2;
+        private Vector3 _islandAt; // where the island was last think: it moves off the next island you sail to
 
         // Bought at the stall, round or not, as far as the crew's money goes.
         public bool ServerBuy(byte what)
@@ -144,15 +145,23 @@ namespace HtfFortress
         private static readonly RaycastHit[] GroundHits = new RaycastHit[16];
         private static float Ground(Vector3 p)
         {
-            float y = WaterManager.GetWaterHeight(p);
+            float sea = WaterManager.GetWaterHeight(p), y = sea;
             int n = Physics.RaycastNonAlloc(new Vector3(p.x, p.y + 1.2f, p.z), Vector3.down, GroundHits, 30f, GameInfo.LevelLayer, QueryTriggerInteraction.UseGlobal);
             for (int i = 0; i < n; i++)
-            {
-                string name = GroundHits[i].collider.gameObject.name;
-                if (name.StartsWith("FortressPiece") || name == "FortressCore") continue;
-                y = Mathf.Max(y, GroundHits[i].point.y);
-            }
-            return y;
+                if (Walked(GroundHits[i])) y = Mathf.Max(y, GroundHits[i].point.y);
+            if (y > sea) return y;
+            // Nothing under it but the sea, and the island's ground over it (it got under there somehow): back up onto the lowest
+            // ground above it, not a roof over that. From under the ground the ray above never saw it, so it stayed down for good.
+            n = Physics.RaycastNonAlloc(new Vector3(p.x, p.y + 40f, p.z), Vector3.down, GroundHits, 40f, GameInfo.LevelLayer, QueryTriggerInteraction.Ignore);
+            float up = float.MaxValue;
+            for (int i = 0; i < n; i++)
+                if (Walked(GroundHits[i]) && GroundHits[i].point.y > y) up = Mathf.Min(up, GroundHits[i].point.y);
+            return up < float.MaxValue ? up : y;
+        }
+        private static bool Walked(RaycastHit hit)
+        {
+            string name = hit.collider.gameObject.name;
+            return !name.StartsWith("FortressPiece") && name != "FortressCore";
         }
 
         // Reused every think (ten times a second): the fish positions, what's lying about, and who is already after what.
@@ -189,6 +198,16 @@ namespace HtfFortress
             var v = Loot.Instance ? Loot.Instance.Vault : null;
             bool on = island && island.Exists && Siege.Instance && v != null && FortressNet.Instance; // round or not
             int want = on ? Mathf.Clamp(v.Helpers, 0, MaxHelpers) : 0;
+            // The island was put down somewhere else (between rounds): they come along, where they were on it. Left behind,
+            // they walked a kilometre over the sea and up its cliffs at sea level, and stayed under its ground (Owen: "開局有些
+            // 小幫手在水底").
+            if (on)
+            {
+                Vector3 moved = island.Center - _islandAt;
+                if (moved.sqrMagnitude > 1f)
+                    foreach (var h in _hands) { h.Pos += moved; h.GoalPos += moved; h.RestAt += moved; }
+                _islandAt = island.Center;
+            }
             _goneViews.Clear();
             while (_hands.Count > want)
             {
@@ -705,6 +724,7 @@ namespace HtfFortress
                     bool near = (v.Shown - cam.transform.position).sqrMagnitude < 120f * 120f;
                     if (v.Root.gameObject.activeSelf != near) v.Root.gameObject.SetActive(near);
                 }
+                if ((v.Pos - v.Shown).sqrMagnitude > 25f * 25f) v.Shown = v.Pos; // put down elsewhere (the island moved, back up after a knockout): no flight there
                 Vector3 before = v.Shown;
                 v.Shown = Vector3.Lerp(v.Shown, v.Pos, 1f - Mathf.Exp(-12f * Time.deltaTime));
                 float moving = (v.Shown - before).Flat().magnitude / Mathf.Max(1e-4f, Time.deltaTime);

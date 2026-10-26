@@ -408,6 +408,14 @@ namespace HtfFortress
             chute.transform.localPosition = new Vector3(0f, 1.0f, 2.15f);
             var mouthBox = chute.AddComponent<BoxCollider>(); mouthBox.isTrigger = true; mouthBox.size = new Vector3(1.6f, 2.0f, 0.9f);
             chute.AddComponent<VaultChute>();
+            // And over his counter inside: thrown to him, he puts it away too (Owen: "倉庫丟給裡面的人那個人應該也會吃然後幫我們存
+            // 才對"). The counter's top is 1.28 m up at (1.35, 0.55) (tools/make_vault_models.py); it goes in at his chest.
+            var desk = new GameObject("VaultDesk");
+            desk.layer = BuildSystem.PieceLayer;
+            desk.transform.SetParent(vault.transform, false);
+            desk.transform.localPosition = new Vector3(1.3f, 1.4f, 0f);
+            var deskBox = desk.AddComponent<BoxCollider>(); deskBox.isTrigger = true; deskBox.size = new Vector3(1.6f, 1.0f, 1.3f); deskBox.center = new Vector3(0.05f, 0.35f, 0.5f);
+            desk.AddComponent<VaultChute>();
 
             // The smithy: the weapon rack on its back wall, the anvil where weapons are dropped to go on the rack.
             var smithy = Station("Smithy", SmithyLocal, SmithyYaw, out var sp);

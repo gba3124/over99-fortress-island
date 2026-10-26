@@ -660,13 +660,20 @@ namespace HtfFortress
                 var b = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 Destroy(b.GetComponent<Collider>());
                 b.transform.SetParent(parent, false);
-                b.transform.localRotation = Quaternion.Euler(i == 0 ? 0f : 90f, 0f, 0f);
-                b.transform.localScale = i == 0 ? new Vector3(arm, 0.02f, thick) : new Vector3(thick, 0.02f, arm);
+                b.transform.localScale = i == 0 ? new Vector3(arm, 0.02f, thick) : new Vector3(thick, 0.02f, arm); // (the second one used to be turned 90° on x: stood on end)
                 b.GetComponent<Renderer>().sharedMaterial = m;
             }
         }
 
         private static Material _mendRimMat;
+        // The top of the island (or the sea) at p, under the fort's own pieces.
+        private static Vector3 OnGround(Vector3 p)
+        {
+            float y = WaterManager.GetWaterHeight(p);
+            foreach (var h in Physics.RaycastAll(p + Vector3.up * 20f, Vector3.down, 40f, GameInfo.LevelLayer, QueryTriggerInteraction.Ignore))
+                if (!h.collider.gameObject.name.StartsWith("FortressPiece") && h.collider.gameObject.name != "FortressCore") y = Mathf.Max(y, h.point.y);
+            return new Vector3(p.x, y, p.z);
+        }
         private static void SetBubbleRing(GameObject go, PieceType type, int level, int branch)
         {
             Drop(go.transform.Find("BubbleRing"));
@@ -684,6 +691,7 @@ namespace HtfFortress
                 float a = k * Mathf.PI * 0.5f;
                 mark.localPosition = new Vector3(Mathf.Cos(a) * r, 0.06f, Mathf.Sin(a) * r);
                 mark.localRotation = Quaternion.Euler(0f, -a * Mathf.Rad2Deg, 0f);
+                mark.position = OnGround(mark.position) + Vector3.up * 0.06f; // at the tower's foot they hung in the air over a hollow, or in a cliff
                 CrossMark(mark, 0.42f, 0.16f, _mendRimMat);
             }
             return;

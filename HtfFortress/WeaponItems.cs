@@ -205,17 +205,6 @@ namespace HtfFortress
                 ring.transform.localScale = new Vector3(across, b.size.z * 0.025f, across);
                 ring.GetComponent<Renderer>().sharedMaterial = band;
             }
-            if (r == Rarity.Legendary)
-            {
-                var crest = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                Object.DestroyImmediate(crest.GetComponent<Collider>());
-                crest.name = "RarityCrest";
-                crest.transform.SetParent(model.transform, false);
-                crest.transform.localPosition = new Vector3(b.center.x, b.max.y + b.size.y * 0.08f, b.center.z);
-                crest.transform.localRotation = Quaternion.Euler(45f, 0f, 45f);
-                crest.transform.localScale = Vector3.one * Mathf.Min(b.size.x, b.size.y) * 0.3f;
-                crest.GetComponent<Renderer>().sharedMaterial = band;
-            }
         }
 
         public const string ModelName = "FortressModel";
