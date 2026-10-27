@@ -5,7 +5,7 @@ schemaVersion = "0.0.1"
 namespace = "gba3124"
 name = "OVER_99_Fortress_Island"
 versionNumber = "0.3.0"
-description = "Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Hold the lighthouse with your friends and go OVER 99."
+description = "Build the island. Bring your friends. Outrun 100 waves of fish. A co-op fortress defense with 9 turrets, 17 weapons and 10 bosses."
 websiteUrl = "https://github.com/gba3124/over99-fortress-island"
 containsNsfwContent = false
 

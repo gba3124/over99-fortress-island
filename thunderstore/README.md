@@ -1,19 +1,21 @@
 # OVER 99 Fortress Island
 
-![OVER 99](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/banner.png)
+![Four players defend the lighthouse while fish in sneakers storm the island](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-hero-0.3.0.png)
 
-Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Hold the lighthouse with your friends and go OVER 99.
+**Build the island. Bring your friends. Outrun 100 waves of fish.**
+
+Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Raise the walls, pick your turrets, and hold the lighthouse together — then go OVER 99.
 
 ## What it adds
 
 - A fortress island that rises out of the sea after the final boss, with a lighthouse to defend
 - 100 waves of fish in sneakers, in 10 kinds that each have their own trick
-- 10 original bosses, one every 10 waves
-- Walls, 7 turrets, a spike trap and 2 support towers, with no cap on upgrades
-- 17 new weapons, from Common up to Legendaries that each have a special trick
+- 10 original bosses, one every 10 waves — and every boss changes form mid-fight
+- **9 turrets** with no upgrade cap; at level 3 you choose a branch, at level 9 it splits into two more
+- 17 custom weapons, from a tuna boomerang to a shark whistle, each with a Legendary trick
 - 20 kinds of gear you keep between runs, 5 of them active gadgets on **K**
 - A village on the pier with a fish stall, a smithy and a vault the whole team shares
-- Solo or co-op
+- Four-player co-op, one shared vault, and a lot of screaming
 
 ## Installation
 
@@ -111,9 +113,9 @@ Every boss has its own moves, a big entrance and a hint card. Beat one and you w
 
 ## Weapons and gear
 
-![The arsenal](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/arsenal.png)
+![The toy arsenal: 17 low-poly weapons arranged like a toy collection](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-weapons-0.3.0.png)
 
-Fortress weapons are real items, like the game's own guns. Pick them up with **E**, switch with **1** to **9**, drop with **Q** and fire with **left click**. Each one comes as Common, Rare, Epic or Legendary, and every Legendary has a special trick of its own.
+Seventeen custom weapons, from a tuna boomerang to a rocket launcher that throws fish like dynamite. They are real items, like the game's own guns. Pick them up with **E**, switch with **1** to **9**, drop with **Q** and fire with **left click**. Each one comes as Common, Rare, Epic or Legendary, and every Legendary has a special trick of its own.
 
 | Weapon | What it does |
 |---|---|
@@ -139,7 +141,9 @@ Gear stays with you between runs. Four team slots power up the turrets, the wall
 
 ## Build your fortress
 
-![Buildings](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/build.png)
+![Nine chunky turrets on a seaside plaza, with a worried fish for scale](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-turrets-0.3.0.png)
+
+Nine turrets, each with its own silhouette and upgrades. Pick a side at level 3, then split again at level 9 — and every turret gets another barrel every five levels.
 
 | Build | What it does |
 |---|---|
@@ -184,6 +188,8 @@ Upgrades have no cap. At level 3 you pick one of two branches, and a turret gets
 | hold **Space** | Skip a boss entrance |
 
 ## Playing with friends
+
+![Four friends scrambling to defend a lighthouse while fish flood the walls](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-coop-0.3.0.png)
 
 **Everyone in the room needs this mod, on the same version.** If someone's version is different, they get a warning banner when they join. You can find the version at the bottom of the **I** guide.
 
