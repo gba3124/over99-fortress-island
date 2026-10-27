@@ -6,7 +6,7 @@
 
 Build the island. Bring your friends. Outrun 100 waves of fish.
 
-*Key art is cinematic promo art based on the mod's actual models; feature images below are real 3D renders.*
+*Key art is cinematic promo art based on the mod's actual models. Feature shots use the real in-game 3D models on AI-enhanced backdrops.*
 
 Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Raise the walls, pick your turrets, and hold the lighthouse together: then go OVER 99.
 

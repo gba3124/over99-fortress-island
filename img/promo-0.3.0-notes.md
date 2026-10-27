@@ -1,6 +1,6 @@
 # OVER 99 Fortress Island: real 3D promo (0.3.0)
 
-These are **real 3D renders** made from the mod's own island, turrets, weapons, lighthouse and villager models. They are not AI concept art.
+These use **real 3D renders** of the mod's own island, turrets, weapons, lighthouse and villager models. The feature backdrops are AI-enhanced; the models themselves are unchanged.
 
 ## Alt text
 

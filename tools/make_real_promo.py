@@ -1,13 +1,14 @@
 # Real-3D promo plates: composites of the actual rendered game models/scenes, not concept art.
 # Run: python3 tools/make_real_promo.py
 import os, sys, math
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageChops
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "thunderstore", "art"))
 import ui
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IMG = os.path.join(ROOT, "img")
 A = os.path.join(ROOT, "preview", "promo3d")
 T = os.path.join(A, "turrets")
+TRAW = os.path.join(A, "turrets_raw")
 W = os.path.join(A, "weapons")
 S = os.path.join(ROOT, "preview", "scene_final")
 H = os.path.join(ROOT, "preview", "helper-idle")
@@ -82,45 +83,54 @@ def hero():
 # ---------- turrets ----------
 def turrets():
     Wp, Hp = 1600, 900
-    bg = cover(Image.open(os.path.join(S, "island_plaza.png")), Wp, Hp).convert("RGBA")
-    ov = Image.new("RGBA", (Wp, Hp), (10, 30, 54, 185)); bg.alpha_composite(ov)
-    chip(bg, "9 TURRETS  ·  4 BRANCH PATHS  ·  NO UPGRADE CAP", 54, 34)
-    title(bg, "PICK YOUR DEFENSE", 56, 82, 58, (255, 199, 67), (17, 42, 70))
-    ui.text(bg, (58, 156), "Every turret has its own silhouette, base and four endgame looks.", ui.body(19, "Medium"), fill=(226, 238, 248))
+    bg = cover(Image.open(os.path.join(A, "bg-turrets.png")), Wp, Hp).convert("RGBA")
+    band = Image.new("RGBA", (Wp, 180), (10, 30, 52, 210)); bg.alpha_composite(band, (0, 0))
+    chip(bg, "9 TURRETS  ·  4 BRANCH PATHS  ·  NO UPGRADE CAP", 54, 28)
+    title(bg, "PICK YOUR DEFENSE", 56, 70, 54, (255, 199, 67), (17, 42, 70))
+    ui.text(bg, (58, 140), "Actual in-game 3D models on an AI-optimized backdrop.", ui.body(18, "Medium"), fill=(235,243,250))
     names = [("Gun","MACHINE GUN"),("Cannon","CANNON"),("Harpoon","HARPOON"),("Mortar","MORTAR"),("Tesla","TESLA"),("Flame","FLAME"),("Sniper","SNIPER"),("Bubble","BUBBLE"),("Mender","MENDER")]
     cw, ch = 355, 202; gx, gy = 18, 14; x0, y0 = 78, 192
     for i, (n, label) in enumerate(names):
         c, r = i % 3, i // 3; x, y = x0 + c * (cw + gx), y0 + r * (ch + gy)
-        card(bg, x, y, cw, ch - 20)
-        raw = Image.open(os.path.join(T, n + ".png")).convert("RGBA")
-        # crop the lower shadow band; the actual render's warm-grey plate stays, like a studio card
-        raw = raw.crop((0, 0, 600, 470))
-        raw.thumbnail((cw - 26, ch - 74), Image.LANCZOS)
-        bg.alpha_composite(raw, (x + (cw - raw.width)//2, y + 4))
-        ui.text(bg, (x + 14, y + ch - 56), label, ui.title(18), fill=NAVY)
-        ui.text(bg, (x + 14, y + ch - 34), "Lv1 to Lv9 · four branch looks", ui.body(11, "Medium"), fill=(94,105,118))
-    chip(bg, "REAL 3D MODELS FROM THE MOD", 1130, 852, (110,220,175))
+        # the real studio render fills the card; the plate stays visible, no fake redraw
+        sh = Image.new("RGBA", bg.size, (0,0,0,0))
+        ImageDraw.Draw(sh).rounded_rectangle((x+8,y+10,x+cw+8,y+ch+10),18,fill=(10,25,42,110))
+        bg.alpha_composite(sh.filter(ImageFilter.GaussianBlur(10)))
+        plate = Image.new("RGBA", (cw - 8, ch - 58), (152,147,138,255))
+        raw = Image.open(os.path.join(TRAW, n + ".png")).convert("RGB")
+        diff = ImageChops.difference(raw, Image.new("RGB", raw.size, (152,147,138)))
+        box = diff.convert("L").point(lambda p: 255 if p > 14 else 0).getbbox()
+        if box:
+            pad = 12
+            raw = raw.crop((max(0, box[0]-pad), max(0, box[1]-pad), min(raw.width, box[2]+pad), min(raw.height, box[3]+pad))).convert("RGBA")
+        raw = fit(raw, (cw - 18, ch - 70))
+        plate.alpha_composite(raw, ((plate.width - raw.width)//2, (plate.height - raw.height)//2))
+        mask = Image.new("L", plate.size, 0); ImageDraw.Draw(mask).rounded_rectangle((0,0,plate.width,plate.height),16,fill=255)
+        bg.alpha_composite(Image.composite(plate, Image.new("RGBA", plate.size, (0,0,0,0)), mask), (x+4, y+4))
+        foot = Image.new("RGBA", (cw-8, 58), (242,234,215,255)); bg.alpha_composite(foot, (x+4, y+ch-54))
+        d = ImageDraw.Draw(bg); d.rounded_rectangle((x+2,y+2,x+cw-2,y+ch+2),18,outline=(222,188,116),width=2)
+        ui.text(bg, (x + 14, y + ch - 46), label, ui.title(17), fill=NAVY)
+        ui.text(bg, (x + 14, y + ch - 24), "Lv1 to Lv9 · four branch looks", ui.body(10, "Medium"), fill=(94,105,118))
+    chip(bg, "REAL 3D MODELS  ·  AI BACKDROP", 1110, 852, (110,220,175))
     bg.convert("RGB").save(os.path.join(IMG, "promo-turrets-0.3.0.png"), optimize=True)
     print("turrets")
 
-# ---------- weapons ----------
 def weapons():
     Wp, Hp = 1600, 900
-    bg = cover(Image.open(os.path.join(S, "island_wreck_sea.png")), Wp, Hp).convert("RGBA")
-    ov = Image.new("RGBA", (Wp, Hp), (8, 34, 62, 205)); bg.alpha_composite(ov)
-    chip(bg, "17 CUSTOM WEAPONS  ·  REAL ITEMS  ·  LEGENDARY TRICKS", 54, 34)
-    title(bg, "THE TOY ARSENAL", 56, 82, 58, (255, 199, 67), (17, 42, 70))
-    ui.text(bg, (58, 156), "A tuna boomerang, a shark whistle, a rocket launcher that throws fish.", ui.body(19, "Medium"), fill=(226, 238, 248))
+    bg = cover(Image.open(os.path.join(A, "bg-weapons.png")), Wp, Hp).convert("RGBA")
+    band = Image.new("RGBA", (Wp, 180), (7, 28, 52, 170)); bg.alpha_composite(band, (0, 0))
+    chip(bg, "17 CUSTOM WEAPONS  ·  REAL ITEMS  ·  LEGENDARY TRICKS", 54, 28)
+    title(bg, "THE TOY ARSENAL", 56, 70, 54, (255, 199, 67), (17, 42, 70))
+    ui.text(bg, (58, 140), "Actual in-game 3D models on an AI-optimized underwater backdrop.", ui.body(18, "Medium"), fill=(235,243,250))
     names = [("Rocket","ROCKET"),("Boomerang","TUNA BOOMERANG"),("Gatling","GATLING"),("Laser","LASER"),("PoisonGas","POISON GAS"),("BubbleGun","BUBBLE GUN"),("Hook","GRAPPLE"),("JellyGun","JELLYFISH"),("StarThrower","STARFISH"),("LobsterClaw","LOBSTER CLAW"),("Absorber","ABSORBER"),("Whirlpool","WHIRLPOOL"),("NetLauncher","NET LAUNCHER"),("WaterCannon","WATER CANNON"),("PufferBomb","PUFFER BOMB"),("Conch","CONCH"),("SharkWhistle","SHARK WHISTLE")]
-    cw, ch = 285, 158; gx, gy = 16, 7; x0, y0 = 74, 196
+    cw, ch = 285, 158; gx, gy = 16, 7; x0, y0 = 74, 190
     for i, (n, label) in enumerate(names):
         c, r = i % 5, i // 5; x, y = x0 + c * (cw + gx), y0 + r * (ch + gy)
-        card(bg, x, y, cw, ch - 6, fill=(238,230,210), radius=14)
-        im = cut(os.path.join(W, n + ".png")); im.thumbnail((cw - 26, 94), Image.LANCZOS)
-        bg.alpha_composite(im, (x + (cw - im.width)//2, y + 10))
-        ui.text(bg, (x + cw//2, y + ch - 42), label, ui.body(14, "Bold"), fill=NAVY, anchor="ma")
-        ui.text(bg, (x + cw//2, y + ch - 22), "Common to Legendary", ui.body(10, "Medium"), fill=(96,106,118), anchor="ma")
-    chip(bg, "REAL 3D MODELS  ·  ICONS IN THE GAME", 1130, 852, (110,220,175))
+        im = cut(os.path.join(W, n + ".png"))
+        shadow(bg, im, (x + cw//2, y + 62), 0.34, 16, 85, (0, 10))
+        ui.text(bg, (x + cw//2, y + ch - 36), label, ui.body(14, "Bold"), fill=(255,238,194), anchor="ma", stroke=2, stroke_fill=(9,28,48))
+        ui.text(bg, (x + cw//2, y + ch - 16), "Common to Legendary", ui.body(10, "Medium"), fill=(192,219,236), anchor="ma")
+    chip(bg, "REAL 3D MODELS  ·  AI BACKDROP", 1110, 852, (110,220,175))
     bg.convert("RGB").save(os.path.join(IMG, "promo-weapons-0.3.0.png"), optimize=True)
     print("weapons")
 
