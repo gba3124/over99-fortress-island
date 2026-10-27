@@ -17,7 +17,7 @@ namespace HtfFortress
     [BepInPlugin("owen.htf.fortress", "OVER 99", Version)]
     public class FortressPlugin : BaseUnityPlugin
     {
-        public const string Version = "0.3.1";
+        public const string Version = "0.3.0";
         private ConfigEntry<Key> _toggleKey;
         private ConfigEntry<bool> _debugKeys;
         private ConfigEntry<bool> _verboseLogs;

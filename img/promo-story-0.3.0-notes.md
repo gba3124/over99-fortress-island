@@ -1,4 +1,4 @@
-# OVER 99 Fortress Island — story promo notes
+# OVER 99 Fortress Island: story promo notes
 
 ## Alt text
 

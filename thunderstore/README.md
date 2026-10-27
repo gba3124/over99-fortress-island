@@ -8,13 +8,13 @@ Build the island. Bring your friends. Outrun 100 waves of fish.
 
 *Key art is cinematic promo art based on the mod's actual models; feature images below are real 3D renders.*
 
-Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Raise the walls, pick your turrets, and hold the lighthouse together — then go OVER 99.
+Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Raise the walls, pick your turrets, and hold the lighthouse together: then go OVER 99.
 
 ## What it adds
 
 - A fortress island that rises out of the sea after the final boss, with a lighthouse to defend
 - 100 waves of fish in sneakers, in 10 kinds that each have their own trick
-- 10 original bosses, one every 10 waves — and every boss changes form mid-fight
+- 10 original bosses, one every 10 waves: and every boss changes form mid-fight
 - **9 turrets** with no upgrade cap; at level 3 you choose a branch, at level 9 it splits into two more
 - 17 custom weapons, from a tuna boomerang to a shark whistle, each with a Legendary trick
 - 20 kinds of gear you keep between runs, 5 of them active gadgets on **K**
@@ -29,7 +29,7 @@ You beat the final boss. The sea did not take it well.
 
 The camera flies out, the water splits, and a fortress island rises around a lighthouse and its pearl. The fish put on their sneakers and come for it. You have a hammer, a hand net, a lighthouse door, and three friends.
 
-Hold the beaches for 100 waves. Every tenth wave a boss arrives — and every boss has a second form. Build, fish, upgrade, scream, repeat. Survive wave 100 and you have gone **OVER 99**.
+Hold the beaches for 100 waves. Every tenth wave a boss arrives: and every boss has a second form. Build, fish, upgrade, scream, repeat. Survive wave 100 and you have gone **OVER 99**.
 
 ![A boss fight at the lighthouse: turrets fire, fish swarm and a giant sea boss rises](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-story-boss-0.3.0.png)
 
@@ -159,7 +159,7 @@ Gear stays with you between runs. Four team slots power up the turrets, the wall
 
 ![Nine chunky turrets on a seaside plaza, with a worried fish for scale](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-turrets-0.3.0.png)
 
-Nine turrets, each with its own silhouette and upgrades. Pick a side at level 3, then split again at level 9 — and every turret gets another barrel every five levels.
+Nine turrets, each with its own silhouette and upgrades. Pick a side at level 3, then split again at level 9: and every turret gets another barrel every five levels.
 
 | Build | What it does |
 |---|---|

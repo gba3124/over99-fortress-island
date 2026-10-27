@@ -4,7 +4,7 @@ schemaVersion = "0.0.1"
 [package]
 namespace = "gba3124"
 name = "OVER_99_Fortress_Island"
-versionNumber = "0.3.1"
+versionNumber = "0.3.0"
 description = "The final boss is dead. The sea is furious. Raise a fortress island, hold the lighthouse against 100 waves of fish in sneakers, and go OVER 99. Solo or co-op."
 websiteUrl = "https://github.com/gba3124/over99-fortress-island"
 containsNsfwContent = false

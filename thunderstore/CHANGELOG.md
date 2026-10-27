@@ -1,12 +1,5 @@
 # Changelog
 
-## 0.3.1
-
-**Store page / story update**
-- New cinematic key art and story images based on the actual fortress island, lighthouse, turrets, weapons and villagers.
-- The store page now tells the core story: the final boss is dead, the sea is furious, a fortress island rises, and 100 waves of fish in sneakers come for the lighthouse pearl. Every tenth wave a boss returns with a second form; survive wave 100 to go OVER 99.
-- No gameplay or save-format changes.
-
 ## 0.3.0
 
 **Art passes**
@@ -37,9 +30,9 @@
 
 **Gear stars**
 
-- Every rarity now has **0–3 stars**: 3 × same gear/rarity/star forge the next star; 3 × 3★ forge the next rarity at 0★. Legendary 3★ is the cap. New drops are 0★; old saves load as 0★.
+- Every rarity now has **0 to 3 stars**: 3 × same gear/rarity/star forge the next star; 3 × 3★ forge the next rarity at 0★. Legendary 3★ is the cap. New drops are 0★; old saves load as 0★.
 - Each star is **+8%** effect (3★ = +24%), with +50%/star dismantling scales and +25%/star weapon sale value.
-- The vault stores stars as substacks inside one slot per (gear, rarity): base capacity **40**, each expansion **+15**, up to **190**. The tile shows `—/★/★★/★★★`; the card shows the full star breakdown and next merge; the smithy has 0★–3★ buttons, merge chains, and star-aware merge/salvage/take/deposit/equip.
+- The vault stores stars as substacks inside one slot per (gear, rarity): base capacity **40**, each expansion **+15**, up to **190**. The tile shows `0★/★/★★/★★★`; the card shows the full star breakdown and next merge; the smithy has 0★ to 3★ buttons, merge chains, and star-aware merge/salvage/take/deposit/equip.
 
 **Souls**
 
@@ -50,7 +43,7 @@
 **Helpers**
 
 - Helpers now take a **local KNN batch**: nearest reachable job, then up to a basketful of nearby jobs (6 m), instead of walking to the oldest item across the island. Other helpers skip claimed work.
-- Decisions stay at 2–4 Hz, but movement, pickup, and selling run **every frame**; a dense pile can be collected at walking speed rather than 2–4 items a second. Helpers no longer re-scan every fish for every item.
+- Decisions stay at 2 to 4 Hz, but movement, pickup, and selling run **every frame**; a dense pile can be collected at walking speed rather than 2 to 4 items a second. Helpers no longer re-scan every fish for every item.
 
 **Languages**
 
@@ -73,7 +66,7 @@
 - Late-game enemy HP now accelerates after wave 30 (wave 70 ≈2.6×, wave 100 ≈4.7× the old curve) and boss health accelerates faster (wave 100 ≈26×), while the first 50 waves stay close to the old pacing. Tower late-upgrade multipliers are back at their original 1.3× damage / 1.35× cost.
 - Turret gears are limited to **one per tower kind**; Gunpowder/ApRounds/CoreShield values are lower, so four legendary Gunpowders can no longer one-shot late bosses.
 - The repair tower no longer draws a bubble-like ring: it uses four green repair crosses and a floating cross badge, distinct from the Bubble Shield.
-- Turrets use the **classic single-piece heads** by default; the modular body/module set is not exposed as a release setting. Enemy and prop shadows are off by default, corpse cap is 160, and debug keys/verbose logging are off — the basic host-friendly preset.
+- Turrets use the **classic single-piece heads** by default; the modular body/module set is not exposed as a release setting. Enemy and prop shadows are off by default, corpse cap is 160, and debug keys/verbose logging are off: the basic host-friendly preset.
 
 **Art / models**
 
@@ -99,7 +92,7 @@ Client performance pass:
 
 Host performance pass (the host's long frames are what every client sees as "everything stops, then jumps"):
 
-- The weapon target list is built ten times a second and shared by every weapon, cloud, jelly, shark and poison tick (it used to be a fresh LINQ list for every shot — thousands of allocations a second on a late wave).
+- The weapon target list is built ten times a second and shared by every weapon, cloud, jelly, shark and poison tick (it used to be a fresh LINQ list for every shot: thousands of allocations a second on a late wave).
 - Turrets pick their targets in plain loops instead of LINQ per shot, and their extra barrels no longer allocate a Where/OrderBy chain per volley.
 - Corpses are capped at 110: the oldest fish body vanishes when a late wave would otherwise leave hundreds on the island (physics and rendering on every machine).
 - `perf` now also logs corpses, items and turrets.
@@ -115,12 +108,12 @@ Host performance pass (the host's long frames are what every client sees as "eve
 
 ## 0.2.2
 
-- **Bubble gun**: keep shooting a bubbled fish and the bubble rises higher, its pop timer refreshes, and its burst damage stacks with every shot — one bubble can float a fish up and come down for everything put into it.
+- **Bubble gun**: keep shooting a bubbled fish and the bubble rises higher, its pop timer refreshes, and its burst damage stacks with every shot: one bubble can float a fish up and come down for everything put into it.
 - **Shark whistle**: it no longer summons a swimming shark. Where it lands a pool of water opens and a shark leaps out from below to bite what is there (a legendary's two pools); the pool splashes and the shark dives again.
 
 ## 0.2.1
 
-- **Hook grapple**: a hook that hits nothing now plants in the wall/ground and yanks the shooter to it (up to 9 m) instead of just missing — a movement tool as well as a pull.
+- **Hook grapple**: a hook that hits nothing now plants in the wall/ground and yanks the shooter to it (up to 9 m) instead of just missing: a movement tool as well as a pull.
 - **Boomerang collects**: the return trip picks up gear drops and scales it passes (into the vault, like a helper would), so it is also a looting run.
 
 ## 0.2.0
@@ -186,10 +179,10 @@ A first pass at making the weapons play differently from each other.
 - Joining a run that is already in progress: the fortress island is placed at the host's island instead of the world origin (one player used to land on a copy of the island a kilometre away, and F4 took them there too), and late joiners are brought to the island with the rest of the team.
 - Fish scales on the HUD no longer overlap the game's money box: the line sits just above it at any resolution.
 - Mend all (Shift+J) now has a 5 s cooldown per player, and pressing it with nothing damaged doesn't use it up.
-- Smoother: far fewer allocations per frame on the host and on clients (enemy steering, the round loop, turrets and bosses, the buying/selling helpers' raycasts and queries, HUD text rebuilt 10 times a second instead of every frame) — the stop-the-world GC pauses behind "everything freezes for a moment, then jumps" should be much rarer.
+- Smoother: far fewer allocations per frame on the host and on clients (enemy steering, the round loop, turrets and bosses, the buying/selling helpers' raycasts and queries, HUD text rebuilt 10 times a second instead of every frame): the stop-the-world GC pauses behind "everything freezes for a moment, then jumps" should be much rarer.
 - `BepInEx/LogOutput.log` now logs a `perf host:` / `perf client:` line every 10 s (fps, worst frame, wave, enemies) to help pin down any remaining stutter.
 - Vault expansions (team and personal gear slots, storage room) cost fish scales only now: the old "hold N waves" requirement is gone.
-- Legendary Frost Core: the 6 % freeze is capped to once per enemy every 4 s, and bosses are only slowed to half speed — a wall of turrets used to keep them frozen solid.
+- Legendary Frost Core: the 6 % freeze is capped to once per enemy every 4 s, and bosses are only slowed to half speed: a wall of turrets used to keep them frozen solid.
 - Everyone in a room needs this exact build (it shows 0.1.3 in game): a mismatched client is now told which two builds disagree and removed after a couple of seconds instead of playing on.
 - Boss trophies are the vault's relics: helpers leave them on the ground, they fit even when storage is full, and storing one by hand always works. Bosses now always drop **Legendary** gear.
 - Cheat menu (needs `Debug/DebugKeys`, opens with `Debug/MenuKey`, default F12): every test key as a clickable button, plus cheats for souls, scales, random gear and blueprints, and a size control remembered in `Debug/MenuScale`.
@@ -200,11 +193,11 @@ A first pass at making the weapons play differently from each other.
 - Fish scales grow with the wave: bosses give 6 at wave 1, 32 at 30, 110 at 50 and about 2000 at 100 (was a flat 36 at the end), and elites and chests scale too.
 - A boss crashing into the lighthouse now hurts it by how much of its own health is left: 60% of the lighthouse at full health, 15% when nearly dead (was a flat 35%).
 - Vault: the gear tab has 全部／給人／給塔 views (personal + active gear vs the team's fortress/tower buffs), and the loadout headings say 給塔／給人.
-- Waves: walkers spread across the whole beach (±20° and 22–29 m from the core, not ±6° and 23.5–26 m) and every new fish is pushed clear of ones already standing there, so a burst no longer spawns several into the same spot and shoves them apart.
+- Waves: walkers spread across the whole beach (±20° and 22 to 29 m from the core, not ±6° and 23.5 to 26 m) and every new fish is pushed clear of ones already standing there, so a burst no longer spawns several into the same spot and shoves them apart.
 - Shadows: the small mod props (loot, chests, baskets, gulls) no longer cast shadows by default (the shadow camera draws casters you cannot see); `Performance/PropShadows = true` turns it back on.
 - Network: effects are batched into one message per frame (a late wave produced dozens of tiny broadcasts a second) and the helpers' positions into one message per tick (thirty helpers used to be up to 300 little broadcasts a second). `perf` now also reports `fx N/10s`.
 - The vault and stall panels no longer rebuild on every vault sync (that was a redraw twice a second while helpers worked): rebuilds are signature-gated and rate-limited, and a slow one is timed in the log.
-- Helpers: the first 15 are villagers; the 16th and up fly as **seagull helpers** — quicker, they pick things up from farther and search the whole island, and fish cannot catch them. The stall can dismiss the newest helper for free (seagulls go first).
+- Helpers: the first 15 are villagers; the 16th and up fly as **seagull helpers**: quicker, they pick things up from farther and search the whole island, and fish cannot catch them. The stall can dismiss the newest helper for free (seagulls go first).
 - "Sell all" in the vault is the host's alone by default (friends can still sell single items): every sell-all is named in the host log and leaves a pre-sell snapshot in fortress-backups. `Economy/VaultSellAllAnyPlayer` lets the whole team do it.
 
 ## 0.1.2
