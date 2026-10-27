@@ -20,7 +20,7 @@
 - The test menu is now bound to **~** instead of F12, so Steam can use F12 for screenshots; old F12 configs migrate once.
 - The test menu can reset the save's progress; the keeper's permanent tree can be reset for every soul spent between runs.
 - Helpers come along when the island moves, the vault keeper accepts thrown items, repair markers sit flat on the ground, the merge-all sound plays, and the legendary cube is gone.
-- A measured performance pass: turret, weapon, enemy, HUD, boss and network hot paths allocate far less per frame and per shot; details are in [PERF-REPORT.md](PERF-REPORT.md).
+- A measured performance pass: turret, weapon, enemy, HUD, boss and network hot paths allocate far less per frame and per shot; details are in [PERF-REPORT.md](https://github.com/gba3124/over99-fortress-island/blob/main/PERF-REPORT.md).
 
 **Fixes**
 - Fixed boss second forms being missed when a burst would skip them; fragments and puppets no longer trigger the boss transformation.
