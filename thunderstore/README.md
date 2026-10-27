@@ -1,10 +1,12 @@
 # OVER 99 Fortress Island
 
-![The actual fortress island, rendered from the mod's 3D models: lighthouse, plaza, turrets and villagers](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-hero-0.3.0.png)
+![Four co-op players defend the lighthouse while fish in sneakers storm the island](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-story-hero-0.3.0.png)
 
-**Build the island. Bring your friends. Outrun 100 waves of fish.**
+**The final boss is dead. The sea is furious.**
 
-*Promo images are real 3D renders made from the mod's own models, not concept art.*
+Build the island. Bring your friends. Outrun 100 waves of fish.
+
+*Key art is cinematic promo art based on the mod's actual models; feature images below are real 3D renders.*
 
 Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Raise the walls, pick your turrets, and hold the lighthouse together — then go OVER 99.
 
@@ -18,6 +20,18 @@ Beat the final boss and the sea strikes back with a fortress island and 100 wave
 - 20 kinds of gear you keep between runs, 5 of them active gadgets on **K**
 - A village on the pier with a fish stall, a smithy and a vault the whole team shares
 - Four-player co-op, one shared vault, and a lot of screaming
+
+## The story
+
+![The fortress island rises out of the sea around the lighthouse](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-story-rising-0.3.0.png)
+
+You beat the final boss. The sea did not take it well.
+
+The camera flies out, the water splits, and a fortress island rises around a lighthouse and its pearl. The fish put on their sneakers and come for it. You have a hammer, a hand net, a lighthouse door, and three friends.
+
+Hold the beaches for 100 waves. Every tenth wave a boss arrives — and every boss has a second form. Build, fish, upgrade, scream, repeat. Survive wave 100 and you have gone **OVER 99**.
+
+![A boss fight at the lighthouse: turrets fire, fish swarm and a giant sea boss rises](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-story-boss-0.3.0.png)
 
 ## Installation
 
@@ -191,7 +205,7 @@ Upgrades have no cap. At level 3 you pick one of two branches, and a turret gets
 
 ## Playing with friends
 
-![The actual in-game island and models, with villagers, turrets and weapons](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-coop-0.3.0.png)
+![A boss fight at the lighthouse: turrets fire, fish swarm and a giant sea boss rises](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-story-boss-0.3.0.png)
 
 **Everyone in the room needs this mod, on the same version.** If someone's version is different, they get a warning banner when they join. You can find the version at the bottom of the **I** guide.
 

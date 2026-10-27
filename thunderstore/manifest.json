@@ -2,7 +2,7 @@
   "name": "OVER_99_Fortress_Island",
   "version_number": "0.3.0",
   "website_url": "https://github.com/gba3124/over99-fortress-island",
-  "description": "Build the island. Bring your friends. Outrun 100 waves of fish. A co-op fortress defense with 9 turrets, 17 weapons and 10 bosses.",
+  "description": "The final boss is dead. The sea is furious. Raise a fortress island, hold the lighthouse against 100 waves of fish in sneakers, and go OVER 99. Solo or co-op.",
   "dependencies": [
     "BepInEx-BepInExPack-5.4.2305"
   ]
