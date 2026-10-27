@@ -1,8 +1,10 @@
 # OVER 99 Fortress Island
 
-![Four players defend the lighthouse while fish in sneakers storm the island](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-hero-0.3.0.png)
+![The actual fortress island, rendered from the mod's 3D models: lighthouse, plaza, turrets and villagers](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-hero-0.3.0.png)
 
 **Build the island. Bring your friends. Outrun 100 waves of fish.**
+
+*Promo images are real 3D renders made from the mod's own models, not concept art.*
 
 Beat the final boss and the sea strikes back with a fortress island and 100 waves of fish in sneakers. Raise the walls, pick your turrets, and hold the lighthouse together — then go OVER 99.
 
@@ -189,7 +191,7 @@ Upgrades have no cap. At level 3 you pick one of two branches, and a turret gets
 
 ## Playing with friends
 
-![Four friends scrambling to defend a lighthouse while fish flood the walls](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-coop-0.3.0.png)
+![The actual in-game island and models, with villagers, turrets and weapons](https://raw.githubusercontent.com/gba3124/over99-fortress-island/main/img/promo-coop-0.3.0.png)
 
 **Everyone in the room needs this mod, on the same version.** If someone's version is different, they get a warning banner when they join. You can find the version at the bottom of the **I** guide.
 

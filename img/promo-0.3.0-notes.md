@@ -1,11 +1,13 @@
-# OVER 99 Fortress Island — promo 0.3.0
+# OVER 99 Fortress Island — real 3D promo (0.3.0)
+
+These are **real 3D renders** made from the mod's own island, turrets, weapons, lighthouse and villager models. They are not AI concept art.
 
 ## Alt text
 
-- **promo-hero-0.3.0.png:** Four players defend a glowing lighthouse fortress as sneaker-wearing fish rush in from the sea. Turrets fire, fireworks burst, and a huge one-eyed boss waits offshore.
-- **promo-turrets-0.3.0.png:** Nine chunky gray-and-gold defenses fill a seaside plaza: gun, cannon, harpoon, mortar, Tesla, flame, sniper, bubble, and mender. A tiny worried fish stands beside them for scale.
-- **promo-weapons-0.3.0.png:** Seventeen colorful low-poly weapons form a toy arsenal, from a rocket launcher and tuna boomerang to a puffer bomb, conch horn, and shark whistle.
-- **promo-coop-0.3.0.png:** Four friends scramble to protect a lighthouse while fish in sneakers flood the walls. One repairs, one sprays water, one traps a fish in a bubble, and one brandishes a rocket launcher.
+- **promo-hero-0.3.0.png:** The actual fortress island, rendered from the mod: the lighthouse and plaza, turrets, villagers and two real weapon models in the foreground.
+- **promo-turrets-0.3.0.png:** Nine actual in-game turrets on studio cards — machine gun, cannon, harpoon, mortar, Tesla, flame, sniper, bubble and mender.
+- **promo-weapons-0.3.0.png:** All 17 actual in-game custom weapon models, from the rocket and tuna boomerang to the puffer bomb, conch and shark whistle.
+- **promo-coop-0.3.0.png:** The actual island and model set: lighthouse, plaza, turrets, villagers, and the rocket and water cannon.
 
 ## Proposed store-page tagline
 
