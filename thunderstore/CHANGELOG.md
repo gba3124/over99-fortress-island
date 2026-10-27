@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+**Store page / story update**
+- New cinematic key art and story images based on the actual fortress island, lighthouse, turrets, weapons and villagers.
+- The store page now tells the core story: the final boss is dead, the sea is furious, a fortress island rises, and 100 waves of fish in sneakers come for the lighthouse pearl. Every tenth wave a boss returns with a second form; survive wave 100 to go OVER 99.
+- No gameplay or save-format changes.
+
 ## 0.3.0
 
 **Art passes**
