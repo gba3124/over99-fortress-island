@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.0
+
+**Art passes**
+- All nine turrets rebuilt for the low-poly game: Gun, Cannon, Harpoon, Mortar, Tesla, Flame, Sniper, Bubble and Mender each have a distinct silhouette, a proper base and four independent branch looks (A1/A2/B1/B2). The turret panel now shows a look card, detail panel, branch cards and build bar.
+- All 17 custom weapons updated: a real shoulder-fired Rocket, the tuna Boomerang kept, a ten-barrel Gatling, mirrored icons and a rarity-aware ground look. Weapon stars now reach other players and survive a reload.
+- Scene art pass: a rebuilt old stone gate, a split wreck with a convex hull, layered roads, a pier, signposts and shop emblems; the plaza has a compass rose.
+- Helpers got idle life: villagers gather in coffee circles and gulls return to nests when there is no work.
+- New FX pass and boss presentation: second-form palettes, procedural boss IK, ten new second-form moves with readable calls, and a sound for every boss move.
+
+**Turrets, weapons and balance**
+- Turret branch effects work end-to-end, including second splits at Lv9; menders stack, surge, guard against overheal and can cleanse.
+- Magazines and reloads, a machine-gun rattle and a bomber fuse; the rocket throws fish like dynamite.
+- The vault holds 60 slots to start (up from 40), with the same +15 per expansion.
+- Late-wave fish and bosses hit buildings harder so they keep pace with tower health; bosses move with wind-up and follow-through instead of standing about.
+- Health tags over damaged turrets, an upgrade line when your upgrade lands, and the boss staircase's ladder health, 4:00 crash, per-run souls and bar-by-bar health.
+
+**Quality of life**
+- The test menu is now bound to **~** instead of F12, so Steam can use F12 for screenshots; old F12 configs migrate once.
+- The test menu can reset the save's progress; the keeper's permanent tree can be reset for every soul spent between runs.
+- Helpers come along when the island moves, the vault keeper accepts thrown items, repair markers sit flat on the ground, the merge-all sound plays, and the legendary cube is gone.
+- A measured performance pass: turret, weapon, enemy, HUD, boss and network hot paths allocate far less per frame and per shot; details are in [PERF-REPORT.md](PERF-REPORT.md).
+
+**Fixes**
+- Fixed boss second forms being missed when a burst would skip them; fragments and puppets no longer trigger the boss transformation.
+- Fixed the turret panel HP bar, the active-item strip being clipped off 16:10 screens, and several F4/teleport and stuck-in-geometry cases.
+
 ## 0.2.9
 
 **Gear stars**
